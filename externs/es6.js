@@ -32,13 +32,6 @@
 function Generator() {}
 
 /**
- * @param {?=} opt_value
- * @return {!IIterableResult<VALUE>}
- * @override
- */
-Generator.prototype.next = function(opt_value) {};
-
-/**
  * @param {VALUE} value
  * @return {!IIterableResult<VALUE>}
  */
