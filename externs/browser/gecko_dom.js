@@ -484,7 +484,6 @@ Document.prototype.close;
 Document.prototype.createEvent = function(type) {};
 Document.prototype.createNSResolver;
 /** @return {Range} */ Document.prototype.createRange = function() {};
-Document.prototype.createTreeWalker;
 
 Document.prototype.evaluate;
 
