@@ -240,9 +240,8 @@ String.prototype.padStart = function(targetLength, opt_padString) {};
 String.prototype.repeat = function(count) {};
 
 /**
- * @constructor
- * @extends {Array<string>}
- * @see http://www.ecma-international.org/ecma-262/6.0/#sec-gettemplateobject
+ * @interface
+* @see http://www.ecma-international.org/ecma-262/6.0/#sec-gettemplateobject
  */
 var ITemplateArray = function() {};
 

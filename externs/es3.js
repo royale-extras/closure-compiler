@@ -286,12 +286,12 @@ function parseFloat(num) {}
  * leader, then pass {@code undefined} as the base.
  *
  * @param {*} num
- * @param {number|undefined} base
+ * @param {number=} opt_base
  * @return {number}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/parseInt
  */
-function parseInt(num, base) {}
+function parseInt(num, opt_base) {}
 
 /**
  * @param {string} code
@@ -313,10 +313,10 @@ function Object(opt_value) {}
 
 /**
  * The constructor of the current object.
- * @type {Function}
+ * @type {Class}
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/constructor
  */
-Object.prototype.constructor = function() {};
+Object.prototype.constructor;
 
 /**
  * Binds an object's property to a function to be called when that property is
@@ -663,6 +663,7 @@ Array.prototype.slice = function(opt_begin, opt_end) {};
 /**
  * Sorts the elements of an array in place.
  *
+ * @return {!Array<?>}
  * @param {function(T,T):number=} opt_compareFn Specifies a function that
  *     defines the sort order.
  * @this {IArrayLike<T>}
