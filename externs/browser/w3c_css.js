@@ -1526,6 +1526,17 @@ CSSProperties.prototype.outlineWidth;
 CSSProperties.prototype.overflow;
 
 /**
+ * @type {string}
+ * @see https://drafts.csswg.org/css-overflow-3/#propdef-overflow-x
+ */
+CSSProperties.prototype.overflowX;
+/**
+ * @type {string}
+ * @see https://drafts.csswg.org/css-overflow-3/#propdef-overflow-y
+ */
+CSSProperties.prototype.overflowY;
+
+/**
  * @type {string|number}
  * @see http://www.w3.org/TR/DOM-Level-2-Style/css.html#CSS-CSSProperties-padding
  */
