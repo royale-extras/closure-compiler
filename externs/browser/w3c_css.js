@@ -165,7 +165,7 @@ CSSStyleSheet.prototype.cssRules;
 
 /**
  * @param {string} rule
- * @param {number} index
+ * @param {number=} index
  * @return {number}
  * @see http://www.w3.org/TR/DOM-Level-2-Style/css.html#CSS-CSSStyleSheet-insertRule
  */
@@ -323,7 +323,7 @@ CSSMediaRule.prototype.cssRules;
 
 /**
  * @param {string} rule
- * @param {number} index
+ * @param {number=} index
  * @return {number}
  * @see http://www.w3.org/TR/DOM-Level-2-Style/css.html#CSS-CSSMediaRule-insertRule
  */
