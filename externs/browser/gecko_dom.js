@@ -803,11 +803,12 @@ HTMLInputElement.prototype.selectionEnd;
 /**
  * @param {number} selectionStart
  * @param {number} selectionEnd
+ * @param {string=} selectionDirection
  * @see http://www.whatwg.org/specs/web-apps/current-work/multipage/editing.html#dom-textarea/input-setselectionrange
  * @return {undefined}
  */
 HTMLInputElement.prototype.setSelectionRange =
-    function(selectionStart, selectionEnd) {};
+    function(selectionStart, selectionEnd, selectionDirection) {};
 
 /** @type {number} */
 HTMLTextAreaElement.prototype.selectionStart;
@@ -818,11 +819,12 @@ HTMLTextAreaElement.prototype.selectionEnd;
 /**
  * @param {number} selectionStart
  * @param {number} selectionEnd
+ * @param {string=} selectionDirection
  * @see http://www.whatwg.org/specs/web-apps/current-work/multipage/editing.html#dom-textarea/input-setselectionrange
  * @return {undefined}
  */
 HTMLTextAreaElement.prototype.setSelectionRange =
-    function(selectionStart, selectionEnd) {};
+    function(selectionStart, selectionEnd, selectionDirection) {};
 
 /**
  * @type {string}
