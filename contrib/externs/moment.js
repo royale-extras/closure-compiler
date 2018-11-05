@@ -1,1323 +1,734 @@
-'use strict';
+declare function moment(inp?: moment.MomentInput, format?: moment.MomentFormatSpecification, strict?: boolean): moment.Moment;
+declare function moment(inp?: moment.MomentInput, format?: moment.MomentFormatSpecification, language?: string, strict?: boolean): moment.Moment;
+
+declare namespace moment {
+  type RelativeTimeKey = 's' | 'ss' | 'm' | 'mm' | 'h' | 'hh' | 'd' | 'dd' | 'M' | 'MM' | 'y' | 'yy';
+  type CalendarKey = 'sameDay' | 'nextDay' | 'lastDay' | 'nextWeek' | 'lastWeek' | 'sameElse' | string;
+  type LongDateFormatKey = 'LTS' | 'LT' | 'L' | 'LL' | 'LLL' | 'LLLL' | 'lts' | 'lt' | 'l' | 'll' | 'lll' | 'llll';
+
+  interface Locale {
+    calendar(key?: CalendarKey, m?: Moment, now?: Moment): string;
+
+    longDateFormat(key: LongDateFormatKey): string;
+    invalidDate(): string;
+    ordinal(n: number): string;
+
+    preparse(inp: string): string;
+    postformat(inp: string): string;
+    relativeTime(n: number, withoutSuffix: boolean,
+                 key: RelativeTimeKey, isFuture: boolean): string;
+    pastFuture(diff: number, absRelTime: string): string;
+    set(config: Object): void;
+
+    months(): string[];
+    months(m: Moment, format?: string): string;
+    monthsShort(): string[];
+    monthsShort(m: Moment, format?: string): string;
+    monthsParse(monthName: string, format: string, strict: boolean): number;
+    monthsRegex(strict: boolean): RegExp;
+    monthsShortRegex(strict: boolean): RegExp;
+
+    week(m: Moment): number;
+    firstDayOfYear(): number;
+    firstDayOfWeek(): number;
+
+    weekdays(): string[];
+    weekdays(m: Moment, format?: string): string;
+    weekdaysMin(): string[];
+    weekdaysMin(m: Moment): string;
+    weekdaysShort(): string[];
+    weekdaysShort(m: Moment): string;
+    weekdaysParse(weekdayName: string, format: string, strict: boolean): number;
+    weekdaysRegex(strict: boolean): RegExp;
+    weekdaysShortRegex(strict: boolean): RegExp;
+    weekdaysMinRegex(strict: boolean): RegExp;
+
+    isPM(input: string): boolean;
+    meridiem(hour: number, minute: number, isLower: boolean): string;
+  }
+
+  interface StandaloneFormatSpec {
+    format: string[];
+    standalone: string[];
+    isFormat?: RegExp;
+  }
+
+  interface WeekSpec {
+    dow: number;
+    doy: number;
+  }
+
+  type CalendarSpecVal = string | ((m?: MomentInput, now?: Moment) => string);
+  interface CalendarSpec {
+    sameDay?: CalendarSpecVal;
+    nextDay?: CalendarSpecVal;
+    lastDay?: CalendarSpecVal;
+    nextWeek?: CalendarSpecVal;
+    lastWeek?: CalendarSpecVal;
+    sameElse?: CalendarSpecVal;
+
+    // any additional properties might be used with moment.calendarFormat
+    [x: string]: CalendarSpecVal | void; // undefined
+  }
+
+  type RelativeTimeSpecVal = (
+    string |
+    ((n: number, withoutSuffix: boolean,
+      key: RelativeTimeKey, isFuture: boolean) => string)
+  );
+  type RelativeTimeFuturePastVal = string | ((relTime: string) => string);
+
+  interface RelativeTimeSpec {
+    future: RelativeTimeFuturePastVal;
+    past: RelativeTimeFuturePastVal;
+    s: RelativeTimeSpecVal;
+    ss: RelativeTimeSpecVal;
+    m: RelativeTimeSpecVal;
+    mm: RelativeTimeSpecVal;
+    h: RelativeTimeSpecVal;
+    hh: RelativeTimeSpecVal;
+    d: RelativeTimeSpecVal;
+    dd: RelativeTimeSpecVal;
+    M: RelativeTimeSpecVal;
+    MM: RelativeTimeSpecVal;
+    y: RelativeTimeSpecVal;
+    yy: RelativeTimeSpecVal;
+  }
+
+  interface LongDateFormatSpec {
+    LTS: string;
+    LT: string;
+    L: string;
+    LL: string;
+    LLL: string;
+    LLLL: string;
 
-var moment = {};
-
-
-/**
- * @interface
- */
-moment.Locale = function() {};
-
-
-/**
- * @param {moment.CalendarKey=} opt_key
- * @param {moment.Moment=} opt_m
- * @param {moment.Moment=} opt_now
- * @return {string}
- */
-moment.Locale.prototype.calendar = function(opt_key, opt_m, opt_now) {};
-
-
-/**
- * @param {moment.LongDateFormatKey} key
- * @return {string}
- */
-moment.Locale.prototype.longDateFormat = function(key) {};
-
-
-/**
- * @return {string}
- */
-moment.Locale.prototype.invalidDate = function() {};
-
-
-/**
- * @param {number} n
- * @return {string}
- */
-moment.Locale.prototype.ordinal = function(n) {};
-
-
-/**
- * @param {string} inp
- * @return {string}
- */
-moment.Locale.prototype.preparse = function(inp) {};
-
-
-/**
- * @param {string} inp
- * @return {string}
- */
-moment.Locale.prototype.postformat = function(inp) {};
-
-
-/**
- * @param {number} n
- * @param {boolean} withoutSuffix
- * @param {moment.RelativeTimeKey} key
- * @param {boolean} isFuture
- * @return {string}
- */
-moment.Locale.prototype.relativeTime = function(n, withoutSuffix, key, isFuture) {};
-
-
-/**
- * @param {number} diff
- * @param {string} absRelTime
- * @return {string}
- */
-moment.Locale.prototype.pastFuture = function(diff, absRelTime) {};
-
-
-/**
- * @param {moment.Object} config
- */
-moment.Locale.prototype.set = function(config) {};
-
-
-/**
- * @param {moment.Moment} m
- * @param {string=} opt_format
- * @return {(Array<string>|string)}
- */
-moment.Locale.prototype.months = function(m, opt_format) {};
-
-
-/**
- * @param {moment.Moment} m
- * @param {string=} opt_format
- * @return {(Array<string>|string)}
- */
-moment.Locale.prototype.monthsShort = function(m, opt_format) {};
-
-
-/**
- * @param {string} monthName
- * @param {string} format
- * @param {boolean} strict
- * @return {number}
- */
-moment.Locale.prototype.monthsParse = function(monthName, format, strict) {};
-
-
-/**
- * @param {boolean} strict
- * @return {moment.RegExp}
- */
-moment.Locale.prototype.monthsRegex = function(strict) {};
-
-
-/**
- * @param {boolean} strict
- * @return {moment.RegExp}
- */
-moment.Locale.prototype.monthsShortRegex = function(strict) {};
-
-
-/**
- * @param {moment.Moment} m
- * @return {number}
- */
-moment.Locale.prototype.week = function(m) {};
-
-
-/**
- * @return {number}
- */
-moment.Locale.prototype.firstDayOfYear = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Locale.prototype.firstDayOfWeek = function() {};
-
-
-/**
- * @param {moment.Moment} m
- * @param {string=} opt_format
- * @return {(Array<string>|string)}
- */
-moment.Locale.prototype.weekdays = function(m, opt_format) {};
-
-
-/**
- * @param {moment.Moment} m
- * @return {(Array<string>|string)}
- */
-moment.Locale.prototype.weekdaysMin = function(m) {};
-
-
-/**
- * @param {moment.Moment} m
- * @return {(Array<string>|string)}
- */
-moment.Locale.prototype.weekdaysShort = function(m) {};
-
-
-/**
- * @param {string} weekdayName
- * @param {string} format
- * @param {boolean} strict
- * @return {number}
- */
-moment.Locale.prototype.weekdaysParse = function(weekdayName, format, strict) {};
-
-
-/**
- * @param {boolean} strict
- * @return {moment.RegExp}
- */
-moment.Locale.prototype.weekdaysRegex = function(strict) {};
-
-
-/**
- * @param {boolean} strict
- * @return {moment.RegExp}
- */
-moment.Locale.prototype.weekdaysShortRegex = function(strict) {};
-
-
-/**
- * @param {boolean} strict
- * @return {moment.RegExp}
- */
-moment.Locale.prototype.weekdaysMinRegex = function(strict) {};
-
-
-/**
- * @param {string} input
- * @return {boolean}
- */
-moment.Locale.prototype.isPM = function(input) {};
-
-
-/**
- * @param {number} hour
- * @param {number} minute
- * @param {boolean} isLower
- * @return {string}
- */
-moment.Locale.prototype.meridiem = function(hour, minute, isLower) {};
-
-
-/**
- * @interface
- */
-moment.StandaloneFormatSpec = function() {};
-
-
-/**
- * @interface
- */
-moment.WeekSpec = function() {};
-
-
-/**
- * @interface
- */
-moment.CalendarSpec = function() {};
-
-
-/**
- * @interface
- */
-moment.RelativeTimeSpec = function() {};
-
-
-/**
- * @interface
- */
-moment.LongDateFormatSpec = function() {};
-
-
-/**
- * @interface
- */
-moment.LocaleSpecification = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentObjectOutput = function() {};
-
-
-/**
- * @interface
- */
-moment.Duration = function() {};
-
-
-/**
- * @return {moment.Duration}
- */
-moment.Duration.prototype.clone = function() {};
-
-
-/**
- * @param {boolean=} opt_withSuffix
- * @return {string}
- */
-moment.Duration.prototype.humanize = function(opt_withSuffix) {};
-
-
-/**
- * @return {moment.Duration}
- */
-moment.Duration.prototype.abs = function() {};
-
-
-/**
- * @param {moment.undefined} units
- * @return {number}
- */
-moment.Duration.prototype.as = function(units) {};
-
-
-/**
- * @param {moment.undefined} units
- * @return {number}
- */
-moment.Duration.prototype.get = function(units) {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.milliseconds = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asMilliseconds = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.seconds = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asSeconds = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.minutes = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asMinutes = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.hours = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asHours = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.days = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asDays = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.weeks = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asWeeks = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.months = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asMonths = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.years = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Duration.prototype.asYears = function() {};
-
-
-/**
- * @param {moment.DurationInputArg1=} opt_inp
- * @param {moment.DurationInputArg2=} opt_unit
- * @return {moment.Duration}
- */
-moment.Duration.prototype.add = function(opt_inp, opt_unit) {};
-
-
-/**
- * @param {moment.DurationInputArg1=} opt_inp
- * @param {moment.DurationInputArg2=} opt_unit
- * @return {moment.Duration}
- */
-moment.Duration.prototype.subtract = function(opt_inp, opt_unit) {};
-
-
-/**
- * @param {moment.LocaleSpecifier} locale
- * @return {(string|moment.Duration)}
- */
-moment.Duration.prototype.locale = function(locale) {};
-
-
-/**
- * @return {moment.Locale}
- */
-moment.Duration.prototype.localeData = function() {};
-
-
-/**
- * @return {string}
- */
-moment.Duration.prototype.toISOString = function() {};
-
-
-/**
- * @return {string}
- */
-moment.Duration.prototype.toJSON = function() {};
-
-
-/**
- * @param {moment.LocaleSpecifier} locale
- * @return {(moment.Moment|moment.Locale)}
- */
-moment.Duration.prototype.lang = function(locale) {};
-
-
-/**
- * @return {string}
- */
-moment.Duration.prototype.toIsoString = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentRelativeTime = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentLongDateFormat = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentParsingFlags = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentParsingFlagsOpt = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentBuiltinFormat = function() {};
-
-
-var moment.unitOfTime = {};
-
-
-/**
- * @interface
- */
-moment.MomentInputObject = function() {};
-
-
-/**
- * @interface
- */
-moment.DurationInputObject = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentSetObject = function() {};
-
-
-/**
- * @interface
- */
-moment.FromTo = function() {};
-
-
-/**
- * @interface
- */
-moment.MomentCreationData = function() {};
-
-
-/**
- * @interface
- */
-moment.Moment = function() {};
-
-
-/**
- * @param {string=} opt_format
- * @return {string}
- */
-moment.Moment.prototype.format = function(opt_format) {};
-
-
-/**
- * @param {moment.undefined} unitOfTime
- * @return {moment.Moment}
- */
-moment.Moment.prototype.startOf = function(unitOfTime) {};
-
-
-/**
- * @param {moment.undefined} unitOfTime
- * @return {moment.Moment}
- */
-moment.Moment.prototype.endOf = function(unitOfTime) {};
-
-
-/**
- * @param {(moment.DurationInputArg1|moment.undefined)=} opt_amount
- * @param {(moment.DurationInputArg2|number,string)=} opt_unit
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.Moment.prototype.add = function(opt_amount, opt_unit) {};
-
-
-/**
- * @param {(moment.DurationInputArg1|moment.undefined)=} opt_amount
- * @param {(moment.DurationInputArg2|number,string)=} opt_unit
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.Moment.prototype.subtract = function(opt_amount, opt_unit) {};
-
-
-/**
- * @param {moment.MomentInput=} opt_time
- * @param {moment.CalendarSpec=} opt_formats
- * @return {string}
- */
-moment.Moment.prototype.calendar = function(opt_time, opt_formats) {};
-
-
-/**
- * @return {moment.Moment}
- */
-moment.Moment.prototype.clone = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Moment.prototype.valueOf = function() {};
-
-
-/**
- * @param {boolean=} opt_keepLocalTime
- * @return {moment.Moment}
- */
-moment.Moment.prototype.local = function(opt_keepLocalTime) {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isLocal = function() {};
-
-
-/**
- * @param {boolean=} opt_keepLocalTime
- * @return {moment.Moment}
- */
-moment.Moment.prototype.utc = function(opt_keepLocalTime) {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isUTC = function() {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isUtc = function() {};
-
-
-/**
- * @return {moment.Moment}
- */
-moment.Moment.prototype.parseZone = function() {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isValid = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Moment.prototype.invalidAt = function() {};
-
-
-/**
- * @param {moment.MomentInput=} opt_other
- * @return {boolean}
- */
-moment.Moment.prototype.hasAlignedHourOffset = function(opt_other) {};
-
-
-/**
- * @return {moment.MomentCreationData}
- */
-moment.Moment.prototype.creationData = function() {};
-
-
-/**
- * @return {moment.MomentParsingFlags}
- */
-moment.Moment.prototype.parsingFlags = function() {};
-
-
-/**
- * @param {number} y
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.year = function(y) {};
-
-
-/**
- * @param {number} y
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.years = function(y) {};
-
-
-/**
- * @param {number} q
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.quarter = function(q) {};
-
-
-/**
- * @param {number} q
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.quarters = function(q) {};
-
-
-/**
- * @param {(number|string)} M
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.month = function(M) {};
-
-
-/**
- * @param {(number|string)} M
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.months = function(M) {};
-
-
-/**
- * @param {(number|string)} d
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.day = function(d) {};
-
-
-/**
- * @param {(number|string)} d
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.days = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.date = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.dates = function(d) {};
-
-
-/**
- * @param {number} h
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.hour = function(h) {};
-
-
-/**
- * @param {number} h
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.hours = function(h) {};
-
-
-/**
- * @param {number} m
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.minute = function(m) {};
-
-
-/**
- * @param {number} m
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.minutes = function(m) {};
-
-
-/**
- * @param {number} s
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.second = function(s) {};
-
-
-/**
- * @param {number} s
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.seconds = function(s) {};
-
-
-/**
- * @param {number} ms
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.millisecond = function(ms) {};
-
-
-/**
- * @param {number} ms
- * @return {(moment.Moment|number)}
- */
-moment.Moment.prototype.milliseconds = function(ms) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.weekday = function(d) {};
-
-
-/**
- * @param {(number|string)} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.isoWeekday = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.weekYear = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.isoWeekYear = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.week = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.weeks = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.isoWeek = function(d) {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.isoWeeks = function(d) {};
-
-
-/**
- * @return {number}
- */
-moment.Moment.prototype.weeksInYear = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Moment.prototype.isoWeeksInYear = function() {};
-
-
-/**
- * @param {number} d
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.dayOfYear = function(d) {};
-
-
-/**
- * @param {moment.MomentInput} inp
- * @param {boolean=} opt_suffix
- * @return {string}
- */
-moment.Moment.prototype.from = function(inp, opt_suffix) {};
-
-
-/**
- * @param {moment.MomentInput} inp
- * @param {boolean=} opt_suffix
- * @return {string}
- */
-moment.Moment.prototype.to = function(inp, opt_suffix) {};
-
-
-/**
- * @param {boolean=} opt_withoutSuffix
- * @return {string}
- */
-moment.Moment.prototype.fromNow = function(opt_withoutSuffix) {};
-
-
-/**
- * @param {boolean=} opt_withoutPrefix
- * @return {string}
- */
-moment.Moment.prototype.toNow = function(opt_withoutPrefix) {};
-
-
-/**
- * @param {moment.MomentInput} b
- * @param {moment.undefined=} opt_unitOfTime
- * @param {boolean=} opt_precise
- * @return {number}
- */
-moment.Moment.prototype.diff = function(b, opt_unitOfTime, opt_precise) {};
-
-
-/**
- * @return {Array<number>}
- */
-moment.Moment.prototype.toArray = function() {};
-
-
-/**
- * @return {moment.Date}
- */
-moment.Moment.prototype.toDate = function() {};
-
-
-/**
- * @param {boolean=} opt_keepOffset
- * @return {string}
- */
-moment.Moment.prototype.toISOString = function(opt_keepOffset) {};
-
-
-/**
- * @return {string}
- */
-moment.Moment.prototype.inspect = function() {};
-
-
-/**
- * @return {string}
- */
-moment.Moment.prototype.toJSON = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Moment.prototype.unix = function() {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isLeapYear = function() {};
-
-
-/**
- * @param {(number|string)} b
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.zone = function(b) {};
-
-
-/**
- * @param {(number|string)} b
- * @param {boolean=} opt_keepLocalTime
- * @return {(number|moment.Moment)}
- */
-moment.Moment.prototype.utcOffset = function(b, opt_keepLocalTime) {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isUtcOffset = function() {};
-
-
-/**
- * @return {number}
- */
-moment.Moment.prototype.daysInMonth = function() {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isDST = function() {};
-
-
-/**
- * @return {string}
- */
-moment.Moment.prototype.zoneAbbr = function() {};
-
-
-/**
- * @return {string}
- */
-moment.Moment.prototype.zoneName = function() {};
-
-
-/**
- * @param {moment.MomentInput=} opt_inp
- * @param {moment.undefined=} opt_granularity
- * @return {boolean}
- */
-moment.Moment.prototype.isBefore = function(opt_inp, opt_granularity) {};
-
-
-/**
- * @param {moment.MomentInput=} opt_inp
- * @param {moment.undefined=} opt_granularity
- * @return {boolean}
- */
-moment.Moment.prototype.isAfter = function(opt_inp, opt_granularity) {};
-
-
-/**
- * @param {moment.MomentInput=} opt_inp
- * @param {moment.undefined=} opt_granularity
- * @return {boolean}
- */
-moment.Moment.prototype.isSame = function(opt_inp, opt_granularity) {};
-
-
-/**
- * @param {moment.MomentInput=} opt_inp
- * @param {moment.undefined=} opt_granularity
- * @return {boolean}
- */
-moment.Moment.prototype.isSameOrAfter = function(opt_inp, opt_granularity) {};
-
-
-/**
- * @param {moment.MomentInput=} opt_inp
- * @param {moment.undefined=} opt_granularity
- * @return {boolean}
- */
-moment.Moment.prototype.isSameOrBefore = function(opt_inp, opt_granularity) {};
-
-
-/**
- * @param {moment.MomentInput} a
- * @param {moment.MomentInput} b
- * @param {moment.undefined=} opt_granularity
- * @param {(moment."()" |moment. "[)" |moment. "(]" |moment. "[]")=} opt_inclusivity
- * @return {boolean}
- */
-moment.Moment.prototype.isBetween = function(a, b, opt_granularity, opt_inclusivity) {};
-
-
-/**
- * @param {moment.LocaleSpecifier} language
- * @return {(moment.Moment|moment.Locale)}
- */
-moment.Moment.prototype.lang = function(language) {};
-
-
-/**
- * @param {moment.LocaleSpecifier} locale
- * @return {(string|moment.Moment)}
- */
-moment.Moment.prototype.locale = function(locale) {};
-
-
-/**
- * @return {moment.Locale}
- */
-moment.Moment.prototype.localeData = function() {};
-
-
-/**
- * @return {boolean}
- */
-moment.Moment.prototype.isDSTShifted = function() {};
-
-
-/**
- * @param {(moment.MomentInput|moment.MomentInput)=} opt_inp
- * @param {(moment.MomentFormatSpecification|moment.MomentFormatSpecification)=} opt_format
- * @param {(boolean|string)=} opt_strict
- * @param {boolean=} opt_strict
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.Moment.prototype.max = function(opt_inp, opt_format, opt_strict, opt_strict) {};
-
-
-/**
- * @param {(moment.MomentInput|moment.MomentInput)=} opt_inp
- * @param {(moment.MomentFormatSpecification|moment.MomentFormatSpecification)=} opt_format
- * @param {(boolean|string)=} opt_strict
- * @param {boolean=} opt_strict
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.Moment.prototype.min = function(opt_inp, opt_format, opt_strict, opt_strict) {};
-
-
-/**
- * @param {moment.undefined} unit
- * @return {number}
- */
-moment.Moment.prototype.get = function(unit) {};
-
-
-/**
- * @param {(moment.undefined|moment.MomentSetObject)} unit
- * @param {number=} opt_value
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.Moment.prototype.set = function(unit, opt_value) {};
-
-
-/**
- * @return {moment.MomentObjectOutput}
- */
-moment.Moment.prototype.toObject = function() {};
-
-
-/**
- * @type {string}
- */
-moment.version;
-
-
-/**
- * @type {moment.Moment}
- */
-moment.fn;
-
-
-/**
- * @param {(moment.MomentInput|moment.MomentInput)=} opt_inp
- * @param {(moment.MomentFormatSpecification|moment.MomentFormatSpecification)=} opt_format
- * @param {(boolean|string)=} opt_strict
- * @param {boolean=} opt_strict
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.utc = function(opt_inp, opt_format, opt_strict, opt_strict) {};
-
-
-/**
- * @param {number} timestamp
- * @return {moment.Moment}
- */
-moment.unix = function(timestamp) {};
-
-
-/**
- * @param {moment.MomentParsingFlagsOpt=} opt_flags
- * @return {moment.Moment}
- */
-moment.invalid = function(opt_flags) {};
-
-
-/**
- * @param {*} m
- * @return {moment.m is Moment}
- */
-moment.isMoment = function(m) {};
-
-
-/**
- * @param {*} m
- * @return {moment.m is Date}
- */
-moment.isDate = function(m) {};
-
-
-/**
- * @param {*} d
- * @return {moment.d is Duration}
- */
-moment.isDuration = function(d) {};
-
-
-/**
- * @param {(string|string)=} opt_language
- * @param {moment.Locale=} opt_definition
- * @return {(string|string)}
- */
-moment.lang = function(opt_language, opt_definition) {};
-
-
-/**
- * @param {(string|Array<string>|string)=} opt_language
- * @param {(moment.LocaleSpecification |moment. void)=} opt_definition
- * @return {(string|string|string)}
- */
-moment.locale = function(opt_language, opt_definition) {};
-
-
-/**
- * @param {(moment.string |Array<moment. string>)=} opt_key
- * @return {moment.Locale}
- */
-moment.localeData = function(opt_key) {};
-
-
-/**
- * @param {moment.DurationInputArg1=} opt_inp
- * @param {moment.DurationInputArg2=} opt_unit
- * @return {moment.Duration}
- */
-moment.duration = function(opt_inp, opt_unit) {};
-
-
-/**
- * @param {(moment.MomentInput|moment.MomentInput)=} opt_inp
- * @param {(moment.MomentFormatSpecification|moment.MomentFormatSpecification)=} opt_format
- * @param {(boolean|string)=} opt_strict
- * @param {boolean=} opt_strict
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.parseZone = function(opt_inp, opt_format, opt_strict, opt_strict) {};
-
-
-/**
- * @param {(number|string|string)} index
- * @param {number} index
- * @return {(Array<string>|string|Array<string>|string)}
- */
-moment.months = function(index, index) {};
-
-
-/**
- * @param {(number|string|string)} index
- * @param {number} index
- * @return {(Array<string>|string|Array<string>|string)}
- */
-moment.monthsShort = function(index, index) {};
-
-
-/**
- * @param {(number|string|string|boolean|boolean|boolean|boolean)} index
- * @param {(number|number|string|string)=} opt_index
- * @param {number=} opt_index
- * @return {(Array<string>|string|Array<string>|string|Array<string>|string|Array<string>|string)}
- */
-moment.weekdays = function(index, opt_index, opt_index) {};
-
-
-/**
- * @param {(number|string|string|boolean|boolean|boolean|boolean)} index
- * @param {(number|number|string|string)=} opt_index
- * @param {number=} opt_index
- * @return {(Array<string>|string|Array<string>|string|Array<string>|string|Array<string>|string)}
- */
-moment.weekdaysShort = function(index, opt_index, opt_index) {};
-
-
-/**
- * @param {(number|string|string|boolean|boolean|boolean|boolean)} index
- * @param {(number|number|string|string)=} opt_index
- * @param {number=} opt_index
- * @return {(Array<string>|string|Array<string>|string|Array<string>|string|Array<string>|string)}
- */
-moment.weekdaysMin = function(index, opt_index, opt_index) {};
-
-
-/**
- * @param {(Array<moment.Moment>|Moment)} moments
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.min = function(moments) {};
-
-
-/**
- * @param {(Array<moment.Moment>|Moment)} moments
- * @return {(moment.Moment|moment.Moment)}
- */
-moment.max = function(moments) {};
-
-
-/**
- * @return {number}
- */
-moment.now = function() {};
-
-
-/**
- * @param {string} language
- * @param {(moment.LocaleSpecification |moment. void)} localeSpec
- * @return {moment.Locale}
- */
-moment.defineLocale = function(language, localeSpec) {};
-
-
-/**
- * @param {string} language
- * @param {(moment.LocaleSpecification |moment. void)} localeSpec
- * @return {moment.Locale}
- */
-moment.updateLocale = function(language, localeSpec) {};
-
-
-/**
- * @return {Array<string>}
- */
-moment.locales = function() {};
-
-
-/**
- * @param {moment.undefined} unit
- * @return {string}
- */
-moment.normalizeUnits = function(unit) {};
-
-
-/**
- * @param {(string|string)} threshold
- * @param {number} limit
- * @return {(moment.number |moment. boolean|boolean)}
- */
-moment.relativeTimeThreshold = function(threshold, limit) {};
-
-
-/**
- * @param {function(num:number):number} fn
- * @return {(boolean|function(num:number):number)}
- */
-moment.relativeTimeRounding = function(fn) {};
-
-
-/**
- * @param {moment.Moment} m
- * @param {moment.Moment} now
- * @return {string}
- */
-moment.calendarFormat = function(m, now) {};
-
-
-/**
- * @param {string} input
- * @return {number}
- */
-moment.parseTwoDigitYear = function(input) {};
-
-
-/**
- * @type {moment.MomentBuiltinFormat}
- */
-moment.ISO_8601;
-
-
-/**
- * @type {moment.MomentBuiltinFormat}
- */
-moment.RFC_2822;
-
-
-/**
- * @type {string}
- */
-moment.defaultFormat;
-
-
-/**
- * @type {string}
- */
-moment.defaultFormatUtc;
-
-
-/**
- * @type {{DATETIME_LOCAL: string, DATETIME_LOCAL_SECONDS: string, DATETIME_LOCAL_MS: string, DATE: string, TIME: string, TIME_SECONDS: string, TIME_MS: string, WEEK: string, MONTH: string}}
- */
-moment.HTML5_FMT;
+    // lets forget for a sec that any upper/lower permutation will also work
+    lts?: string;
+    lt?: string;
+    l?: string;
+    ll?: string;
+    lll?: string;
+    llll?: string;
+  }
+
+  type MonthWeekdayFn = (momentToFormat: Moment, format?: string) => string;
+  type WeekdaySimpleFn = (momentToFormat: Moment) => string;
+
+  interface LocaleSpecification {
+    months?: string[] | StandaloneFormatSpec | MonthWeekdayFn;
+    monthsShort?: string[] | StandaloneFormatSpec | MonthWeekdayFn;
+
+    weekdays?: string[] | StandaloneFormatSpec | MonthWeekdayFn;
+    weekdaysShort?: string[] | StandaloneFormatSpec | WeekdaySimpleFn;
+    weekdaysMin?: string[] | StandaloneFormatSpec | WeekdaySimpleFn;
+
+    meridiemParse?: RegExp;
+    meridiem?: (hour: number, minute:number, isLower: boolean) => string;
+
+    isPM?: (input: string) => boolean;
+
+    longDateFormat?: LongDateFormatSpec;
+    calendar?: CalendarSpec;
+    relativeTime?: RelativeTimeSpec;
+    invalidDate?: string;
+    ordinal?: (n: number) => string;
+    ordinalParse?: RegExp;
+
+    week?: WeekSpec;
+
+    // Allow anything: in general any property that is passed as locale spec is
+    // put in the locale object so it can be used by locale functions
+    [x: string]: any;
+  }
+
+  interface MomentObjectOutput {
+    years: number;
+    /* One digit */
+    months: number;
+    /* Day of the month */
+    date: number;
+    hours: number;
+    minutes: number;
+    seconds: number;
+    milliseconds: number;
+  }
+
+  interface Duration {
+    clone(): Duration;
+
+    humanize(withSuffix?: boolean): string;
+
+    abs(): Duration;
+
+    as(units: unitOfTime.Base): number;
+    get(units: unitOfTime.Base): number;
+
+    milliseconds(): number;
+    asMilliseconds(): number;
+
+    seconds(): number;
+    asSeconds(): number;
+
+    minutes(): number;
+    asMinutes(): number;
+
+    hours(): number;
+    asHours(): number;
+
+    days(): number;
+    asDays(): number;
+
+    weeks(): number;
+    asWeeks(): number;
+
+    months(): number;
+    asMonths(): number;
+
+    years(): number;
+    asYears(): number;
+
+    add(inp?: DurationInputArg1, unit?: DurationInputArg2): Duration;
+    subtract(inp?: DurationInputArg1, unit?: DurationInputArg2): Duration;
+
+    locale(): string;
+    locale(locale: LocaleSpecifier): Duration;
+    localeData(): Locale;
+
+    toISOString(): string;
+    toJSON(): string;
+
+    /**
+     * @deprecated since version 2.8.0
+     */
+    lang(locale: LocaleSpecifier): Moment;
+    /**
+     * @deprecated since version 2.8.0
+     */
+    lang(): Locale;
+    /**
+     * @deprecated
+     */
+    toIsoString(): string;
+  }
+
+  interface MomentRelativeTime {
+    future: any;
+    past: any;
+    s: any;
+    ss: any;
+    m: any;
+    mm: any;
+    h: any;
+    hh: any;
+    d: any;
+    dd: any;
+    M: any;
+    MM: any;
+    y: any;
+    yy: any;
+  }
+
+  interface MomentLongDateFormat {
+    L: string;
+    LL: string;
+    LLL: string;
+    LLLL: string;
+    LT: string;
+    LTS: string;
+
+    l?: string;
+    ll?: string;
+    lll?: string;
+    llll?: string;
+    lt?: string;
+    lts?: string;
+  }
+
+  interface MomentParsingFlags {
+    empty: boolean;
+    unusedTokens: string[];
+    unusedInput: string[];
+    overflow: number;
+    charsLeftOver: number;
+    nullInput: boolean;
+    invalidMonth: string | void; // null
+    invalidFormat: boolean;
+    userInvalidated: boolean;
+    iso: boolean;
+    parsedDateParts: any[];
+    meridiem: string | void; // null
+  }
+
+  interface MomentParsingFlagsOpt {
+    empty?: boolean;
+    unusedTokens?: string[];
+    unusedInput?: string[];
+    overflow?: number;
+    charsLeftOver?: number;
+    nullInput?: boolean;
+    invalidMonth?: string;
+    invalidFormat?: boolean;
+    userInvalidated?: boolean;
+    iso?: boolean;
+    parsedDateParts?: any[];
+    meridiem?: string;
+  }
+
+  interface MomentBuiltinFormat {
+    __momentBuiltinFormatBrand: any;
+  }
+
+  type MomentFormatSpecification = string | MomentBuiltinFormat | (string | MomentBuiltinFormat)[];
+
+  namespace unitOfTime {
+    type Base = (
+      "year" | "years" | "y" |
+      "month" | "months" | "M" |
+      "week" | "weeks" | "w" |
+      "day" | "days" | "d" |
+      "hour" | "hours" | "h" |
+      "minute" | "minutes" | "m" |
+      "second" | "seconds" | "s" |
+      "millisecond" | "milliseconds" | "ms"
+    );
+
+    type _quarter = "quarter" | "quarters" | "Q";
+    type _isoWeek = "isoWeek" | "isoWeeks" | "W";
+    type _date = "date" | "dates" | "D";
+    type DurationConstructor = Base | _quarter;
+
+    type DurationAs = Base;
+
+    type StartOf = Base | _quarter | _isoWeek | _date;
+
+    type Diff = Base | _quarter;
+
+    type MomentConstructor = Base | _date;
+
+    type All = Base | _quarter | _isoWeek | _date |
+      "weekYear" | "weekYears" | "gg" |
+      "isoWeekYear" | "isoWeekYears" | "GG" |
+      "dayOfYear" | "dayOfYears" | "DDD" |
+      "weekday" | "weekdays" | "e" |
+      "isoWeekday" | "isoWeekdays" | "E";
+  }
+
+  interface MomentInputObject {
+    years?: number;
+    year?: number;
+    y?: number;
+
+    months?: number;
+    month?: number;
+    M?: number;
+
+    days?: number;
+    day?: number;
+    d?: number;
+
+    dates?: number;
+    date?: number;
+    D?: number;
+
+    hours?: number;
+    hour?: number;
+    h?: number;
+
+    minutes?: number;
+    minute?: number;
+    m?: number;
+
+    seconds?: number;
+    second?: number;
+    s?: number;
+
+    milliseconds?: number;
+    millisecond?: number;
+    ms?: number;
+  }
+
+  interface DurationInputObject extends MomentInputObject {
+    quarters?: number;
+    quarter?: number;
+    Q?: number;
+
+    weeks?: number;
+    week?: number;
+    w?: number;
+  }
+
+  interface MomentSetObject extends MomentInputObject {
+    weekYears?: number;
+    weekYear?: number;
+    gg?: number;
+
+    isoWeekYears?: number;
+    isoWeekYear?: number;
+    GG?: number;
+
+    quarters?: number;
+    quarter?: number;
+    Q?: number;
+
+    weeks?: number;
+    week?: number;
+    w?: number;
+
+    isoWeeks?: number;
+    isoWeek?: number;
+    W?: number;
+
+    dayOfYears?: number;
+    dayOfYear?: number;
+    DDD?: number;
+
+    weekdays?: number;
+    weekday?: number;
+    e?: number;
+
+    isoWeekdays?: number;
+    isoWeekday?: number;
+    E?: number;
+  }
+
+  interface FromTo {
+    from: MomentInput;
+    to: MomentInput;
+  }
+
+  type MomentInput = Moment | Date | string | number | (number | string)[] | MomentInputObject | void; // null | undefined
+  type DurationInputArg1 = Duration | number | string | FromTo | DurationInputObject | void; // null | undefined
+  type DurationInputArg2 = unitOfTime.DurationConstructor;
+  type LocaleSpecifier = string | Moment | Duration | string[] | boolean;
+
+  interface MomentCreationData {
+    input: MomentInput;
+    format?: MomentFormatSpecification;
+    locale: Locale;
+    isUTC: boolean;
+    strict?: boolean;
+  }
+
+  interface Moment extends Object {
+    format(format?: string): string;
+
+    startOf(unitOfTime: unitOfTime.StartOf): Moment;
+    endOf(unitOfTime: unitOfTime.StartOf): Moment;
+
+    add(amount?: DurationInputArg1, unit?: DurationInputArg2): Moment;
+    /**
+     * @deprecated reverse syntax
+     */
+    add(unit: unitOfTime.DurationConstructor, amount: number|string): Moment;
+
+    subtract(amount?: DurationInputArg1, unit?: DurationInputArg2): Moment;
+    /**
+     * @deprecated reverse syntax
+     */
+    subtract(unit: unitOfTime.DurationConstructor, amount: number|string): Moment;
+
+    calendar(time?: MomentInput, formats?: CalendarSpec): string;
+
+    clone(): Moment;
+
+    /**
+     * @return Unix timestamp in milliseconds
+     */
+    valueOf(): number;
+
+    // current date/time in local mode
+    local(keepLocalTime?: boolean): Moment;
+    isLocal(): boolean;
+
+    // current date/time in UTC mode
+    utc(keepLocalTime?: boolean): Moment;
+    isUTC(): boolean;
+    /**
+     * @deprecated use isUTC
+     */
+    isUtc(): boolean;
+
+    parseZone(): Moment;
+    isValid(): boolean;
+    invalidAt(): number;
+
+    hasAlignedHourOffset(other?: MomentInput): boolean;
+
+    creationData(): MomentCreationData;
+    parsingFlags(): MomentParsingFlags;
+
+    year(y: number): Moment;
+    year(): number;
+    /**
+     * @deprecated use year(y)
+     */
+    years(y: number): Moment;
+    /**
+     * @deprecated use year()
+     */
+    years(): number;
+    quarter(): number;
+    quarter(q: number): Moment;
+    quarters(): number;
+    quarters(q: number): Moment;
+    month(M: number|string): Moment;
+    month(): number;
+    /**
+     * @deprecated use month(M)
+     */
+    months(M: number|string): Moment;
+    /**
+     * @deprecated use month()
+     */
+    months(): number;
+    day(d: number|string): Moment;
+    day(): number;
+    days(d: number|string): Moment;
+    days(): number;
+    date(d: number): Moment;
+    date(): number;
+    /**
+     * @deprecated use date(d)
+     */
+    dates(d: number): Moment;
+    /**
+     * @deprecated use date()
+     */
+    dates(): number;
+    hour(h: number): Moment;
+    hour(): number;
+    hours(h: number): Moment;
+    hours(): number;
+    minute(m: number): Moment;
+    minute(): number;
+    minutes(m: number): Moment;
+    minutes(): number;
+    second(s: number): Moment;
+    second(): number;
+    seconds(s: number): Moment;
+    seconds(): number;
+    millisecond(ms: number): Moment;
+    millisecond(): number;
+    milliseconds(ms: number): Moment;
+    milliseconds(): number;
+    weekday(): number;
+    weekday(d: number): Moment;
+    isoWeekday(): number;
+    isoWeekday(d: number|string): Moment;
+    weekYear(): number;
+    weekYear(d: number): Moment;
+    isoWeekYear(): number;
+    isoWeekYear(d: number): Moment;
+    week(): number;
+    week(d: number): Moment;
+    weeks(): number;
+    weeks(d: number): Moment;
+    isoWeek(): number;
+    isoWeek(d: number): Moment;
+    isoWeeks(): number;
+    isoWeeks(d: number): Moment;
+    weeksInYear(): number;
+    isoWeeksInYear(): number;
+    dayOfYear(): number;
+    dayOfYear(d: number): Moment;
+
+    from(inp: MomentInput, suffix?: boolean): string;
+    to(inp: MomentInput, suffix?: boolean): string;
+    fromNow(withoutSuffix?: boolean): string;
+    toNow(withoutPrefix?: boolean): string;
+
+    diff(b: MomentInput, unitOfTime?: unitOfTime.Diff, precise?: boolean): number;
+
+    toArray(): number[];
+    toDate(): Date;
+    toISOString(keepOffset?: boolean): string;
+    inspect(): string;
+    toJSON(): string;
+    unix(): number;
+
+    isLeapYear(): boolean;
+    /**
+     * @deprecated in favor of utcOffset
+     */
+    zone(): number;
+    zone(b: number|string): Moment;
+    utcOffset(): number;
+    utcOffset(b: number|string, keepLocalTime?: boolean): Moment;
+    isUtcOffset(): boolean;
+    daysInMonth(): number;
+    isDST(): boolean;
+
+    zoneAbbr(): string;
+    zoneName(): string;
+
+    isBefore(inp?: MomentInput, granularity?: unitOfTime.StartOf): boolean;
+    isAfter(inp?: MomentInput, granularity?: unitOfTime.StartOf): boolean;
+    isSame(inp?: MomentInput, granularity?: unitOfTime.StartOf): boolean;
+    isSameOrAfter(inp?: MomentInput, granularity?: unitOfTime.StartOf): boolean;
+    isSameOrBefore(inp?: MomentInput, granularity?: unitOfTime.StartOf): boolean;
+    isBetween(a: MomentInput, b: MomentInput, granularity?: unitOfTime.StartOf, inclusivity?: "()" | "[)" | "(]" | "[]"): boolean;
+
+    /**
+     * @deprecated as of 2.8.0, use locale
+     */
+    lang(language: LocaleSpecifier): Moment;
+    /**
+     * @deprecated as of 2.8.0, use locale
+     */
+    lang(): Locale;
+
+    locale(): string;
+    locale(locale: LocaleSpecifier): Moment;
+
+    localeData(): Locale;
+
+    /**
+     * @deprecated no reliable implementation
+     */
+    isDSTShifted(): boolean;
+
+    // NOTE(constructor): Same as moment constructor
+    /**
+     * @deprecated as of 2.7.0, use moment.min/max
+     */
+    max(inp?: MomentInput, format?: MomentFormatSpecification, strict?: boolean): Moment;
+    /**
+     * @deprecated as of 2.7.0, use moment.min/max
+     */
+    max(inp?: MomentInput, format?: MomentFormatSpecification, language?: string, strict?: boolean): Moment;
+
+    // NOTE(constructor): Same as moment constructor
+    /**
+     * @deprecated as of 2.7.0, use moment.min/max
+     */
+    min(inp?: MomentInput, format?: MomentFormatSpecification, strict?: boolean): Moment;
+    /**
+     * @deprecated as of 2.7.0, use moment.min/max
+     */
+    min(inp?: MomentInput, format?: MomentFormatSpecification, language?: string, strict?: boolean): Moment;
+
+    get(unit: unitOfTime.All): number;
+    set(unit: unitOfTime.All, value: number): Moment;
+    set(objectLiteral: MomentSetObject): Moment;
+
+    toObject(): MomentObjectOutput;
+  }
+
+  export var version: string;
+  export var fn: Moment;
+
+  // NOTE(constructor): Same as moment constructor
+  export function utc(inp?: MomentInput, format?: MomentFormatSpecification, strict?: boolean): Moment;
+  export function utc(inp?: MomentInput, format?: MomentFormatSpecification, language?: string, strict?: boolean): Moment;
+
+  export function unix(timestamp: number): Moment;
+
+  export function invalid(flags?: MomentParsingFlagsOpt): Moment;
+  export function isMoment(m: any): m is Moment;
+  export function isDate(m: any): m is Date;
+  export function isDuration(d: any): d is Duration;
+
+  /**
+   * @deprecated in 2.8.0
+   */
+  export function lang(language?: string): string;
+  /**
+   * @deprecated in 2.8.0
+   */
+  export function lang(language?: string, definition?: Locale): string;
+
+  export function locale(language?: string): string;
+  export function locale(language?: string[]): string;
+  export function locale(language?: string, definition?: LocaleSpecification | void): string; // null | undefined
+
+  export function localeData(key?: string | string[]): Locale;
+
+  export function duration(inp?: DurationInputArg1, unit?: DurationInputArg2): Duration;
+
+  // NOTE(constructor): Same as moment constructor
+  export function parseZone(inp?: MomentInput, format?: MomentFormatSpecification, strict?: boolean): Moment;
+  export function parseZone(inp?: MomentInput, format?: MomentFormatSpecification, language?: string, strict?: boolean): Moment;
+
+  export function months(): string[];
+  export function months(index: number): string;
+  export function months(format: string): string[];
+  export function months(format: string, index: number): string;
+  export function monthsShort(): string[];
+  export function monthsShort(index: number): string;
+  export function monthsShort(format: string): string[];
+  export function monthsShort(format: string, index: number): string;
+
+  export function weekdays(): string[];
+  export function weekdays(index: number): string;
+  export function weekdays(format: string): string[];
+  export function weekdays(format: string, index: number): string;
+  export function weekdays(localeSorted: boolean): string[];
+  export function weekdays(localeSorted: boolean, index: number): string;
+  export function weekdays(localeSorted: boolean, format: string): string[];
+  export function weekdays(localeSorted: boolean, format: string, index: number): string;
+  export function weekdaysShort(): string[];
+  export function weekdaysShort(index: number): string;
+  export function weekdaysShort(format: string): string[];
+  export function weekdaysShort(format: string, index: number): string;
+  export function weekdaysShort(localeSorted: boolean): string[];
+  export function weekdaysShort(localeSorted: boolean, index: number): string;
+  export function weekdaysShort(localeSorted: boolean, format: string): string[];
+  export function weekdaysShort(localeSorted: boolean, format: string, index: number): string;
+  export function weekdaysMin(): string[];
+  export function weekdaysMin(index: number): string;
+  export function weekdaysMin(format: string): string[];
+  export function weekdaysMin(format: string, index: number): string;
+  export function weekdaysMin(localeSorted: boolean): string[];
+  export function weekdaysMin(localeSorted: boolean, index: number): string;
+  export function weekdaysMin(localeSorted: boolean, format: string): string[];
+  export function weekdaysMin(localeSorted: boolean, format: string, index: number): string;
+
+  export function min(moments: Moment[]): Moment;
+  export function min(...moments: Moment[]): Moment;
+  export function max(moments: Moment[]): Moment;
+  export function max(...moments: Moment[]): Moment;
+
+  /**
+   * Returns unix time in milliseconds. Overwrite for profit.
+   */
+  export function now(): number;
+
+  export function defineLocale(language: string, localeSpec: LocaleSpecification | void): Locale; // null
+  export function updateLocale(language: string, localeSpec: LocaleSpecification | void): Locale; // null
+
+  export function locales(): string[];
+
+  export function normalizeUnits(unit: unitOfTime.All): string;
+  export function relativeTimeThreshold(threshold: string): number | boolean;
+  export function relativeTimeThreshold(threshold: string, limit: number): boolean;
+  export function relativeTimeRounding(fn: (num: number) => number): boolean;
+  export function relativeTimeRounding(): (num: number) => number;
+  export function calendarFormat(m: Moment, now: Moment): string;
+
+  export function parseTwoDigitYear(input: string): number;
+
+  /**
+   * Constant used to enable explicit ISO_8601 format parsing.
+   */
+  export var ISO_8601: MomentBuiltinFormat;
+  export var RFC_2822: MomentBuiltinFormat;
+
+  export var defaultFormat: string;
+  export var defaultFormatUtc: string;
+  
+  export var HTML5_FMT: { 
+    DATETIME_LOCAL: string,
+    DATETIME_LOCAL_SECONDS: string,
+    DATETIME_LOCAL_MS: string,
+    DATE: string,                           
+    TIME: string,                                 
+    TIME_SECONDS: string,                      
+    TIME_MS: string,                        
+    WEEK: string,                           
+    MONTH: string
+  };
+
+}
+
+export = moment;
