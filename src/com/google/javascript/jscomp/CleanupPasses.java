@@ -22,9 +22,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.GlobalVarReferenceMap.GlobalVarRefCleanupPass;
 import com.google.javascript.jscomp.PassFactory.HotSwapPassFactory;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
-import com.google.javascript.rhino.FunctionTypeI;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.jstype.FunctionType;
+import com.google.javascript.rhino.jstype.JSType;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -97,10 +97,10 @@ class CleanupPasses extends PassConfig {
 
   /**
    * A CleanupPass implementation that will remove stored scopes from the
-   * MemoizedTypedScopeCreator of the compiler instance for a the hot swapped script.
+   * TypedScopeCreator of the compiler instance for a the hot swapped script.
    * <p>
    * This pass will also clear out Source Nodes of Function Types declared on
-   * Vars tracked by MemoizedTypedScopeCreator
+   * Vars tracked by TypedScopeCreator
    */
   static class MemoizedScopeCleanupPass implements HotSwapCompilerPass {
 
@@ -113,13 +113,13 @@ class CleanupPasses extends PassConfig {
     @Override
     public void hotSwapScript(Node scriptRoot, Node originalRoot) {
       ScopeCreator creator = compiler.getTypedScopeCreator();
-      if (creator instanceof MemoizedTypedScopeCreator) {
-        MemoizedTypedScopeCreator scopeCreator = (MemoizedTypedScopeCreator) creator;
+      if (creator instanceof TypedScopeCreator) {
+        TypedScopeCreator scopeCreator = (TypedScopeCreator) creator;
         String newSrc = scriptRoot.getSourceFileName();
         for (TypedVar var : scopeCreator.getAllSymbols()) {
-          TypeI type = var.getType();
+          JSType type = var.getType();
           if (type != null) {
-            FunctionTypeI fnType = type.toMaybeFunctionType();
+            FunctionType fnType = type.toMaybeFunctionType();
             if (fnType != null
                 && newSrc.equals(NodeUtil.getSourceName(fnType.getSource()))) {
               fnType.setSource(null);

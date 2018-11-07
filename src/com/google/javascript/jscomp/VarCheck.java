@@ -166,7 +166,7 @@ class VarCheck extends AbstractPostOrderCallback implements
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
-    if (n.isName() || (n.isStringKey() && !n.hasChildren())) {
+    if (n.isName()) {
       String varName = n.getString();
 
       // Only a function can have an empty name.
@@ -200,8 +200,8 @@ class VarCheck extends AbstractPostOrderCallback implements
       Scope scope = t.getScope();
       Var var = scope.getVar(varName);
       if (var == null) {
-        if (NodeUtil.isFunctionExpression(parent)
-            || (NodeUtil.isClassExpression(parent) && n == parent.getFirstChild())) {
+        if ((NodeUtil.isFunctionExpression(parent) || NodeUtil.isClassExpression(parent))
+            && n == parent.getFirstChild()) {
           // e.g. [ function foo() {} ], it's okay if "foo" isn't defined in the
           // current scope.
         } else if (NodeUtil.isNonlocalModuleExportName(n)) {
@@ -209,8 +209,9 @@ class VarCheck extends AbstractPostOrderCallback implements
           // where b is defined in a module's export entries but not in any module scope.
         } else {
           boolean isArguments = scope.isFunctionScope() && ARGUMENTS.equals(varName);
+          boolean isTypeOf = parent.isTypeOf();
           // The extern checks are stricter, don't report a second error.
-          if (!isArguments && !(strictExternCheck && t.getInput().isExtern())) {
+          if (!isArguments && !isTypeOf && !(strictExternCheck && t.getInput().isExtern())) {
             t.report(n, UNDEFINED_VAR_ERROR, varName);
           }
 
@@ -398,10 +399,12 @@ class VarCheck extends AbstractPostOrderCallback implements
     @Override
     public void onRedeclaration(
         Scope s, String name, Node n, CompilerInput input) {
-      Node parent = n.getParent();
+      Node parent = NodeUtil.getDeclaringParent(n);
 
       Var origVar = s.getVar(name);
-      Node origParent = origVar.getParentNode();
+      // origNode will be null for `arguments`, since there's no node that declares it.
+      Node origNode = origVar.getNode();
+      Node origParent = (origNode == null) ? null : NodeUtil.getDeclaringParent(origNode);
       if (parent.isLet()
           || parent.isConst()
           || parent.isClass()

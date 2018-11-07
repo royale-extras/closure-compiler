@@ -53,8 +53,8 @@ import java.util.Set;
 public final class JsDocInfoParser {
   @VisibleForTesting
   public static final String BAD_TYPE_WIKI_LINK =
-      " See https://github.com/google/closure-compiler/wiki/Bad-Type-Annotation for"
-            + " more information.";
+      " See https://github.com/google/closure-compiler/wiki/Annotating-JavaScript-for-the-Closure-Compiler"
+          + " for more information.";
 
   private final JsDocTokenStream stream;
   private final JSDocInfoBuilder jsdocBuilder;
@@ -124,6 +124,8 @@ public final class JsDocInfoParser {
       ImmutableSet.of("this", "arguments");
   private static final Set<String> idGeneratorAnnotationKeywords =
       ImmutableSet.of("unique", "consistent", "stable", "mapped", "xid");
+  private static final Set<String> primitiveTypes =
+      ImmutableSet.of("number", "string", "boolean", "symbol");
 
   private JSDocInfoBuilder fileLevelJsDocBuilder;
 
@@ -235,19 +237,22 @@ public final class JsDocInfoParser {
     return parser.retrieveAndResetParsedJSDocInfo();
   }
 
+  @VisibleForTesting
+  public static JSDocInfo parseFileOverviewJsdoc(String toParse) {
+    JsDocInfoParser parser = getParser(toParse);
+    parser.parse();
+    return parser.getFileOverviewJSDocInfo();
+  }
+
   private static JsDocInfoParser getParser(String toParse) {
     Config config =
         Config.builder()
             .setLanguageMode(LanguageMode.ECMASCRIPT3)
             .setStrictMode(Config.StrictMode.SLOPPY)
             .build();
-    JsDocInfoParser parser = new JsDocInfoParser(
-        new JsDocTokenStream(toParse),
-        toParse,
-        0,
-        null,
-        config,
-        NullErrorReporter.forOldRhino());
+    JsDocInfoParser parser =
+        new JsDocInfoParser(
+            new JsDocTokenStream(toParse), toParse, 0, null, config, ErrorReporter.NULL_INSTANCE);
 
     return parser;
   }
@@ -547,8 +552,7 @@ public final class JsDocInfoParser {
             Node typeNode = parseAndRecordTypeNode(token);
             if (typeNode != null && typeNode.isString()) {
               String typeName = typeNode.getString();
-              if (!typeName.equals("number") && !typeName.equals("string")
-                  && !typeName.equals("boolean")) {
+              if (!primitiveTypes.contains(typeName)) {
                 typeNode = wrapNode(Token.BANG, typeNode);
               }
             }
@@ -626,6 +630,8 @@ public final class JsDocInfoParser {
                 && token != JsDocToken.EOC) {
               addTypeWarning("msg.end.annotation.expected");
             }
+          } else if (token == JsDocToken.BANG || token == JsDocToken.QMARK) {
+            addTypeWarning("msg.jsdoc.implements.extraqualifier", lineno, charno);
           } else {
             addTypeWarning("msg.no.type.name", lineno, charno);
           }
@@ -649,7 +655,7 @@ public final class JsDocInfoParser {
 
           if (match(JsDocToken.STRING)) {
             token = next();
-            if (!jsdocBuilder.recordLends(stream.getString())) {
+            if (!jsdocBuilder.recordLends(createJSTypeExpression(IR.string(stream.getString())))) {
               addTypeWarning("msg.jsdoc.lends.incompatible");
             }
           } else {
@@ -1334,9 +1340,7 @@ public final class JsDocInfoParser {
         addParserWarning("msg.jsdoc.suppress");
       } else {
         token = next();
-        if (!jsdocBuilder.recordSuppressions(suppressions)) {
-          addParserWarning("msg.jsdoc.suppress.duplicate");
-        }
+        jsdocBuilder.recordSuppressions(suppressions);
       }
       return eatUntilEOLIfNotAnnotation();
     }
@@ -2052,6 +2056,9 @@ public final class JsDocInfoParser {
    *     | '?'
    */
   private Node parseTypeExpression(JsDocToken token) {
+    // Save the source position before we consume additional tokens.
+    int lineno = stream.getLineno();
+    int charno = stream.getCharno();
     if (token == JsDocToken.QMARK) {
       // A QMARK could mean that a type is nullable, or that it's unknown.
       // We use look-ahead 1 to determine whether it's unknown. Otherwise,
@@ -2081,18 +2088,20 @@ public final class JsDocInfoParser {
         return newNode(Token.QMARK);
       }
 
-      return wrapNode(Token.QMARK, parseBasicTypeExpression(token));
+      return wrapNode(Token.QMARK, parseBasicTypeExpression(token), lineno, charno);
     } else if (token == JsDocToken.BANG) {
-      return wrapNode(Token.BANG, parseBasicTypeExpression(next()));
+      return wrapNode(Token.BANG, parseBasicTypeExpression(next()), lineno, charno);
     } else {
       Node basicTypeExpr = parseBasicTypeExpression(token);
+      lineno = stream.getLineno();
+      charno = stream.getCharno();
       if (basicTypeExpr != null) {
         if (match(JsDocToken.QMARK)) {
           next();
-          return wrapNode(Token.QMARK, basicTypeExpr);
+          return wrapNode(Token.QMARK, basicTypeExpr, lineno, charno);
         } else if (match(JsDocToken.BANG)) {
           next();
-          return wrapNode(Token.BANG, basicTypeExpr);
+          return wrapNode(Token.BANG, basicTypeExpr, lineno, charno);
         }
       }
 
@@ -2113,8 +2122,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * BasicTypeExpression := '*' | 'null' | 'undefined' | TypeName
-   *     | FunctionType | UnionType | RecordType
+   * BasicTypeExpression := '*' | 'null' | 'undefined' | TypeName | FunctionType | UnionType |
+   * RecordType | TypeofType
    */
   private Node parseBasicTypeExpression(JsDocToken token) {
     if (token == JsDocToken.STAR) {
@@ -2134,6 +2143,8 @@ public final class JsDocInfoParser {
         case "null":
         case "undefined":
           return newStringNode(string);
+        case "typeof":
+          return parseTypeofType(next());
         default:
           return parseTypeName(token);
       }
@@ -2143,11 +2154,7 @@ public final class JsDocInfoParser {
     return reportGenericTypeSyntaxWarning();
   }
 
-  /**
-   * TypeName := NameExpression | NameExpression TypeApplication
-   * TypeApplication := '.<' TypeExpressionList '>'
-   */
-  private Node parseTypeName(JsDocToken token) {
+  private Node parseNameExpression(JsDocToken token) {
     if (token != JsDocToken.STRING) {
       return reportGenericTypeSyntaxWarning();
     }
@@ -2155,8 +2162,7 @@ public final class JsDocInfoParser {
     String typeName = stream.getString();
     int lineno = stream.getLineno();
     int charno = stream.getCharno();
-    while (match(JsDocToken.EOL) &&
-        typeName.charAt(typeName.length() - 1) == '.') {
+    while (match(JsDocToken.EOL) && typeName.charAt(typeName.length() - 1) == '.') {
       skipEOLs();
       if (match(JsDocToken.STRING)) {
         next();
@@ -2164,12 +2170,20 @@ public final class JsDocInfoParser {
       }
     }
 
-    Node typeNameNode = newStringNode(typeName, lineno, charno);
+    return newStringNode(typeName, lineno, charno);
+  }
+
+  /**
+   * TypeName := NameExpression | NameExpression TypeApplication TypeApplication := '.'? '<'
+   * TypeExpressionList '>'
+   */
+  private Node parseTypeName(JsDocToken token) {
+    Node typeNameNode = parseNameExpression(token);
 
     if (match(JsDocToken.LEFT_ANGLE)) {
       next();
       skipEOLs();
-      Node memberType = parseTypeExpressionList(typeName, next());
+      Node memberType = parseTypeExpressionList(typeNameNode.getString(), next());
       if (memberType != null) {
         typeNameNode.addChildToFront(memberType);
 
@@ -2182,6 +2196,16 @@ public final class JsDocInfoParser {
       }
     }
     return typeNameNode;
+  }
+
+  /** TypeofType := 'typeof' NameExpression | 'typeof' '(' NameExpression ')' */
+  private Node parseTypeofType(JsDocToken token) {
+    Node typeofType = newNode(Token.TYPEOF);
+    skipEOLs();
+    Node name = parseNameExpression(token);
+    skipEOLs();
+    typeofType.addChildToFront(name);
+    return typeofType;
   }
 
   /**
@@ -2538,9 +2562,11 @@ public final class JsDocInfoParser {
   }
 
   private Node wrapNode(Token type, Node n) {
-    return n == null ? null :
-        new Node(type, n, n.getLineno(),
-            n.getCharno()).clonePropsFrom(templateNode);
+    return n == null ? null : wrapNode(type, n, n.getLineno(), n.getCharno());
+  }
+
+  private Node wrapNode(Token type, Node n, int lineno, int charno) {
+    return n == null ? null : new Node(type, n, lineno, charno).clonePropsFrom(templateNode);
   }
 
   private Node newNode(Token type) {

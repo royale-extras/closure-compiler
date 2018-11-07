@@ -169,6 +169,12 @@ Performance.prototype.clearResourceTimings = function() {};
 Performance.prototype.webkitClearResourceTimings = function() {};
 
 /**
+ * A callback that is invoked when the resourcetimingbufferfull event is fired.
+ * @type {?function(Event)}
+ */
+Performance.prototype.onresourcetimingbufferfull = function() {};
+
+/**
  * Set the maximum number of PerformanceResourceTiming resources that may be
  * stored in the buffer.
  * @param {number} maxSize
@@ -184,7 +190,7 @@ Performance.prototype.setResourceTimingBufferSize = function(maxSize) {};
 Performance.prototype.getEntries = function() {};
 
 /**
- * @param {string} entryType Only return {@code PerformanceEntry}s with this
+ * @param {string} entryType Only return `PerformanceEntry`s with this
  *     entryType.
  * @return {!Array<!PerformanceEntry>} A copy of the PerformanceEntry list,
  *     in chronological order with respect to startTime.
@@ -193,8 +199,8 @@ Performance.prototype.getEntries = function() {};
 Performance.prototype.getEntriesByType = function(entryType) {};
 
 /**
- * @param {string} name Only return {@code PerformanceEntry}s with this name.
- * @param {string=} opt_entryType Only return {@code PerformanceEntry}s with
+ * @param {string} name Only return `PerformanceEntry`s with this name.
+ * @param {string=} opt_entryType Only return `PerformanceEntry`s with
  *     this entryType.
  * @return {!Array<!PerformanceEntry>} PerformanceEntry list in chronological
  *     order with respect to startTime.

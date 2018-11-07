@@ -126,7 +126,6 @@ public enum CompilationLevel {
     options.setRenamingPolicy(VariableRenamingPolicy.LOCAL, PropertyRenamingPolicy.OFF);
     options.shadowVariables = true;
     options.setInlineVariables(Reach.LOCAL_ONLY);
-    options.setFlowSensitiveInlineVariables(true);
     options.setInlineFunctions(Reach.LOCAL_ONLY);
     options.setAssumeClosuresOnlyCaptureReferences(false);
     options.setCheckGlobalThisLevel(CheckLevel.OFF);
@@ -189,7 +188,6 @@ public enum CompilationLevel {
     options.setInlineFunctions(Reach.ALL);
     options.setAssumeClosuresOnlyCaptureReferences(false);
     options.setInlineVariables(Reach.ALL);
-    options.setFlowSensitiveInlineVariables(true);
     options.setComputeFunctionSideEffects(true);
     options.setAssumeStrictThis(true);
 
@@ -197,8 +195,8 @@ public enum CompilationLevel {
     options.setRemoveUnusedVariables(Reach.ALL);
 
     // Move code around based on the defined modules.
-    options.setCrossModuleCodeMotion(true);
-    options.setCrossModuleMethodMotion(true);
+    options.setCrossChunkCodeMotion(true);
+    options.setCrossChunkMethodMotion(true);
 
     // Call optimizations
     options.setDevirtualizePrototypeMethods(true);

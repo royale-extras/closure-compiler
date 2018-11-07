@@ -33,6 +33,12 @@
 Node.prototype.assignedSlot;
 
 /**
+ * @type {string}
+ * @see https://dom.spec.whatwg.org/#dom-element-slot
+ */
+Element.prototype.slot;
+
+/**
  * Note: In IE, the contains() method only exists on Elements, not Nodes.
  * Therefore, it is recommended that you use the Conformance framework to
  * prevent calling this on Nodes which are not Elements.
@@ -47,6 +53,12 @@ Node.prototype.contains = function(n) {};
 
 /** @type {boolean} */
 Node.prototype.isConnected;
+
+/**
+ * @type {boolean}
+ * @see https://html.spec.whatwg.org/multipage/scripting.html#the-script-element
+ */
+HTMLScriptElement.prototype.async;
 
 /**
  * @constructor
@@ -94,7 +106,7 @@ HTMLCanvasElement.prototype.getContext = function(contextId, opt_args) {};
 HTMLCanvasElement.prototype.captureStream = function(opt_framerate) {};
 
 /**
- * @typedef {HTMLImageElement|HTMLVideoElement|HTMLCanvasElement}
+ * @typedef {HTMLImageElement|HTMLVideoElement|HTMLCanvasElement|ImageBitmap}
  */
 var CanvasImageSource;
 
@@ -779,7 +791,7 @@ function TextMetrics() {}
 TextMetrics.prototype.width;
 
 /**
- * @param {Uint8ClampedArray|number} dataOrWidth In the first form, this is the
+ * @param {!Uint8ClampedArray|number} dataOrWidth In the first form, this is the
  *     array of pixel data.  In the second form, this is the image width.
  * @param {number} widthOrHeight In the first form, this is the image width.  In
  *     the second form, this is the image height.
@@ -790,7 +802,7 @@ TextMetrics.prototype.width;
  */
 function ImageData(dataOrWidth, widthOrHeight, opt_height) {}
 
-/** @const {Uint8ClampedArray} */
+/** @const {!Uint8ClampedArray} */
 ImageData.prototype.data;
 
 /** @const {number} */
@@ -816,6 +828,18 @@ ImageBitmap.prototype.width;
  * @const
  */
 ImageBitmap.prototype.height;
+
+/**
+ * @param {(!HTMLCanvasElement|!Blob|!HTMLVideoElement|!HTMLImageElement|!ImageBitmap|!CanvasRenderingContext2D|!ImageData)} image
+ * @param {number=} opt_sx
+ * @param {number=} opt_sy
+ * @param {number=} opt_sw
+ * @param {number=} opt_sh
+ * @return {!Promise<!ImageBitmap>}
+ * @see https://www.w3.org/TR/html51/webappapis.html#webappapis-images
+ */
+function createImageBitmap(image, opt_sx, opt_sy, opt_sw, opt_sh) {}
+
 
 /**
  * @constructor
@@ -1015,6 +1039,25 @@ HTMLImageElement.prototype.naturalHeight;
 HTMLImageElement.prototype.crossOrigin;
 
 /**
+ * @type {string}
+ * @see https://html.spec.whatwg.org/multipage/embedded-content.html#dom-img-currentsrc
+ */
+HTMLImageElement.prototype.currentSrc;
+
+/**
+ * @type {string}
+ * @see https://html.spec.whatwg.org/multipage/images.html#image-decoding-hint
+ */
+HTMLImageElement.prototype.decoding;
+
+/**
+ * @return {!Promise<undefined>}
+ * @see https://html.spec.whatwg.org/multipage/embedded-content.html#dom-img-decode
+ */
+HTMLImageElement.prototype.decode;
+
+
+/**
  * This is a superposition of the Window and Worker postMessage methods.
  * @param {*} message
  * @param {(string|!Array<!Transferable>)=} opt_targetOriginOrTransfer
@@ -1037,6 +1080,19 @@ Document.prototype.postMessage = function(message) {};
  * @type {HTMLHeadElement}
  */
 Document.prototype.head;
+
+/**
+ * @return {?Selection}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/DocumentOrShadowRoot/getSelection
+ * @nosideeffects
+ */
+Document.prototype.getSelection = function() {};
+
+/**
+ * @type {string}
+ * @see https://html.spec.whatwg.org/multipage/dom.html#current-document-readiness
+ */
+Document.prototype.readyState;
 
 /**
  * @see https://developer.apple.com/webapps/docs/documentation/AppleApplications/Reference/SafariJSRef/DOMApplicationCache/DOMApplicationCache.html
@@ -1212,23 +1268,24 @@ WebWorker.prototype.postMessage = function(message) {};
 
 /**
  * Sent when the worker thread posts a message to its creator.
- * @type {?function(!MessageEvent<*>)}
+ * @type {?function(!MessageEvent<*>): void}
  */
 WebWorker.prototype.onmessage;
 
 /**
  * Sent when the worker thread encounters an error.
- * TODO(tbreisacher): Should this change to function(!ErrorEvent)?
- * @type {?function(!Event)}
+ * @type {?function(!ErrorEvent): void}
  */
 WebWorker.prototype.onerror;
 
 /**
  * @see http://dev.w3.org/html5/workers/
+ * @param {!string} scriptURL
+ * @param {!WorkerOptions=} opt_options
  * @constructor
  * @implements {EventTarget}
  */
-function Worker(opt_arg0) {}
+function Worker(scriptURL, opt_options) {}
 
 /** @override */
 Worker.prototype.addEventListener = function(type, listener, opt_options) {};
@@ -1263,16 +1320,39 @@ Worker.prototype.webkitPostMessage = function(message, opt_transfer) {};
 
 /**
  * Sent when the worker thread posts a message to its creator.
- * @type {?function(!MessageEvent<*>)}
+ * @type {?function(!MessageEvent<*>): void}
  */
 Worker.prototype.onmessage;
 
 /**
  * Sent when the worker thread encounters an error.
- * TODO(tbreisacher): Should this change to function(!ErrorEvent)?
- * @type {?function(!Event)}
+ * @type {?function(!ErrorEvent): void}
  */
 Worker.prototype.onerror;
+
+/**
+ * @see http://dev.w3.org/html5/workers/
+ * @record
+ */
+function WorkerOptions() {}
+
+/**
+ * Defines a name for the new global environment of the worker, primarily for
+ * debugging purposes.
+ * @type {string|undefined}
+ */
+WorkerOptions.prototype.name;
+
+/**
+ * 'classic' or 'module'. Default: 'classic'.
+ * Specifying 'module' ensures the worker environment supports JavaScript
+ * modules.
+ * @type {string|undefined}
+ */
+WorkerOptions.prototype.type;
+
+// WorkerOptions.prototype.credentials is defined in fetchapi.js.
+// if type = 'module', it specifies how scriptURL is fetched.
 
 /**
  * @see http://dev.w3.org/html5/workers/
@@ -1302,8 +1382,7 @@ SharedWorker.prototype.port;
 
 /**
  * Called on network errors for loading the initial script.
- * TODO(tbreisacher): Should this change to function(!ErrorEvent)?
- * @type {?function(!Event)}
+ * @type {?function(!ErrorEvent): void}
  */
 SharedWorker.prototype.onerror;
 
@@ -1362,24 +1441,27 @@ WorkerGlobalScope.prototype.close = function() {};
 
 /**
  * Sent when the worker encounters an error.
- * @type {?function(!Event)}
+ * @type {?function(string, string, number, number, !Error): void}
  */
 WorkerGlobalScope.prototype.onerror;
 
 /**
  * Sent when the worker goes offline.
- * @type {?function(!Event)}
+ * @type {?function(!Event): void}
  */
 WorkerGlobalScope.prototype.onoffline;
 
 /**
  * Sent when the worker goes online.
- * @type {?function(!Event)}
+ * @type {?function(!Event): void}
  */
 WorkerGlobalScope.prototype.ononline;
 
 /** @type {!WorkerPerformance} */
 WorkerGlobalScope.prototype.performance;
+
+/** @type {!WorkerNavigator} */
+WorkerGlobalScope.prototype.navigator;
 
 /**
  * @see http://dev.w3.org/html5/workers/
@@ -1408,7 +1490,7 @@ DedicatedWorkerGlobalScope.prototype.webkitPostMessage =
 
 /**
  * Sent when the creator posts a message to this worker.
- * @type {?function(!MessageEvent<*>)}
+ * @type {?function(!MessageEvent<*>): void}
  */
 DedicatedWorkerGlobalScope.prototype.onmessage;
 
@@ -1817,6 +1899,9 @@ HTMLImageElement.prototype.onload;
 
 /** @type {?function(Event)} */
 HTMLImageElement.prototype.onerror;
+
+/** @type {string} */
+HTMLMediaElement.prototype.preload;
 
 /** @type {number} */
 HTMLMediaElement.prototype.readyState;
@@ -3196,6 +3281,14 @@ DOMTokenList.prototype.add = function(var_args) {};
 DOMTokenList.prototype.remove = function(var_args) {};
 
 /**
+ * Replaces token with newToken.
+ * @param {string} token The CSS class to replace.
+ * @param {string} newToken The new CSS class to use.
+ * @return {undefined}
+ */
+DOMTokenList.prototype.replace = function(token, newToken) {};
+
+/**
  * @param {string} token The CSS class to toggle from this element.
  * @param {boolean=} opt_force True to add the class whether it exists
  *     or not. False to remove the class whether it exists or not.
@@ -3593,7 +3686,7 @@ Document.prototype.webkitFullScreenKeyboardInputAllowed;
 Element.prototype.msRequestFullscreen = function() {};
 
 /** @return {void} */
-Element.prototype.msExitFullscreen = function() {};
+Document.prototype.msExitFullscreen = function() {};
 
 /** @type {boolean} */
 Document.prototype.msFullscreenEnabled;
@@ -3655,7 +3748,7 @@ MutationRecord.prototype.oldValue;
 
 /**
  * @see http://www.w3.org/TR/domcore/#mutation-observers
- * @param {function(Array<!MutationRecord>, MutationObserver)} callback
+ * @param {function(!Array<!MutationRecord>, !MutationObserver)} callback
  * @constructor
  */
 function MutationObserver(callback) {}
@@ -3733,15 +3826,16 @@ Document.prototype.msHidden;
  * @param {string} type
  * @param {{extends: (string|undefined), prototype: (Object|undefined)}=} options
  * @return {!function(new:Element, ...*)} a constructor for the new tag.
+ * @deprecated document.registerElement() is deprecated in favor of customElements.define()
  */
 Document.prototype.registerElement = function(type, options) {};
 
 /**
- * This method is deprecated and should be removed by the end of 2014.
  * @see http://www.w3.org/TR/components-intro/
  * @see http://w3c.github.io/webcomponents/spec/custom/#extensions-to-document-interface-to-register
  * @param {string} type
  * @param {{extends: (string|undefined), prototype: (Object|undefined)}} options
+ * @deprecated This method has been removed and will be removed soon from this file.
  */
 Document.prototype.register = function(type, options) {};
 
@@ -3824,6 +3918,15 @@ ShadowRoot.prototype.getSelection = function() {};
  * @nosideeffects
  */
 ShadowRoot.prototype.elementFromPoint = function(x, y) {};
+
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @return {!IArrayLike<!Element>}
+ * @nosideeffects
+ */
+ShadowRoot.prototype.elementsFromPoint = function(x, y) {};
 
 
 /**
@@ -4234,6 +4337,37 @@ function HTMLDataListElement() {}
 HTMLDataListElement.prototype.options;
 
 
+/**
+ * @return {boolean}
+ * @see https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
+ */
+HTMLObjectElement.prototype.checkValidity;
+
+/**
+ * @param {string} message
+ * @see https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
+ * @return {undefined}
+ */
+HTMLObjectElement.prototype.setCustomValidity;
+
+/**
+ * @type {string}
+ * @see https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
+ */
+HTMLObjectElement.prototype.validationMessage;
+
+/**
+ * @type {!ValidityState}
+ * @see https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
+ */
+HTMLObjectElement.prototype.validity;
+
+/**
+ * @type {boolean}
+ * @see https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
+ */
+HTMLObjectElement.prototype.willValidate;
+
 
 /**
  * @see https://html.spec.whatwg.org/multipage/forms.html#the-output-element
@@ -4398,10 +4532,23 @@ HTMLMeterElement.prototype.labels;
 
 
 /**
+ * @interface
+ * @see https://storage.spec.whatwg.org/#api
+ */
+function NavigatorStorage() {};
+
+/**
+ * @type {!StorageManager}
+ */
+NavigatorStorage.prototype.storage;
+
+/**
  * @constructor
+ * @implements NavigatorStorage
  * @see https://www.w3.org/TR/html5/webappapis.html#navigator
  */
 function Navigator() {}
+
 /**
  * @type {string}
  * @see https://www.w3.org/TR/html5/webappapis.html#dom-navigator-appcodename
@@ -4517,6 +4664,66 @@ Navigator.prototype.javaEnabled = function() {};
  * https://github.com/w3c/device-memory
  */
 Navigator.prototype.deviceMemory;
+
+/**
+ * @type {!StorageManager}
+ * @see https://storage.spec.whatwg.org
+ */
+Navigator.prototype.storage;
+
+/**
+ * @param {!ShareData=} data
+ * @return {!Promise<undefined>}
+ * @see https://wicg.github.io/web-share/#share-method
+ */
+Navigator.prototype.share = function(data) {};
+
+/**
+ * @type {number}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/NavigatorConcurrentHardware/hardwareConcurrency
+ */
+Navigator.prototype.hardwareConcurrency;
+
+/**
+ * @constructor
+ * @implements NavigatorStorage
+ * @see https://html.spec.whatwg.org/multipage/workers.html#the-workernavigator-object
+ */
+function WorkerNavigator() {}
+
+/**
+ * @type {number}
+ * @see https://developers.google.com/web/updates/2017/12/device-memory
+ * https://github.com/w3c/device-memory
+ */
+WorkerNavigator.prototype.deviceMemory;
+
+/**
+ * @type {number}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/NavigatorConcurrentHardware/hardwareConcurrency
+ */
+WorkerNavigator.prototype.hardwareConcurrency;
+
+/**
+ * @type {!StorageManager}
+ * @see https://storage.spec.whatwg.org
+ */
+WorkerNavigator.prototype.storage;
+
+/**
+ * @record
+ * @see https://wicg.github.io/web-share/#sharedata-dictionary
+ */
+function ShareData() {}
+
+/** @type {string|undefined} */
+ShareData.prototype.title;
+
+/** @type {string|undefined} */
+ShareData.prototype.text;
+
+/** @type {string|undefined} */
+ShareData.prototype.url;
 
 /**
  * @constructor
@@ -4675,3 +4882,72 @@ InputDeviceCapabilities.prototype.pointerMovementScrolls;
 
 /** @type {?InputDeviceCapabilities} */
 MouseEvent.prototype.sourceCapabilities;
+
+/**
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport
+ * @constructor
+ * @implements {EventTarget}
+ */
+function VisualViewport() {}
+
+/** @type {number} */
+VisualViewport.prototype.offsetLeft;
+
+/** @type {number} */
+VisualViewport.prototype.offsetTop;
+
+/** @type {number} */
+VisualViewport.prototype.pageLeft;
+
+/** @type {number} */
+VisualViewport.prototype.pageTop;
+
+/** @type {number} */
+VisualViewport.prototype.width;
+
+/** @type {number} */
+VisualViewport.prototype.height;
+
+/** @type {number} */
+VisualViewport.prototype.scale;
+
+/** @override */
+VisualViewport.prototype.addEventListener = function(type, listener,
+    opt_options) {};
+
+/** @override */
+VisualViewport.prototype.removeEventListener = function(type, listener,
+    opt_options) {};
+
+/** @override */
+VisualViewport.prototype.dispatchEvent = function(evt) {};
+
+/** @type {?function(!Event)} */
+VisualViewport.prototype.onresize;
+
+/** @type {?function(!Event)} */
+VisualViewport.prototype.onscroll;
+
+/**
+ * @see https://storage.spec.whatwg.org/
+ * @constructor
+ */
+function StorageManager() {}
+
+/** @return {!Promise<boolean>} */
+StorageManager.prototype.persisted = function() {};
+
+/** @return {!Promise<boolean>} */
+StorageManager.prototype.persist = function() {};
+
+/** @return {!Promise<StorageEstimate>} */
+StorageManager.prototype.estimate = function() {};
+
+/**
+ * @see https://storage.spec.whatwg.org/
+ * @typedef {{
+ *   usage: number,
+ *   quota: number
+ * }}
+ */
+var StorageEstimate;

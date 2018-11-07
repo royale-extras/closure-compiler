@@ -16,21 +16,28 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.jscomp.ScopeSubject.assertScope;
+
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import junit.framework.TestCase;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link SyntacticScopeCreator}.
  *
  */
-public final class SyntacticScopeCreatorTest extends TestCase {
+@RunWith(JUnit4.class)
+public final class SyntacticScopeCreatorTest {
 
   private Compiler compiler;
   private SyntacticScopeCreator scopeCreator;
 
-  @Override
-  protected void setUp() {
+  @Before
+  public void setUp() {
     compiler = new Compiler();
     CompilerOptions options = new CompilerOptions();
     compiler.initOptions(options);
@@ -46,10 +53,11 @@ public final class SyntacticScopeCreatorTest extends TestCase {
 
   private Node getRoot(String js) {
     Node root = compiler.parseTestCode(js);
-    assertEquals(0, compiler.getErrorCount());
+    assertThat(compiler.getErrorCount()).isEqualTo(0);
     return root;
   }
 
+  @Test
   public void testFunctionScope() {
     compiler.getOptions().setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     Scope scope = getScope("function foo() {}\n" +
@@ -57,52 +65,55 @@ public final class SyntacticScopeCreatorTest extends TestCase {
         "[function bar2() { var y; }];" +
         "if (true) { function z() {} }");
 
-    assertTrue(scope.isDeclared("foo", false));
-    assertTrue(scope.isDeclared("x", false));
-    assertTrue(scope.isDeclared("z", false));
+    assertScope(scope).declares("foo").directly();
+    assertScope(scope).declares("x").directly();
+    assertScope(scope).declares("z").directly();
 
     // The following should not be declared in this scope
-    assertFalse(scope.isDeclared("a1", false));
-    assertFalse(scope.isDeclared("bar", false));
-    assertFalse(scope.isDeclared("bar2", false));
-    assertFalse(scope.isDeclared("y", false));
-    assertFalse(scope.isDeclared("", false));
+    assertScope(scope).doesNotDeclare("a1");
+    assertScope(scope).doesNotDeclare("bar");
+    assertScope(scope).doesNotDeclare("bar2");
+    assertScope(scope).doesNotDeclare("y");
+    assertScope(scope).doesNotDeclare("");
   }
 
+  @Test
   public void testNestedFunctionScope() {
     Node root = getRoot("function f(x) { function g(y) {} }");
     Scope globalScope = (Scope) scopeCreator.createScope(root, null);
 
     Node fNode = root.getFirstChild();
     Scope outerFScope = (Scope) scopeCreator.createScope(fNode, globalScope);
-    assertTrue(outerFScope.isDeclared("x", false));
+    assertScope(outerFScope).declares("x").directly();
 
     Node innerFNode = fNode.getLastChild().getFirstChild();
     Scope innerFScope = (Scope) scopeCreator.createScope(innerFNode, outerFScope);
-    assertFalse(innerFScope.isDeclared("x", false));
-    assertTrue(innerFScope.isDeclared("y", false));
+    assertScope(innerFScope).declares("x").onSomeParent();
+    assertScope(innerFScope).declares("y").directly();
   }
 
+  @Test
   public void testScopeRootNode() {
     Node root = getRoot("function foo() { var x = 10; }");
 
     Scope globalScope = (Scope) scopeCreator.createScope(root, null);
-    assertEquals(root, globalScope.getRootNode());
+    assertThat(globalScope.getRootNode()).isEqualTo(root);
 
     Node fooNode = root.getFirstChild();
-    assertEquals(Token.FUNCTION, fooNode.getToken());
+    assertThat(fooNode.getToken()).isEqualTo(Token.FUNCTION);
     Scope fooScope = (Scope) scopeCreator.createScope(fooNode, globalScope);
-    assertEquals(fooNode, fooScope.getRootNode());
-    assertTrue(fooScope.isDeclared("x", false));
+    assertThat(fooScope.getRootNode()).isEqualTo(fooNode);
+    assertScope(fooScope).declares("x").directly();
   }
 
+  @Test
   public void testFunctionExpressionInForLoopInitializer() {
     Node root = getRoot("for (function foo() {};;) {}");
     Scope globalScope = (Scope) scopeCreator.createScope(root, null);
-    assertFalse(globalScope.isDeclared("foo", false));
+    assertScope(globalScope).doesNotDeclare("foo");
 
     Node fNode = root.getFirstFirstChild();
     Scope fScope = (Scope) scopeCreator.createScope(fNode, globalScope);
-    assertTrue(fScope.isDeclared("foo", false));
+    assertScope(fScope).declares("foo").directly();
   }
 }

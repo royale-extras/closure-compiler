@@ -30,7 +30,6 @@ import com.google.javascript.jscomp.type.ReverseAbstractInterpreter;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.TypeIRegistry;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import java.io.Serializable;
 import java.util.HashMap;
@@ -80,17 +79,15 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   @Nullable
   abstract Node getScriptNode(String filename);
 
-  /**
-   * Gets the module graph. May return null if there aren't at least two
-   * modules.
-   */
+  /** Gets the module graph. */
+  @Nullable
   abstract JSModuleGraph getModuleGraph();
 
   /**
-   * Gets the inputs in the order in which they are being processed.
-   * Only for use by {@code AbstractCompilerRunner}.
+   * Gets the inputs in the order in which they are being processed. Only for use by {@code
+   * AbstractCompilerRunner}.
    */
-  abstract List<CompilerInput> getInputsInOrder();
+  abstract Iterable<CompilerInput> getInputsInOrder();
 
   /**
    * Gets the total number of inputs.
@@ -139,28 +136,20 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   // End of intermediate state needed by passes.
   //
 
-  static enum MostRecentTypechecker {
-    NONE,
-    OTI,
-    NTI
-  }
-
   /**
    * Sets the type-checking pass that ran most recently.
    */
-  abstract void setMostRecentTypechecker(MostRecentTypechecker mostRecent);
+  abstract void setTypeCheckingHasRun(boolean hasRun);
 
   /** Gets the type-checking pass that ran most recently. */
-  abstract MostRecentTypechecker getMostRecentTypechecker();
+  abstract boolean hasTypeCheckingRun();
 
   /**
    * Gets a central registry of type information from the compiled JS.
    */
   public abstract JSTypeRegistry getTypeRegistry();
 
-  public abstract TypeIRegistry getTypeIRegistry();
-
-  public abstract void clearTypeIRegistry();
+  public abstract void clearJSTypeRegistry();
 
   abstract void forwardDeclareType(String typeName);
 
@@ -258,11 +247,6 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    * recorded as TypeMismatchs only for convenience
    */
   abstract Iterable<TypeMismatch> getImplicitInterfaceUses();
-
-  /**
-   * Global type registry used by NTI.
-   */
-  abstract <T extends TypeIRegistry> T getGlobalTypeInfo();
 
   abstract void setExternExports(String externExports);
 
@@ -564,6 +548,75 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
 
   abstract void addComments(String filename, List<Comment> comments);
 
+  /** Indicates whether a property has a getter or a setter, or both. */
+  public enum PropertyAccessKind {
+    // To save space properties without getters or setters won't appear
+    // in the maps at all, but NORMAL will be returned by some methods.
+    NORMAL(0),
+    GETTER_ONLY(1),
+    SETTER_ONLY(2),
+    GETTER_AND_SETTER(3);
+
+    final byte flags;
+
+    PropertyAccessKind(int flags) {
+      this.flags = (byte) flags;
+    }
+
+    boolean hasGetter() {
+      return (flags & 1) != 0;
+    }
+
+    boolean hasSetter() {
+      return (flags & 2) != 0;
+    }
+
+    boolean hasGetterOrSetter() {
+      return (flags & 3) != 0;
+    }
+
+    // used to combine information from externs and from sources
+    PropertyAccessKind unionWith(PropertyAccessKind other) {
+      int combinedFlags = this.flags | other.flags;
+      switch (combinedFlags) {
+        case 0:
+          return NORMAL;
+        case 1:
+          return GETTER_ONLY;
+        case 2:
+          return SETTER_ONLY;
+        case 3:
+          return GETTER_AND_SETTER;
+        default:
+          throw new IllegalStateException("unexpected value: " + combinedFlags);
+      }
+    }
+  }
+
+  /**
+   * Returns a map containing an entry for every property name found in the externs files with
+   * a getter and / or setter defined.
+   *
+   * <p>Property names for which there are no getters or setters will not be in the map.
+   */
+  abstract ImmutableMap<String, PropertyAccessKind> getExternGetterAndSetterProperties();
+
+  /** Sets the map of extern properties with getters and setters. */
+  abstract void setExternGetterAndSetterProperties(
+      ImmutableMap<String, PropertyAccessKind> externGetterAndSetterProperties);
+
+  /**
+   * Returns a map containing an entry for every property name found in the source AST with
+   * a getter and / or setter defined.
+   *
+   * <p>Property names for which there are no getters or setters will not be in the map.
+   */
+  abstract ImmutableMap<String, PropertyAccessKind> getSourceGetterAndSetterProperties();
+
+  /** Sets the map of properties with getters and setters defined in the sources AST. */
+  abstract void setSourceGetterAndSetterProperties(
+      ImmutableMap<String, PropertyAccessKind> externGetterAndSetterProperties);
+
   /**
    * Returns all the comments from the given file.
    */
@@ -613,14 +666,17 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
     return annotationMap.get(key);
   }
 
-  private @Nullable PersistentInputStore persistentInputStore;
-
-  void setPersistentInputStore(PersistentInputStore persistentInputStore) {
-    this.persistentInputStore = persistentInputStore;
+  /**
+   * Returns a new AstFactory that will add type information to the nodes it creates if and only if
+   * type type checking has already happened.
+   */
+  public AstFactory createAstFactory() {
+    return hasTypeCheckingRun()
+        ? AstFactory.createFactoryWithTypes(getTypeRegistry())
+        : AstFactory.createFactoryWithoutTypes();
   }
 
-  @Nullable
-  PersistentInputStore getPersistentInputStore() {
-    return persistentInputStore;
-  }
+  public abstract ModuleMetadataMap getModuleMetadataMap();
+
+  public abstract void setModuleMetadataMap(ModuleMetadataMap moduleMetadataMap);
 }

@@ -33,6 +33,7 @@ import com.google.javascript.jscomp.deps.SimpleDependencyInfo;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,12 +41,12 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * A class for the internal representation of an input to the compiler.
- * Wraps a {@link SourceAst} and maintain state such as module for the input and
- * whether the input is an extern. Also calculates provided and required types.
+ * A class for the internal representation of an input to the compiler. Wraps a {@link SourceAst}
+ * and maintain state such as module for the input and whether the input is an extern. Also
+ * calculates provided and required types.
  *
  */
-public class CompilerInput implements SourceAst, DependencyInfo {
+public class CompilerInput extends DependencyInfo.Base implements SourceAst {
 
   private static final long serialVersionUID = 1L;
 
@@ -58,9 +59,9 @@ public class CompilerInput implements SourceAst, DependencyInfo {
 
   // DependencyInfo to delegate to.
   private DependencyInfo dependencyInfo;
-  private final List<String> extraRequires = new ArrayList<>();
+  private final List<Require> extraRequires = new ArrayList<>();
   private final List<String> extraProvides = new ArrayList<>();
-  private final List<String> orderedRequires = new ArrayList<>();
+  private final List<Require> orderedRequires = new ArrayList<>();
   private final List<String> dynamicRequires = new ArrayList<>();
   private boolean hasFullParseDependencyInfo = false;
   private ModuleType jsModuleType = ModuleType.NONE;
@@ -69,6 +70,15 @@ public class CompilerInput implements SourceAst, DependencyInfo {
   // We do not want to persist this across serialized state.
   private transient AbstractCompiler compiler;
   private transient ModulePath modulePath;
+
+  // TODO(tjgq): Whether a CompilerInput is an externs file is determined by the `isExtern`
+  // constructor argument and the `setIsExtern` method. Both are necessary because, while externs
+  // files passed under the --externs flag are not required to contain an @externs annotation,
+  // externs files passed under any other flag must have one, and the presence of the latter can
+  // only be known once the file has been parsed. To add to the confusion, note that CompilerInput
+  // doesn't actually store the extern bit itself, but instead mutates the SourceFile associated
+  // with the AST node. Once (when?) we enforce that extern files always contain an @externs
+  // annotation, we can store the extern bit in the AST node, and make SourceFile immutable.
 
   public CompilerInput(SourceAst ast) {
     this(ast, ast.getSourceFile().getName(), false);
@@ -86,10 +96,8 @@ public class CompilerInput implements SourceAst, DependencyInfo {
     this.ast = ast;
     this.id = inputId;
 
-    // TODO(nicksantos): Add a precondition check here. People are passing
-    // in null, but they should not be.
-    if (ast != null && ast.getSourceFile() != null) {
-      ast.getSourceFile().setIsExtern(isExtern);
+    if (isExtern) {
+      setIsExtern();
     }
   }
 
@@ -99,15 +107,6 @@ public class CompilerInput implements SourceAst, DependencyInfo {
 
   public CompilerInput(SourceFile file, boolean isExtern) {
     this(new JsAst(file), isExtern);
-  }
-
-  /**
-   * Using the RecoverableJsAst, creates a CompilerInput that can be reset() to be safe to reuse
-   * in multiple compiler invocations.
-   */
-  public static CompilerInput makePersistentInput(SourceFile file) {
-    SourceAst ast = new RecoverableJsAst(new JsAst(file), true);
-    return new CompilerInput(ast, file.isExtern());
   }
 
   /** Returns a name for this input. Must be unique across all inputs. */
@@ -131,12 +130,9 @@ public class CompilerInput implements SourceAst, DependencyInfo {
 
   @Override
   public Node getAstRoot(AbstractCompiler compiler) {
-    Node root = ast.getAstRoot(compiler);
-    // The root maybe null if the AST can not be created.
-    if (root != null) {
-      checkState(root.isScript());
-      checkNotNull(root.getInputId());
-    }
+    Node root = checkNotNull(ast.getAstRoot(compiler));
+    checkState(root.isScript());
+    checkNotNull(root.getInputId());
     return root;
   }
 
@@ -162,7 +158,7 @@ public class CompilerInput implements SourceAst, DependencyInfo {
 
   /** Gets a list of types depended on by this input. */
   @Override
-  public ImmutableList<String> getRequires() {
+  public ImmutableList<Require> getRequires() {
     if (hasFullParseDependencyInfo) {
       return ImmutableList.copyOf(orderedRequires);
     }
@@ -171,19 +167,21 @@ public class CompilerInput implements SourceAst, DependencyInfo {
   }
 
   @Override
-  public ImmutableList<String> getWeakRequires() {
-    return getDependencyInfo().getWeakRequires();
+  public ImmutableList<String> getTypeRequires() {
+    return getDependencyInfo().getTypeRequires();
   }
 
   /**
-   * Gets a list of types depended on by this input,
-   * but does not attempt to regenerate the dependency information.
-   * Typically this occurs from module rewriting.
+   * Gets a list of namespaces and paths depended on by this input, but does not attempt to
+   * regenerate the dependency information. Typically this occurs from module rewriting.
    */
-  ImmutableCollection<String> getKnownRequires() {
+  ImmutableCollection<Require> getKnownRequires() {
     return concat(
-        dependencyInfo != null ? dependencyInfo.getRequires() : ImmutableList.<String>of(),
-        extraRequires);
+        dependencyInfo != null ? dependencyInfo.getRequires() : ImmutableList.of(), extraRequires);
+  }
+
+  ImmutableList<String> getKnownRequiredSymbols() {
+    return Require.asSymbolList(getKnownRequires());
   }
 
   /** Gets a list of types provided by this input. */
@@ -212,7 +210,7 @@ public class CompilerInput implements SourceAst, DependencyInfo {
   }
 
   /** Registers a type that this input depends on in the order seen in the file. */
-  public boolean addOrderedRequire(String require) {
+  public boolean addOrderedRequire(Require require) {
     if (!orderedRequires.contains(require)) {
       orderedRequires.add(require);
       return true;
@@ -255,7 +253,7 @@ public class CompilerInput implements SourceAst, DependencyInfo {
   }
 
   /** Registers a type that this input depends on. */
-  public void addRequire(String require) {
+  public void addRequire(Require require) {
     extraRequires.add(require);
   }
 
@@ -300,9 +298,10 @@ public class CompilerInput implements SourceAst, DependencyInfo {
       // symbol dependencies.)
       try {
         DependencyInfo info =
-            (new JsFileParser(compiler.getErrorManager()))
-            .setIncludeGoogBase(true)
-            .parseFile(getName(), getName(), getCode());
+            new JsFileParser(compiler.getErrorManager())
+                .setModuleLoader(compiler.getModuleLoader())
+                .setIncludeGoogBase(true)
+                .parseFile(getName(), getName(), getCode());
         return new LazyParsedDependencyInfo(info, (JsAst) ast, compiler);
       } catch (IOException e) {
         compiler.getErrorManager().report(CheckLevel.ERROR,
@@ -333,6 +332,7 @@ public class CompilerInput implements SourceAst, DependencyInfo {
       return SimpleDependencyInfo.builder("", "")
           .setProvides(finder.provides)
           .setRequires(finder.requires)
+          .setTypeRequires(finder.typeRequires)
           .setLoadFlags(finder.loadFlags)
           .build();
     }
@@ -341,7 +341,8 @@ public class CompilerInput implements SourceAst, DependencyInfo {
   private static class DepsFinder {
     private final Map<String, String> loadFlags = new TreeMap<>();
     private final List<String> provides = new ArrayList<>();
-    private final List<String> requires = new ArrayList<>();
+    private final List<Require> requires = new ArrayList<>();
+    private final List<String> typeRequires = new ArrayList<>();
     private final ModulePath modulePath;
 
     DepsFinder(ModulePath modulePath) {
@@ -369,14 +370,13 @@ public class CompilerInput implements SourceAst, DependencyInfo {
               && n.getFirstChild().isGetProp()
               && n.getFirstFirstChild().matchesQualifiedName("goog")) {
 
-            if (!requires.contains("goog")) {
-              requires.add("goog");
+            if (!requires.contains(Require.BASE)) {
+              requires.add(Require.BASE);
             }
 
             Node callee = n.getFirstChild();
             Node argument = n.getLastChild();
             switch (callee.getLastChild().getString()) {
-
               case "module":
                 loadFlags.put("module", "goog");
                 // Fall-through
@@ -391,7 +391,14 @@ public class CompilerInput implements SourceAst, DependencyInfo {
                 if (!argument.isString()) {
                   return;
                 }
-                requires.add(argument.getString());
+                requires.add(Require.googRequireSymbol(argument.getString()));
+                return;
+
+              case "requireType":
+                if (!argument.isString()) {
+                  return;
+                }
+                typeRequires.add(argument.getString());
                 return;
 
               case "loadModule":
@@ -402,6 +409,16 @@ public class CompilerInput implements SourceAst, DependencyInfo {
               default:
                 return;
             }
+          } else if (parent.isGetProp()
+              // TODO(johnplaisted): Consolidate on declareModuleId
+              && (parent.matchesQualifiedName("goog.module.declareNamespace")
+                  || parent.matchesQualifiedName("goog.declareModuleId"))
+              && parent.getParent().isCall()) {
+            Node argument = parent.getParent().getSecondChild();
+            if (!argument.isString()) {
+              return;
+            }
+            provides.add(argument.getString());
           }
           break;
 
@@ -456,7 +473,8 @@ public class CompilerInput implements SourceAst, DependencyInfo {
       // into ModuleLoader.
       String moduleName = n.getString();
       if (moduleName.startsWith("goog:")) {
-        requires.add(moduleName.substring(5)); // cut off the "goog:" prefix
+        // cut off the "goog:" prefix
+        requires.add(Require.googRequireSymbol(moduleName.substring(5)));
         return;
       }
       ModulePath importedModule =
@@ -467,7 +485,7 @@ public class CompilerInput implements SourceAst, DependencyInfo {
         importedModule = modulePath.resolveModuleAsPath(moduleName);
       }
 
-      requires.add(importedModule.toModuleName());
+      requires.add(Require.es6Import(importedModule.toModuleName(), n.getString()));
     }
   }
 
@@ -499,11 +517,12 @@ public class CompilerInput implements SourceAst, DependencyInfo {
     return ast.getSourceFile().isExtern();
   }
 
-  void setIsExtern(boolean isExtern) {
+  void setIsExtern() {
+    // TODO(tjgq): Add a precondition check here. People are passing in null, but they shouldn't be.
     if (ast == null || ast.getSourceFile() == null) {
       return;
     }
-    ast.getSourceFile().setIsExtern(isExtern);
+    ast.getSourceFile().setKind(SourceKind.EXTERN);
   }
 
   public int getLineOffset(int lineno) {
@@ -525,11 +544,6 @@ public class CompilerInput implements SourceAst, DependencyInfo {
     return getDependencyInfo().getLoadFlags();
   }
 
-  @Override
-  public boolean isModule() {
-    return "goog".equals(getLoadFlags().get("module"));
-  }
-
   private static <T> ImmutableSet<T> concat(Iterable<T> first, Iterable<T> second) {
     return ImmutableSet.<T>builder().addAll(first).addAll(second).build();
   }
@@ -540,14 +554,6 @@ public class CompilerInput implements SourceAst, DependencyInfo {
       this.modulePath = moduleLoader.resolve(getName());
     }
     return modulePath;
-  }
-
-  /**
-   * Resets the compiler input for reuse in another compile.
-   */
-  public void reset() {
-    this.module = null;
-    this.ast.clearAst();
   }
 
   /** JavaScript module type. */

@@ -15,17 +15,36 @@
  */
 package com.google.javascript.jscomp;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.deps.ModuleLoader;
+import com.google.javascript.jscomp.deps.ModuleLoader.PathEscaper;
+import java.util.List;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 
+@RunWith(JUnit4.class)
 public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCase {
+  private List<String> moduleRoots;
+  private ModuleLoader.ResolutionMode resolutionMode;
+  private ImmutableMap<String, String> prefixReplacements;
+  private PathEscaper pathEscaper;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     // ECMASCRIPT5 to trigger module processing after parsing.
     setLanguage(LanguageMode.ECMASCRIPT_2015, LanguageMode.ECMASCRIPT5);
     enableRunTypeCheckAfterProcessing();
+    moduleRoots = ImmutableList.of();
+    resolutionMode = ModuleLoader.ResolutionMode.BROWSER;
+    prefixReplacements = ImmutableMap.of();
+    pathEscaper = PathEscaper.ESCAPE;
   }
 
   @Override
@@ -34,12 +53,16 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
     // ECMASCRIPT5 to Trigger module processing after parsing.
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.ERROR);
+    options.setModuleRoots(moduleRoots);
+    options.setModuleResolutionMode(resolutionMode);
+    options.setBrowserResolverPrefixReplacements(prefixReplacements);
+    options.setPathEscaper(pathEscaper);
     return options;
   }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new Es6RewriteModulesToCommonJsModules(compiler);
+    return new Es6RewriteModulesToCommonJsModules(compiler, "test pragma");
   }
 
   @Override
@@ -47,11 +70,13 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
     return 1;
   }
 
+  @Test
   public void testExports() {
     test(
         "export var x;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -67,6 +92,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "var x;\nexport {x}",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -82,6 +108,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "var x;\nexport {x as y}",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    y: {",
             "      enumerable: true,",
@@ -97,6 +124,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "export function f() {}",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    f: {",
             "      enumerable: true,",
@@ -112,6 +140,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "export class c {}",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    c: {",
             "      enumerable: true,",
@@ -127,6 +156,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "export default 123;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    default: {",
             "      enumerable: true,",
@@ -142,6 +172,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         lines("const x = 0;", "export default x;", "x++;"),
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    default: {",
             "      enumerable: true,",
@@ -159,6 +190,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         lines("export default function f() { return 5; }", "f = () => 0;"),
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    default: {",
             "      enumerable: true,",
@@ -175,6 +207,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "export var x, y, z;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -203,6 +236,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
         "export var z, y, x;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -227,10 +261,12 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "}, 'testcode', []);"));
   }
 
+  @Test
   public void testExportDestructureDeclaration() {
     test("export let {a, c:b} = obj;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    a: {",
             "      enumerable: true,",
@@ -251,6 +287,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
     test("export let [a, b] = obj;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    a: {",
             "      enumerable: true,",
@@ -271,6 +308,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
     test("export let {a, b:[c,d]}  = obj;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    a: {",
             "      enumerable: true,",
@@ -295,46 +333,62 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "}, 'testcode', []);"));
   }
 
+  @Test
   public void testImport() {
     test(
-        "import * as x from 'other'; use(x, x.y);",
+        "import * as x from 'other.js'; use(x, x.y);",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
-            "  var module$other = $$require('other');",
-            "  use(module$other, module$other.y);",
-            "}, 'testcode', ['other']);"));
+            "  'test pragma';",
+            "  var x = $$require('other.js');",
+            "  use(x, x.y);",
+            "}, 'testcode', ['other.js']);"));
 
     test(
-        "import Default, {x, y as z} from './././bogus'; use(x, z, Default);",
+        "import Default, {x, y as z} from 'bogus.js'; use(x, z, Default);",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
-            "  var module$bogus = $$require('./././bogus');",
+            "  'test pragma';",
+            "  var module$bogus = $$require('bogus.js');",
             "  use(module$bogus.x, module$bogus.y, module$bogus.default);",
-            "}, 'testcode', ['./././bogus']);"));
+            "}, 'testcode', ['bogus.js']);"));
 
     test(
-        "import First from 'other'; import {Second} from 'other'; use(First, Second);",
+        "import Default, * as x from 'other.js'; use(x, x.y, Default);",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
-            "  var module$other = $$require('other');",
+            "  'test pragma';",
+            "  var x = $$require('other.js');",
+            "  use(x, x.y, x.default);",
+            "}, 'testcode', ['other.js']);"));
+
+    test(
+        "import First from 'other.js'; import {Second} from 'other.js'; use(First, Second);",
+        lines(
+            "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
+            "  var module$other = $$require('other.js');",
             "  use(module$other.default, module$other.Second);",
-            "}, 'testcode', ['other']);"));
+            "}, 'testcode', ['other.js']);"));
 
     test(
-        "import First from 'first'; import {Second} from 'second'; use(First, Second);",
+        "import First from 'first.js'; import {Second} from 'second.js'; use(First, Second);",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
-            "  var module$first = $$require('first');",
-            "  var module$second = $$require('second');",
+            "  'test pragma';",
+            "  var module$first = $$require('first.js');",
+            "  var module$second = $$require('second.js');",
             "  use(module$first.default, module$second.Second);",
-            "}, 'testcode', ['first', 'second']);"));
+            "}, 'testcode', ['first.js', 'second.js']);"));
   }
 
+  @Test
   public void testImportAndExport() {
     test(
-        "export var x; import {y} from 'other';",
+        "export var x; import {y} from 'other.js';",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -343,14 +397,15 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "      },",
             "    },",
             "  });",
-            "  var module$other = $$require('other');",
+            "  var module$other = $$require('other.js');",
             "  var x;",
-            "}, 'testcode', ['other']);"));
+            "}, 'testcode', ['other.js']);"));
 
     test(
-        "import {y} from 'other'; export var x;",
+        "import {y} from 'other.js'; export var x;",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -359,14 +414,15 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "      },",
             "    },",
             "  });",
-            "  var module$other = $$require('other');",
+            "  var module$other = $$require('other.js');",
             "  var x;",
-            "}, 'testcode', ['other']);"));
+            "}, 'testcode', ['other.js']);"));
 
     test(
-        "import {y as Y} from 'other'; export {Y as X};",
+        "import {y as Y} from 'other.js'; export {Y as X};",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    X: {",
             "      enumerable: true,",
@@ -375,15 +431,17 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "      },",
             "    },",
             "  });",
-            "  var module$other = $$require('other');",
-            "}, 'testcode', ['other']);"));
+            "  var module$other = $$require('other.js');",
+            "}, 'testcode', ['other.js']);"));
   }
 
+  @Test
   public void testExportFrom() {
     test(
-        "export {x, y as z} from 'other';",
+        "export {x, y as z} from 'other.js';",
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    x: {",
             "      enumerable: true,",
@@ -398,15 +456,17 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "      },",
             "    },",
             "  });",
-            "  var module$other = $$require('other');",
-            "}, 'testcode', ['other']);"));
+            "  var module$other = $$require('other.js');",
+            "}, 'testcode', ['other.js']);"));
   }
 
+  @Test
   public void testExportWithArguments() {
     test(
         lines("export default function f() { return arguments[1]; }"),
         lines(
             "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
             "  Object.defineProperties($$exports, {",
             "    default: {",
             "      enumerable: true,",
@@ -419,7 +479,9 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
             "}, 'testcode', []);"));
   }
 
-  public void testFileNameIsPreserved() {
+  @Test
+  public void testProtocolAndDomainAreRemovedInRegisteredPathWhenNotEscaping() {
+    pathEscaper = PathEscaper.CANONICALIZE_ONLY;
     test(
         srcs(SourceFile.fromCode("https://example.domain.google.com/test.js", "export var x;")),
         expected(
@@ -427,6 +489,7 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
                 "https://example.domain.google.com/test.js",
                 lines(
                     "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+                    "  'test pragma';",
                     "  Object.defineProperties($$exports, {",
                     "    x: {",
                     "      enumerable: true,",
@@ -436,6 +499,70 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
                     "    },",
                     "  });",
                     "  var x;",
-                    "}, 'https://example.domain.google.com/test.js', []);"))));
+                    "}, 'test.js', []);"))));
+  }
+
+  @Test
+  public void testProtocolInImportPathIsError() {
+    testError("import * as foo from 'file://imported.js';", Es6ToEs3Util.CANNOT_CONVERT);
+  }
+
+  @Test
+  public void testRegisteredPathDoesNotIncludeModuleRoot() {
+    moduleRoots = ImmutableList.of("module/root/");
+
+    test(
+        srcs(SourceFile.fromCode("module/root/test.js", "export {};")),
+        expected(
+            SourceFile.fromCode(
+                "module/root/test.js",
+                lines(
+                    "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+                    "  'test pragma';",
+                    "}, 'test.js', []);"))));
+  }
+
+  @Test
+  public void testImportPathDoesNotIncludeModuleRoot() {
+    moduleRoots = ImmutableList.of("module/root/");
+
+    test(
+        srcs(SourceFile.fromCode("not/root/test.js", "import * as foo from 'module/root/foo.js';")),
+        expected(
+            SourceFile.fromCode(
+                "not/root/test.js",
+                lines(
+                    "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+                    "  'test pragma';",
+                    "  var foo = $$require('foo.js');",
+                    "}, 'not/root/test.js', ['foo.js']);"))));
+  }
+
+  @Test
+  public void testImportPathWithBrowserPrefixReplacementResolution() {
+    resolutionMode = ModuleLoader.ResolutionMode.BROWSER_WITH_TRANSFORMED_PREFIXES;
+    prefixReplacements = ImmutableMap.of("@root/", "");
+
+    test(
+        srcs(SourceFile.fromCode("not/root/test.js", "import * as foo from '@root/foo.js';")),
+        expected(
+            SourceFile.fromCode(
+                "not/root/test.js",
+                lines(
+                    "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+                    "  'test pragma';",
+                    "  var foo = $$require('foo.js');",
+                    "}, 'not/root/test.js', ['foo.js']);"))));
+  }
+
+  @Test
+  public void testExportStarFrom() {
+    test("export * from './other.js';",
+        lines(
+            "$jscomp.registerAndLoadModule(function($$require, $$exports, $$module) {",
+            "  'test pragma';",
+            "  var module$other = $$require('other.js');",
+            "  $$module.exportAllFrom(module$other);",
+            "}, 'testcode', ['other.js']);"));
   }
 }

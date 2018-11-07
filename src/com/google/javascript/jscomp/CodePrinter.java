@@ -23,11 +23,11 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.debugging.sourcemap.FilePosition;
 import com.google.javascript.jscomp.CodePrinter.Builder.CodeGeneratorFactory;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.TypeIRegistry;
+import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -478,7 +478,7 @@ public final class CodePrinter {
      */
     @Override
     boolean breakAfterBlockFor(Node n,  boolean isStatementContext) {
-      checkState(n.isNormalBlock(), n);
+      checkState(n.isBlock(), n);
       Node parent = n.getParent();
       Token type = parent.getToken();
       switch (type) {
@@ -705,10 +705,9 @@ public final class CodePrinter {
     private boolean prettyPrint;
     private boolean outputTypes = false;
     private SourceMap sourceMap = null;
-    private boolean tagAsExterns;
     private boolean tagAsTypeSummary;
     private boolean tagAsStrict;
-    private TypeIRegistry registry;
+    private JSTypeRegistry registry;
     private CodeGeneratorFactory codeGeneratorFactory = new CodeGeneratorFactory() {
       @Override
       public CodeGenerator getCodeGenerator(Format outputFormat, CodeConsumer cc) {
@@ -736,7 +735,7 @@ public final class CodePrinter {
       return this;
     }
 
-    public Builder setTypeRegistry(TypeIRegistry registry) {
+    public Builder setTypeRegistry(JSTypeRegistry registry) {
       this.registry = registry;
       return this;
     }
@@ -786,14 +785,6 @@ public final class CodePrinter {
     }
 
     /**
-     * Set whether the output should be tagged as @externs code.
-     */
-    public Builder setTagAsExterns(boolean tagAsExterns) {
-      this.tagAsExterns = tagAsExterns;
-      return this;
-    }
-
-    /**
      * Set whether the output should be tags as ECMASCRIPT 5 Strict.
      */
     public Builder setTagAsStrict(boolean tagAsStrict) {
@@ -828,7 +819,6 @@ public final class CodePrinter {
           options,
           sourceMap,
           tagAsTypeSummary,
-          tagAsExterns,
           tagAsStrict,
           lineBreak,
           codeGeneratorFactory);
@@ -847,7 +837,7 @@ public final class CodePrinter {
       if (outputTypes) {
         return Format.TYPED;
       }
-      if (prettyPrint || options.getLanguageOut() == LanguageMode.ECMASCRIPT6_TYPED) {
+      if (prettyPrint || options.getOutputFeatureSet().contains(FeatureSet.TYPESCRIPT)) {
         return Format.PRETTY;
       }
       return Format.COMPACT;
@@ -861,7 +851,6 @@ public final class CodePrinter {
       CompilerOptions options,
       SourceMap sourceMap,
       boolean tagAsTypeSummary,
-      boolean tagAsExterns,
       boolean tagAsStrict,
       boolean lineBreak,
       CodeGeneratorFactory codeGeneratorFactory) {
@@ -882,9 +871,6 @@ public final class CodePrinter {
             options.sourceMapDetailLevel);
     CodeGenerator cg = codeGeneratorFactory.getCodeGenerator(outputFormat, mcp);
 
-    if (tagAsExterns) {
-      cg.tagAsExterns();
-    }
     if (tagAsTypeSummary) {
       cg.tagAsTypeSummary();
     }

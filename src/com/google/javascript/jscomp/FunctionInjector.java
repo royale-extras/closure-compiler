@@ -28,7 +28,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.ExpressionDecomposer.DecompositionType;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.jstype.JSType;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
@@ -155,27 +155,28 @@ class FunctionInjector {
     final String fnRecursionName = fnNode.getFirstChild().getString();
     checkState(fnRecursionName != null);
 
-    // If the function references "arguments" directly in the function
-    boolean referencesArguments = NodeUtil.isNameReferenced(
-        block, "arguments", NodeUtil.MATCH_NOT_FUNCTION);
+    // If the function references "arguments" directly in the function or in an arrow function
+    boolean referencesArguments =
+        NodeUtil.isNameReferenced(block, "arguments", NodeUtil.MATCH_NOT_VANILLA_FUNCTION);
 
-    // or it references "eval" or one of its names anywhere.
-    Predicate<Node> p = new Predicate<Node>(){
-      @Override
-      public boolean apply(Node n) {
-        if (n.isName()) {
-          return n.getString().equals("eval")
-            || (!fnName.isEmpty()
-                && n.getString().equals(fnName))
-            || (!fnRecursionName.isEmpty()
-                && n.getString().equals(fnRecursionName));
-        }
-        return false;
-      }
-    };
+    Predicate<Node> blocksInjection =
+        new Predicate<Node>() {
+          @Override
+          public boolean apply(Node n) {
+            if (n.isName()) {
+              // References "eval" or one of its names anywhere.
+              return n.getString().equals("eval")
+                  || (!fnName.isEmpty() && n.getString().equals(fnName))
+                  || (!fnRecursionName.isEmpty() && n.getString().equals(fnRecursionName));
+            } else if (n.isSuper()) {
+              // Don't inline if this function or its inner functions contains super
+              return true;
+            }
+            return false;
+          }
+        };
 
-    return !referencesArguments
-        && !NodeUtil.has(block, p, Predicates.<Node>alwaysTrue());
+    return !referencesArguments && !NodeUtil.has(block, blocksInjection, Predicates.alwaysTrue());
   }
 
   /**
@@ -196,6 +197,10 @@ class FunctionInjector {
     // Allow direct function calls or "fn.call" style calls.
     Node callNode = ref.callNode;
     if (!isSupportedCallType(callNode)) {
+      return CanInlineResult.NO;
+    }
+
+    if (hasSpreadCallArgument(callNode)) {
       return CanInlineResult.NO;
     }
 
@@ -250,6 +255,18 @@ class FunctionInjector {
     return true;
   }
 
+  private static boolean hasSpreadCallArgument(Node callNode) {
+    Predicate<Node> hasSpreadCallArgumentPredicate =
+        new Predicate<Node>() {
+          @Override
+          public boolean apply(Node input) {
+            return input.isSpread();
+          }
+        };
+
+    return NodeUtil.has(callNode, hasSpreadCallArgumentPredicate, Predicates.alwaysTrue());
+  }
+
   /**
    * Inline a function into the call site.
    */
@@ -290,7 +307,7 @@ class FunctionInjector {
       newExpression = NodeUtil.newUndefinedNode(srcLocation);
     } else {
       Node returnNode = block.getFirstChild();
-      checkArgument(returnNode.isReturn());
+      checkArgument(returnNode.isReturn(), returnNode);
 
       // Clone the return node first.
       Node safeReturnNode = returnNode.cloneTree();
@@ -302,10 +319,10 @@ class FunctionInjector {
     }
 
     // If the call site had a cast ensure it's persisted to the new expression that replaces it.
-    TypeI typeBeforeCast = callNode.getTypeIBeforeCast();
+    JSType typeBeforeCast = callNode.getJSTypeBeforeCast();
     if (typeBeforeCast != null) {
-      newExpression.putProp(Node.TYPE_BEFORE_CAST, typeBeforeCast);
-      newExpression.setTypeI(callNode.getTypeI());
+      newExpression.setJSTypeBeforeCast(typeBeforeCast);
+      newExpression.setJSType(callNode.getJSType());
     }
     callParentNode.replaceChild(callNode, newExpression);
     NodeUtil.markFunctionsDeleted(callNode, compiler);
@@ -357,7 +374,7 @@ class FunctionInjector {
     /**
      * An var declaration and initialization, where the result of the call is
      * assigned to the declared name
-     * name. For example: "a = foo();".
+     * name. For example: "var a = foo();".
      *   VAR
      *     NAME A
      *       CALL
@@ -431,7 +448,7 @@ class FunctionInjector {
 
     // Verify the call site:
     if (NodeUtil.isExprCall(parent)) {
-      // This is a simple call?  Example: "foo();".
+      // This is a simple call. Example: "foo();".
       return CallSiteType.SIMPLE_CALL;
     } else if (NodeUtil.isExprAssign(grandParent)
         && !NodeUtil.isNameDeclOrSimpleAssignLhs(callNode, parent)
@@ -444,9 +461,10 @@ class FunctionInjector {
     } else if (parent.isName()
         // TODO(nicksantos): Remove this once everyone is using the CONSTANT_VAR annotation.
         && !NodeUtil.isConstantName(parent)
-        && (grandParent.isVar() || grandParent.isLet())
+        // Note: not let or const. See InlineFunctionsTest.testInlineFunctions35
+        && grandParent.isVar()
         && grandParent.hasOneChild()) {
-      // This is a var/let declaration.  Example: "var x = foo();"
+      // This is a var declaration.  Example: "var x = foo();"
       // TODO(johnlenz): Should we be checking for constants on the
       // left-hand-side of the assignments and handling them as EXPRESSION?
       return CallSiteType.VAR_DECL_SIMPLE_ASSIGNMENT;
