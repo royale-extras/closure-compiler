@@ -2072,7 +2072,6 @@ RegExp.prototype.toString = function() {};
 
 /**
  * @constructor
- * @extends {Array<string>}
  */
 var RegExpResult = function() {};
 
