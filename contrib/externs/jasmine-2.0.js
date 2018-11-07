@@ -423,7 +423,7 @@ jasmine.Env.prototype.afterAll = function(handler) {};
 jasmine.getEnv = function() {};
 
 
-/** @record */
+/** @constructor */
 jasmine.Reporter = function() {};
 
 /**
