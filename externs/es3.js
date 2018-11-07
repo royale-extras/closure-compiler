@@ -29,6 +29,13 @@
 // symbol, Symbol and Symbol.iterator are actually ES6 types but some
 // base types require them to be part of their definition (such as Array).
 
+/**
+ * @constructor
+ * @return {!symbol}
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
+ */
+function symbol() {}
+
 
 /**
  * @param {string=} opt_description
