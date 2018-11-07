@@ -66,21 +66,18 @@ public final class FeatureSet implements Serializable {
 
   public static final FeatureSet ES8 = ES8_MODULES.without(Feature.MODULES);
 
-  public static final FeatureSet ES_NEXT = ES8_MODULES.with(LangVersion.ES_NEXT.features());
+  public static final FeatureSet ES2018_MODULES = ES8_MODULES.with(LangVersion.ES2018.features());
+
+  public static final FeatureSet ES2018 = ES2018_MODULES.without(Feature.MODULES);
+
+  public static final FeatureSet ES_NEXT = ES2018_MODULES.with(LangVersion.ES_NEXT.features());
 
   public static final FeatureSet TYPESCRIPT =  ES_NEXT.with(LangVersion.TYPESCRIPT.features());
 
-  // TODO(b/64536685): Remove this FeatureSet once NTI supports all of ES6.
-  public static final FeatureSet NTI_SUPPORTED =
-      ES5.with(
-          ImmutableSet.<Feature>of(
-              Feature.COMPUTED_PROPERTIES,
-              Feature.EXPONENT_OP,
-              Feature.EXTENDED_OBJECT_LITERALS,
-              Feature.FOR_OF,
-              Feature.GENERATORS,
-              Feature.MEMBER_DECLARATIONS,
-              Feature.TEMPLATE_LITERALS));
+  // OBJECT_PATTERN_REST is a 2018 feature, but its transpilation is done by the same pass that
+  // handles the destructuring transpilation done for ES6.
+  public static final FeatureSet TYPE_CHECK_SUPPORTED =
+      ES8.without(Feature.ASYNC_FUNCTIONS).with(Feature.OBJECT_PATTERN_REST);
 
   private enum LangVersion {
     ES3,
@@ -88,6 +85,7 @@ public final class FeatureSet implements Serializable {
     ES6,
     ES7,
     ES8,
+    ES2018,
     ES_NEXT,
     TYPESCRIPT;
 
@@ -118,10 +116,13 @@ public final class FeatureSet implements Serializable {
     BINARY_LITERALS("binary literal", LangVersion.ES6),
     BLOCK_SCOPED_FUNCTION_DECLARATION("block-scoped function declaration", LangVersion.ES6),
     CLASSES("class", LangVersion.ES6),
+    CLASS_EXTENDS("class extends", LangVersion.ES6),
+    CLASS_GETTER_SETTER("class getters/setters", LangVersion.ES6),
     COMPUTED_PROPERTIES("computed property", LangVersion.ES6),
     CONST_DECLARATIONS("const declaration", LangVersion.ES6),
     DEFAULT_PARAMETERS("default parameter", LangVersion.ES6),
-    DESTRUCTURING("destructuring", LangVersion.ES6),
+    ARRAY_DESTRUCTURING("array destructuring", LangVersion.ES6),
+    OBJECT_DESTRUCTURING("object destructuring", LangVersion.ES6),
     EXTENDED_OBJECT_LITERALS("extended object literal", LangVersion.ES6),
     FOR_OF("for-of loop", LangVersion.ES6),
     GENERATORS("generator", LangVersion.ES6),
@@ -146,9 +147,23 @@ public final class FeatureSet implements Serializable {
     ASYNC_FUNCTIONS("async function", LangVersion.ES8),
     TRAILING_COMMA_IN_PARAM_LIST("trailing comma in param list", LangVersion.ES8),
 
-    // features from tc39 https://github.com/tc39/proposal-object-rest-spread
-    OBJECT_LITERALS_WITH_SPREAD("object literals with spread", LangVersion.ES_NEXT),
-    OBJECT_PATTERN_REST("object pattern rest", LangVersion.ES_NEXT),
+    // ES 2018 adds https://github.com/tc39/proposal-object-rest-spread
+    OBJECT_LITERALS_WITH_SPREAD("object literals with spread", LangVersion.ES2018),
+    OBJECT_PATTERN_REST("object pattern rest", LangVersion.ES2018),
+
+    // https://github.com/tc39/proposal-async-iteration
+    ASYNC_GENERATORS("async generator functions", LangVersion.ES2018),
+    FOR_AWAIT_OF("for-await-of loop", LangVersion.ES2018),
+
+    // ES 2018 adds Regex Features:
+    // https://github.com/tc39/proposal-regexp-dotall-flag
+    REGEXP_FLAG_S("RegExp flag 's'", LangVersion.ES2018),
+    // https://github.com/tc39/proposal-regexp-lookbehind
+    REGEXP_LOOKBEHIND("RegExp Lookbehind", LangVersion.ES2018),
+    // https://github.com/tc39/proposal-regexp-named-groups
+    REGEXP_NAMED_GROUPS("RegExp named groups", LangVersion.ES2018),
+    // https://github.com/tc39/proposal-regexp-unicode-property-escapes
+    REGEXP_UNICODE_PROPERTY_ESCAPE("RegExp unicode property escape", LangVersion.ES2018),
 
     // ES6 typed features that are not at all implemented in browsers
     ACCESSIBILITY_MODIFIER("accessibility modifier", LangVersion.TYPESCRIPT),
@@ -196,14 +211,14 @@ public final class FeatureSet implements Serializable {
     if (ES6_MODULES.contains(this)) {
       return "es6";
     }
-    if (NTI_SUPPORTED.contains(this)) {
-      return "ntiSupported";
-    }
     if (ES7_MODULES.contains(this)) {
       return "es7";
     }
     if (ES8_MODULES.contains(this)) {
       return "es8";
+    }
+    if (ES2018_MODULES.contains(this)) {
+      return "es9";
     }
     if (ES_NEXT.contains(this)) {
       return "es_next";
@@ -214,8 +229,45 @@ public final class FeatureSet implements Serializable {
     throw new IllegalStateException(this.toString());
   }
 
-  public FeatureSet without(Feature feature) {
-    return new FeatureSet(difference(features, EnumSet.of(feature)));
+  /**
+   * Returns a string representation useful for debugging.
+   *
+   * <p>This is not suitable for encoding in deps.js or depgraph files, because it may return
+   * strings like 'otiSupported' and 'ntiSupported' which are not real language modes.
+   */
+  public String versionForDebugging() {
+    if (ES3.contains(this)) {
+      return "es3";
+    }
+    if (ES5.contains(this)) {
+      return "es5";
+    }
+    if (TYPE_CHECK_SUPPORTED.contains(this)) {
+      return "typeCheckSupported";
+    }
+    if (ES6_MODULES.contains(this)) {
+      return "es6";
+    }
+    if (ES7_MODULES.contains(this)) {
+      return "es7";
+    }
+    if (ES8_MODULES.contains(this)) {
+      return "es8";
+    }
+    if (ES2018_MODULES.contains(this)) {
+      return "es9";
+    }
+    if (ES_NEXT.contains(this)) {
+      return "es_next";
+    }
+    if (TYPESCRIPT.contains(this)) {
+      return "ts";
+    }
+    throw new IllegalStateException(this.toString());
+  }
+
+  public FeatureSet without(Feature featureToRemove, Feature... moreFeaturesToRemove) {
+    return new FeatureSet(difference(features, EnumSet.of(featureToRemove, moreFeaturesToRemove)));
   }
 
   public FeatureSet without(FeatureSet other) {
@@ -238,6 +290,13 @@ public final class FeatureSet implements Serializable {
    */
   public boolean contains(FeatureSet other) {
     return this.features.containsAll(other.features);
+  }
+
+  /**
+   * Does this {@link FeatureSet} contain the given feature?
+   */
+  public boolean contains(Feature feature) {
+    return this.features.containsAll(EnumSet.of(feature));
   }
 
   private static EnumSet<Feature> emptyEnumSet() {
@@ -286,11 +345,21 @@ public final class FeatureSet implements Serializable {
     return new FeatureSet(union(features, newFeatures));
   }
 
+  /** Returns a feature set combining all the features from {@code this} and {@code newFeatures}. */
+  @VisibleForTesting
+  public FeatureSet with(FeatureSet newFeatures) {
+    return new FeatureSet(union(features, newFeatures.features));
+  }
+
   /**
    * Does this {@link FeatureSet} include {@code feature}?
    */
   public boolean has(Feature feature) {
     return features.contains(feature);
+  }
+
+  public ImmutableSet<Feature> getFeatures() {
+    return features;
   }
 
   @Override
@@ -318,12 +387,15 @@ public final class FeatureSet implements Serializable {
       case "es6-impl":
       case "es6":
         return ES6;
-      case "ntiSupported":
-        return NTI_SUPPORTED;
+      case "typeCheckSupported":
+        return TYPE_CHECK_SUPPORTED;
       case "es7":
         return ES7;
       case "es8":
         return ES8;
+      case "es2018":
+      case "es9":
+        return ES2018;
       case "es_next":
         return ES_NEXT;
       case "ts":

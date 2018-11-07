@@ -35,7 +35,7 @@ public abstract class SimpleDependencyInfo extends DependencyInfo.Base {
         .setPathRelativeToClosureBase(srcPathRelativeToClosure)
         .setProvides(ImmutableList.of())
         .setRequires(ImmutableList.of())
-        .setWeakRequires(ImmutableList.of())
+        .setTypeRequires(ImmutableList.of())
         .setLoadFlags(ImmutableMap.of());
   }
 
@@ -45,15 +45,30 @@ public abstract class SimpleDependencyInfo extends DependencyInfo.Base {
    */
   @AutoValue.Builder
   public abstract static class Builder {
+    public static Builder from(DependencyInfo copy) {
+      return new AutoValue_SimpleDependencyInfo.Builder()
+          .setName(copy.getName())
+          .setPathRelativeToClosureBase(copy.getPathRelativeToClosureBase())
+          .setProvides(copy.getProvides())
+          .setRequires(copy.getRequires())
+          .setTypeRequires(copy.getTypeRequires())
+          .setLoadFlags(copy.getLoadFlags());
+    }
+
     abstract Builder setName(String name);
     abstract Builder setPathRelativeToClosureBase(String srcPathRelativeToClosure);
 
     public abstract Builder setProvides(Collection<String> provides);
     public abstract Builder setProvides(String... provides);
-    public abstract Builder setRequires(Collection<String> requires);
-    public abstract Builder setRequires(String... requires);
-    public abstract Builder setWeakRequires(Collection<String> weakRequires);
-    public abstract Builder setWeakRequires(String... weakRequires);
+
+    public abstract Builder setRequires(Collection<Require> requires);
+
+    public abstract Builder setRequires(Require... requires);
+
+    public abstract Builder setTypeRequires(Collection<String> typeRequires);
+
+    public abstract Builder setTypeRequires(String... typeRequires);
+
     public abstract Builder setLoadFlags(Map<String, String> loadFlags);
 
     private static final ImmutableMap<String, String> GOOG_MODULE_FLAGS =

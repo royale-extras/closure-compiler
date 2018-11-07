@@ -42,6 +42,7 @@
 'require base';
 'require es6/map';
 'require es6/set';
+'require util/global';
 
 (function() {
 /**
@@ -55,6 +56,29 @@ var Module = function(id, opt_exports) {
   this.id = id;
   /** @type {?} */
   this.exports = opt_exports || {};
+};
+
+
+/**
+ * @param {?} other
+ */
+Module.prototype.exportAllFrom = function(other) {
+  var module = this;
+  var define = {};
+  for (var key in other) {
+    if (key == 'default' || key in module.exports || key in define) {
+      continue;
+    }
+    define[key] = {
+      enumerable: true,
+      get: (function(key) {
+        return function() {
+          return other[key];
+        };
+      })(key)
+    };
+  }
+  $jscomp.global.Object.defineProperties(module.exports, define);
 };
 
 
@@ -238,18 +262,21 @@ function createRequire(opt_module) {
    */
   function requireEnsure(requires, callback) {
     if (currentModulePath) {
-      requires = requires.map(function(require) {
-        return maybeNormalizePath(currentModulePath, require);
-      });
+      for (var i = 0; i < requires.length; i++) {
+        requires[i] = maybeNormalizePath(currentModulePath, requires[i]);
+      }
     }
 
-    requires = requires.filter(function(require) {
-      var required = moduleCache.get(require);
-      return !required || required.blockingDeps.size;
-    });
+    var blockingRequires = [];
+    for (var i = 0; i < requires.length; i++) {
+      var required = moduleCache.get(requires[i]);
+      if (!required || required.blockingDeps.size) {
+        blockingRequires.push(requires[i]);
+      }
+    }
 
-    if (requires.length) {
-      var requireSet = new Set(requires);
+    if (blockingRequires.length) {
+      var requireSet = new Set(blockingRequires);
       var callbackEntry = new CallbackEntry(requireSet, callback);
       requireSet.forEach(function(require) {
         var arr = ensureMap.get(require);
@@ -269,8 +296,17 @@ function createRequire(opt_module) {
 }
 
 
-/** @const {!function(string): ?} */
+/** @const {function(string): ?} */
 $jscomp.require = createRequire();
+
+
+/**
+ * @param {string} id
+ * @return {boolean}
+ */
+$jscomp.hasModule = function(id) {
+  return moduleCache.has(id);
+};
 
 
 /**
@@ -322,16 +358,16 @@ $jscomp.registerModule = function(moduleDef, absModulePath, opt_shallowDeps) {
   }
 
   var shallowDeps = opt_shallowDeps || [];
-  shallowDeps = shallowDeps.map(function(dep) {
-    return maybeNormalizePath(absModulePath, dep);
-  });
+  for (var i = 0; i < shallowDeps.length; i++) {
+    shallowDeps[i] = maybeNormalizePath(absModulePath, shallowDeps[i]);
+  }
 
   var /** !Set<string> */ blockingDeps = new Set();
-  shallowDeps.forEach(function(dep) {
-    getTransitiveBlockingDepsOf(dep).forEach(function(transitive) {
+  for (var i = 0; i < shallowDeps.length; i++) {
+    getTransitiveBlockingDepsOf(shallowDeps[i]).forEach(function(transitive) {
       blockingDeps.add(transitive);
     });
-  });
+  }
 
   // Make sure this module isn't blocking itself in the event of a cycle.
   blockingDeps.delete(absModulePath);
@@ -432,6 +468,7 @@ function removeAsBlocking(cacheEntry) {
  * @param {function(function(string), ?, !Module)} moduleDef
  * @param {string} absModulePath
  * @param {!Array<string>} shallowDeps
+ * @suppress {strictMissingProperties} "ensure" is not declared.
  */
 $jscomp.registerAndLoadModule = function(
     moduleDef, absModulePath, shallowDeps) {

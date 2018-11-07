@@ -20,8 +20,9 @@ import static com.google.common.base.Ascii.toLowerCase;
 import static com.google.common.base.Ascii.toUpperCase;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_DESTRUCTURING_FORWARD_DECLARE;
+import static com.google.javascript.jscomp.ClosurePrimitiveErrors.MODULE_USES_GOOG_MODULE_GET;
 
-import com.google.common.base.Predicates;
 import com.google.javascript.jscomp.NodeTraversal.AbstractModuleCallback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
@@ -40,34 +41,31 @@ import java.util.Set;
 public final class ClosureCheckModule extends AbstractModuleCallback
     implements HotSwapCompilerPass {
   static final DiagnosticType AT_EXPORT_IN_GOOG_MODULE =
-      DiagnosticType.error(
-          "JSC_AT_EXPORT_IN_GOOG_MODULE",
-          "@export has no effect here");
+      DiagnosticType.error("JSC_AT_EXPORT_IN_GOOG_MODULE", "@export has no effect here");
 
   static final DiagnosticType AT_EXPORT_IN_NON_LEGACY_GOOG_MODULE =
       DiagnosticType.error(
           "JSC_AT_EXPORT_IN_NON_LEGACY_GOOG_MODULE",
           "@export is not allowed here in a non-legacy goog.module."
-          + " Consider using goog.exportSymbol instead.");
+              + " Consider using goog.exportSymbol instead.");
 
   static final DiagnosticType GOOG_MODULE_IN_NON_MODULE =
       DiagnosticType.error(
           "JSC_GOOG_MODULE_IN_NON_MODULE",
           "goog.module() call must be the first statement in a module.");
 
-  static final DiagnosticType GOOG_MODULE_REFERENCES_THIS = DiagnosticType.error(
-      "JSC_GOOG_MODULE_REFERENCES_THIS",
-      "The body of a goog.module cannot reference 'this'.");
+  static final DiagnosticType DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE =
+      DiagnosticType.error(
+          "JSC_DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE",
+          "goog.module.declareLegacyNamespace may only be called in a goog.module.");
 
-  static final DiagnosticType GOOG_MODULE_USES_THROW = DiagnosticType.error(
-      "JSC_GOOG_MODULE_USES_THROW",
-      "The body of a goog.module cannot use 'throw'.");
+  static final DiagnosticType GOOG_MODULE_REFERENCES_THIS =
+      DiagnosticType.error(
+          "JSC_GOOG_MODULE_REFERENCES_THIS", "The body of a goog.module cannot reference 'this'.");
 
-  static final DiagnosticType GOOG_MODULE_USES_GOOG_MODULE_GET = DiagnosticType.error(
-      "JSC_GOOG_MODULE_USES_GOOG_MODULE_GET",
-      "It's illegal to use a 'goog.module.get' at the module top-level."
-      + " Did you mean to use goog.require instead?");
-
+  static final DiagnosticType GOOG_MODULE_USES_THROW =
+      DiagnosticType.error(
+          "JSC_GOOG_MODULE_USES_THROW", "The body of a goog.module cannot use 'throw'.");
   static final DiagnosticType DUPLICATE_NAME_SHORT_REQUIRE =
       DiagnosticType.error(
           "JSC_DUPLICATE_NAME_SHORT_REQUIRE",
@@ -77,11 +75,6 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       DiagnosticType.error(
           "JSC_INVALID_DESTRUCTURING_REQUIRE",
           "Destructuring goog.require must be a simple object pattern.");
-
-  static final DiagnosticType INVALID_DESTRUCTURING_FORWARD_DECLARE =
-      DiagnosticType.error(
-          "JSC_INVALID_DESTRUCTURING_FORWARD_DECLARE",
-          "Cannot destructure a forward-declared type");
 
   static final DiagnosticType LET_GOOG_REQUIRE =
       DiagnosticType.disabled(
@@ -108,10 +101,12 @@ public final class ClosureCheckModule extends AbstractModuleCallback
           "JSC_INCORRECT_SHORTNAME_CAPITALIZATION",
           "The capitalization of short name {0} is incorrect; it should be {1}.");
 
-  static final DiagnosticType EXPORT_NOT_A_MODULE_LEVEL_STATEMENT =
+  static final DiagnosticType EXPORT_NOT_AT_MODULE_SCOPE =
       DiagnosticType.error(
-          "JSC_EXPORT_NOT_A_MODULE_LEVEL_STATEMENT",
-          "Exports must be a statement at the top-level of a module");
+          "JSC_EXPORT_NOT_AT_MODULE_SCOPE", "Exports must be at the top-level of a module");
+
+  static final DiagnosticType EXPORT_NOT_A_STATEMENT =
+      DiagnosticType.error("JSC_EXPORT_NOT_A_STATEMENT", "Exports should be a statement.");
 
   static final DiagnosticType EXPORT_REPEATED_ERROR =
       DiagnosticType.error(
@@ -152,8 +147,7 @@ public final class ClosureCheckModule extends AbstractModuleCallback
 
   static final DiagnosticType REQUIRE_NOT_AT_TOP_LEVEL =
       DiagnosticType.error(
-          "JSC_REQUIRE_NOT_AT_TOP_LEVEL",
-          "goog.require() must be called at file scope.");
+          "JSC_REQUIRE_NOT_AT_TOP_LEVEL", "goog.require() must be called at file scope.");
 
   private final AbstractCompiler compiler;
 
@@ -165,8 +159,9 @@ public final class ClosureCheckModule extends AbstractModuleCallback
     private final Map<String, Node> importsByLongRequiredName = new HashMap<>();
     // Module-local short names for goog.required symbols.
     private final Set<String> shortImportNames = new HashSet<>();
-    // The node of the default (non-named) export of this module, if it exists.
-    private Node defaultExportNode = null;
+    // A map from the export names "exports.name" to the nodes of those named exports.
+    // The default export is keyed with just "exports"
+    private final Map<String, Node> exportNodesByName = new HashMap<>();
 
     ModuleInfo(String moduleName) {
       this.name = moduleName;
@@ -181,12 +176,12 @@ public final class ClosureCheckModule extends AbstractModuleCallback
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   @Override
@@ -217,6 +212,8 @@ public final class ClosureCheckModule extends AbstractModuleCallback
     if (currentModule == null) {
       if (NodeUtil.isCallTo(n, "goog.module")) {
         t.report(n, GOOG_MODULE_IN_NON_MODULE);
+      } else if (NodeUtil.isGoogModuleDeclareLegacyNamespaceCall(n)) {
+        t.report(n, DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE);
       }
       return;
     }
@@ -236,15 +233,16 @@ public final class ClosureCheckModule extends AbstractModuleCallback
             || callee.matchesQualifiedName("goog.forwardDeclare")) {
           checkRequireCall(t, n, parent);
         } else if (callee.matchesQualifiedName("goog.module.get") && t.inModuleHoistScope()) {
-          t.report(n, GOOG_MODULE_USES_GOOG_MODULE_GET);
+          t.report(n, MODULE_USES_GOOG_MODULE_GET);
         }
         break;
-      case ASSIGN: {
-        if (isExportLhs(n.getFirstChild())) {
-          checkModuleExport(t, n, parent);
+      case ASSIGN:
+        {
+          if (isExportLhs(n.getFirstChild())) {
+            checkModuleExport(t, n, parent);
+          }
+          break;
         }
-        break;
-      }
       case CLASS:
       case FUNCTION:
         if (!NodeUtil.isStatement(n)) {
@@ -254,7 +252,8 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       case VAR:
       case LET:
       case CONST:
-        if (t.inModuleHoistScope() && (n.isClass() || NodeUtil.getEnclosingClass(n) == null)
+        if (t.inModuleHoistScope()
+            && (n.isClass() || NodeUtil.getEnclosingClass(n) == null)
             && NodeUtil.getEnclosingType(n, Token.OBJECTLIT) == null) {
           JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(n);
           if (jsdoc != null && jsdoc.isExport()) {
@@ -364,8 +363,7 @@ public final class ClosureCheckModule extends AbstractModuleCallback
               }
             }
           }
-        },
-        Predicates.<Node>alwaysTrue());
+        });
   }
 
   /** Is this the LHS of a goog.module export? i.e. Either "exports" or "exports.name" */
@@ -377,23 +375,52 @@ public final class ClosureCheckModule extends AbstractModuleCallback
         || (lhs.isGetProp() && lhs.getFirstChild().matchesQualifiedName("exports"));
   }
 
+  /**
+   * Returns if the given export RHS nodes are safe to export multiple times. previousLhs is the LHS
+   * of the first assignment to the given export, and newLhs is a later assignment to the same
+   * export.
+   *
+   * <p>This is specifically to allow the TypeScript like the following: var foo; ((object) => { ...
+   * })(foo = exports.foo || (exports.name = {})); ((object) => { ... })(foo = exports.foo ||
+   * (exports.name = {})); which doesn't abide by the goog.module restriction that each export be
+   * exported only once. Since these exports do have a constant value at the end of loading the
+   * goog.module, and we only rewrite named exports whose RHS is a name node in
+   * ClosureRewriteModule, this pattern with an object literal on the RHS is safe to process.
+   */
+  private boolean isPermittedTypeScriptMultipleExportPattern(Node previousLhs, Node newLhs) {
+    Node previousRhs = NodeUtil.getRValueOfLValue(previousLhs);
+    Node newRhs = NodeUtil.getRValueOfLValue(newLhs);
+    return previousRhs != null
+        && previousRhs.isObjectLit()
+        && newRhs != null
+        && newRhs.isObjectLit();
+  }
+
   private void checkModuleExport(NodeTraversal t, Node n, Node parent) {
     checkArgument(n.isAssign());
     Node lhs = n.getFirstChild();
     checkState(isExportLhs(lhs));
-    if (currentModule.defaultExportNode == null && (!t.inModuleScope() || !parent.isExprResult())) {
-      // Invalid export location.
-      t.report(n, EXPORT_NOT_A_MODULE_LEVEL_STATEMENT);
+    // Check multiple exports of the same name
+    Node previousDefinition = currentModule.exportNodesByName.get(lhs.getQualifiedName());
+    if (previousDefinition != null
+        && !isPermittedTypeScriptMultipleExportPattern(previousDefinition, lhs)) {
+      int previousLine = previousDefinition.getLineno();
+      t.report(n, EXPORT_REPEATED_ERROR, String.valueOf(previousLine));
     }
-    if (lhs.isName()) {
-      if  (currentModule.defaultExportNode != null) {
-        // Multiple exports
-        int previousLine = currentModule.defaultExportNode.getLineno();
-        t.report(n, EXPORT_REPEATED_ERROR, String.valueOf(previousLine));
+    // Check exports in invalid program position
+    Node defaultExportNode = currentModule.exportNodesByName.get("exports");
+    // If we have never seen an `exports =` default export assignment, or this is the
+    // default export, then treat this assignment as an export and do the checks it is well formed.
+    if (defaultExportNode == null || lhs.matchesQualifiedName("exports")) {
+      currentModule.exportNodesByName.put(lhs.getQualifiedName(), lhs);
+      if (!t.inModuleScope()) {
+        t.report(n, EXPORT_NOT_AT_MODULE_SCOPE);
+      } else if (!parent.isExprResult()) {
+        t.report(n, EXPORT_NOT_A_STATEMENT);
       }
-      currentModule.defaultExportNode = lhs;
     }
-    if ((lhs.isName() || !NodeUtil.isPrototypeProperty(lhs))
+    // Check @export on a module local name
+    if (!NodeUtil.isPrototypeProperty(lhs)
         && !NodeUtil.isLegacyGoogModuleFile(NodeUtil.getEnclosingScript(n))) {
       JSDocInfo jsDoc = n.getJSDocInfo();
       if (jsDoc != null && jsDoc.isExport()) {
@@ -458,7 +485,7 @@ public final class ClosureCheckModule extends AbstractModuleCallback
     for (Node nameNode : NodeUtil.findLhsNodesInNode(declaration)) {
       String name = nameNode.getString();
       if (!currentModule.shortImportNames.add(name)) {
-         t.report(nameNode, DUPLICATE_NAME_SHORT_REQUIRE, name);
+        t.report(nameNode, DUPLICATE_NAME_SHORT_REQUIRE, name);
       }
     }
   }
@@ -487,12 +514,12 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       return false;
     }
     for (Node stringKey : objectPattern.children()) {
-       if (!stringKey.isStringKey()) {
-         return false;
-       }
-       if (stringKey.hasChildren() && !stringKey.getFirstChild().isName()) {
-         return false;
-       }
+      if (!stringKey.isStringKey()) {
+        return false;
+      }
+      if (stringKey.hasChildren() && !stringKey.getFirstChild().isName()) {
+        return false;
+      }
     }
     return true;
   }

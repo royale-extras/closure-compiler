@@ -234,6 +234,17 @@ function testDoWhileCapturedLet() {
   assertEquals(5, arr[5]());
 }
 
+function testDoWhileFold() {
+  let x = 1;
+  (function () {
+    do {
+      let x = 2;
+      assertEquals(2, x);
+    } while (x = 10, false);
+  })();
+  assertEquals(10, x);
+}
+
 function testMutatedLoopCapturedLet() {
   const arr = [];
   for (let i = 0; i < 10; i++) {
@@ -374,4 +385,34 @@ function testNestedContinueDoesNotBreakClosures() {
   // h skipped explicitly
   // i skipped because it was after h and in the same word
   assertEquals('bcdefgjkl', letters);
+}
+
+function testLetWithSameName_multivariateDeclaration() {
+  // See https://github.com/google/closure-compiler/issues/2969
+  {
+    let x = 1, y = 2;
+    assertEquals(1, x);
+    assertEquals(2, y);
+  }
+  {
+    let x = 3, y = 4;
+    assertEquals(3, x);
+    assertEquals(4, y);
+  }
+}
+
+function testLetInLoopClosure_multivariateDeclaration() {
+  for (let i = 0; i < 3; i++) {
+    let x, y;
+    // Verify that x and y are always undefined here, even though they are
+    // reassigned later in the loop.
+    assertUndefined(x);
+    assertUndefined(y);
+    function f() {
+      x = y = 3;
+    }
+    f();
+    assertEquals(3, x);
+    assertEquals(3, y);
+  }
 }

@@ -22,6 +22,7 @@
 goog.module('jscomp.runtime_tests.polyfill_tests.es6.esmodules_tests.runtime_test');
 goog.setTestOnly();
 
+const array = goog.require('goog.array');
 const testSuite = goog.require('goog.testing.testSuite');
 
 testSuite({
@@ -166,12 +167,12 @@ testSuite({
 
     function assertAvailable(...modules) {
       assertSameElements(
-          modules, allModules.filter(module => module.available));
+          modules, array.filter(allModules, module => module.available));
     }
 
     function reset() {
       $jscomp.clearModules();
-      allModules.forEach(module => module.reset());
+      array.forEach(allModules, module => module.reset());
     }
 
     reset();
@@ -421,5 +422,21 @@ testSuite({
       assertTrue(first.wasSecondLoaded);
       assertFalse(second.wasFirstLoaded);
     });
+  },
+
+  testExportAllFrom() {
+    $jscomp.registerModule(function(require, exports, module) {
+      module.exports.foo = 'foo';
+      module.exports.bar = 'bar';
+    }, 'first.js');
+
+    $jscomp.registerModule(function(require, exports, module) {
+      module.exportAllFrom(require('first.js'));
+    }, 'second.js');
+
+    const second = $jscomp.require('second.js');
+    assertEquals('foo', second.foo);
+    assertEquals('bar', second.bar);
+    assertEquals(2, Object.keys(second).length);
   },
 });

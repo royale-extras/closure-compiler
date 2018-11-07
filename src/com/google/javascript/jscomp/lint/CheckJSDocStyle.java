@@ -19,8 +19,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Sets;
 import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticGroup;
@@ -35,7 +33,6 @@ import com.google.javascript.rhino.JSDocInfo.Visibility;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import java.util.List;
-import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
@@ -43,16 +40,6 @@ import javax.annotation.Nullable;
  * with no corresponding {@code @param} annotation, coding conventions not being respected, etc.
  */
 public final class CheckJSDocStyle extends AbstractPostOrderCallback implements CompilerPass {
-  public static final DiagnosticType INVALID_SUPPRESS =
-      DiagnosticType.disabled(
-          "JSC_INVALID_SUPPRESS",
-          "@suppress annotation not allowed here. See"
-              + " https://github.com/google/closure-compiler/wiki/@suppress-annotations");
-
-  public static final DiagnosticType CONSTRUCTOR_DISALLOWED_JSDOC =
-      DiagnosticType.disabled("JSC_CONSTRUCTOR_DISALLOWED_JSDOC",
-          "Setting visibility on constructors is not yet supported.\n"
-          + "See https://github.com/google/closure-compiler/issues/2761\n");
 
   public static final DiagnosticType CLASS_DISALLOWED_JSDOC =
       DiagnosticType.disabled("JSC_CLASS_DISALLOWED_JSDOC",
@@ -71,7 +58,7 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
   public static final DiagnosticType MISSING_RETURN_JSDOC =
       DiagnosticType.disabled(
           "JSC_MISSING_RETURN_JSDOC",
-          "Function with non-trivial return must have @return JSDoc or inline return JSDoc.");
+          "Function with non-trivial return must have JSDoc indicating the return type.");
 
   public static final DiagnosticType MUST_BE_PRIVATE =
       DiagnosticType.disabled("JSC_MUST_BE_PRIVATE", "Property {0} must be marked @private");
@@ -95,11 +82,14 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
       DiagnosticType.disabled("JSC_EXTERNS_FILES_SHOULD_BE_ANNOTATED",
           "Externs files should be annotated with @externs in the @fileoverview block.");
 
+  public static final DiagnosticType PREFER_BACKTICKS_TO_AT_SIGN_CODE =
+      DiagnosticType.disabled(
+          "JSC_PREFER_BACKTICKS_TO_AT_SIGN_CODE",
+          "Use `some_code` instead of '{'@code some_code'}'.");
+
   public static final DiagnosticGroup ALL_DIAGNOSTICS =
       new DiagnosticGroup(
-          INVALID_SUPPRESS,
           CLASS_DISALLOWED_JSDOC,
-          CONSTRUCTOR_DISALLOWED_JSDOC,
           MISSING_JSDOC,
           MISSING_PARAMETER_JSDOC,
           MIXED_PARAM_JSDOC_STYLES,
@@ -109,7 +99,8 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
           OPTIONAL_PARAM_NOT_MARKED_OPTIONAL,
           WRONG_NUMBER_OF_PARAMS,
           INCORRECT_PARAM_NAME,
-          EXTERNS_FILES_SHOULD_BE_ANNOTATED);
+          EXTERNS_FILES_SHOULD_BE_ANNOTATED,
+          PREFER_BACKTICKS_TO_AT_SIGN_CODE);
 
   private final AbstractCompiler compiler;
 
@@ -119,15 +110,15 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
-    NodeTraversal.traverseEs6(compiler, externs, new ExternsCallback());
+    NodeTraversal.traverse(compiler, root, this);
+    NodeTraversal.traverse(compiler, externs, new ExternsCallback());
   }
 
   @Override
-  public void visit(NodeTraversal t, Node n, Node parent) {
+  public void visit(NodeTraversal t, Node n, Node unused) {
     switch (n.getToken()) {
       case FUNCTION:
-        visitFunction(t, n, parent);
+        visitFunction(t, n);
         break;
       case CLASS:
         visitClass(t, n);
@@ -155,17 +146,26 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
     }
   }
 
-  private void visitNonFunction(NodeTraversal t, Node n) {
-    JSDocInfo jsDoc = n.getJSDocInfo();
+  private void checkForAtSignCodePresence(NodeTraversal t, Node n, @Nullable JSDocInfo jsDoc) {
     if (jsDoc == null) {
       return;
     }
+    if (jsDoc.isAtSignCodePresent()) {
+      t.report(n, PREFER_BACKTICKS_TO_AT_SIGN_CODE);
+    }
+  }
 
-    checkSuppressionsOnNonFunction(t, n, jsDoc);
+  private void visitNonFunction(NodeTraversal t, Node n) {
+    JSDocInfo jsDoc = n.getJSDocInfo();
+
+    checkForAtSignCodePresence(t, n, jsDoc);
   }
 
   private void checkStyleForPrivateProperties(NodeTraversal t, Node n) {
     JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(n);
+
+    checkForAtSignCodePresence(t, n, jsDoc);
+
     String name;
     if (n.isMemberFunctionDef() || n.isGetterDef() || n.isSetterDef()) {
       name = n.getString();
@@ -192,19 +192,11 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
       }
     }
   }
-  private void checkSuppressionsOnNonFunction(NodeTraversal t, Node n, JSDocInfo jsDoc) {
-    // Suppressions that are allowed to be in places other than functions and @fileoverview blocks.
-    Set<String> specialSuppressions =
-        ImmutableSet.of("const", "duplicate", "extraRequire", "missingRequire");
 
-    Set<String> suppressions = Sets.difference(jsDoc.getSuppressions(), specialSuppressions);
-    if (!suppressions.isEmpty()) {
-      t.report(n, INVALID_SUPPRESS);
-    }
-  }
-
-  private void visitFunction(NodeTraversal t, Node function, Node parent) {
+  private void visitFunction(NodeTraversal t, Node function) {
     JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(function);
+
+    checkForAtSignCodePresence(t, function, jsDoc);
 
     if (jsDoc == null && !hasAnyInlineJsDoc(function)) {
       checkMissingJsDoc(t, function);
@@ -217,17 +209,12 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
       }
       checkReturn(t, function, jsDoc);
     }
-
-    if (parent.isMemberFunctionDef()
-        && "constructor".equals(parent.getString())
-        && jsDoc != null
-        && !jsDoc.getVisibility().equals(Visibility.INHERITED)) {
-      t.report(function, CONSTRUCTOR_DISALLOWED_JSDOC);
-    }
   }
 
   private void visitClass(NodeTraversal t, Node cls) {
     JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(cls);
+
+    checkForAtSignCodePresence(t, cls, jsDoc);
 
     if (jsDoc == null) {
       return;
@@ -304,8 +291,8 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
 
     List<String> paramsFromJsDoc =
         jsDoc == null
-            ? ImmutableList.<String>of()
-            : ImmutableList.<String>copyOf(jsDoc.getParameterNames());
+            ? ImmutableList.of()
+            : ImmutableList.copyOf(jsDoc.getParameterNames());
     if (paramsFromJsDoc.isEmpty()) {
       checkInlineParams(t, function);
     } else {
@@ -402,16 +389,24 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
   private void checkReturn(NodeTraversal t, Node function, JSDocInfo jsDoc) {
     if (jsDoc != null
         && (jsDoc.hasType()
+            || jsDoc.isConstructor()
             || jsDoc.hasReturnType()
             || jsDoc.isOverride())) {
       return;
     }
+
+    Node parent = function.getParent();
+    if (parent.isMemberFunctionDef() && parent.getString().equals("constructor")) {
+      // ES6 class constructors should never have "@return".
+      return;
+    }
+
     if (function.getFirstChild().getJSDocInfo() != null) {
       return;
     }
 
     FindNonTrivialReturn finder = new FindNonTrivialReturn();
-    NodeTraversal.traverseEs6(compiler, function.getLastChild(), finder);
+    NodeTraversal.traverse(compiler, function.getLastChild(), finder);
     if (finder.found) {
       t.report(function, MISSING_RETURN_JSDOC);
     }

@@ -23,8 +23,9 @@ import com.google.javascript.jscomp.transpile.TranspileResult;
 import com.google.javascript.jscomp.transpile.Transpiler;
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.Charset;
-import java.nio.file.Paths;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -50,30 +51,62 @@ public final class ClosureBundler {
   }
 
   public ClosureBundler(Transpiler transpiler) {
-    this(transpiler, EvalMode.NORMAL, null, "unknown_source", new ConcurrentHashMap<>());
+    this(transpiler, BaseTranspiler.LATEST_TRANSPILER);
   }
 
-  private ClosureBundler(Transpiler transpiler, EvalMode mode, String sourceUrl, String path,
+  public ClosureBundler(Transpiler transpiler, Transpiler es6ModuleTranspiler) {
+    this(
+        transpiler,
+        es6ModuleTranspiler,
+        EvalMode.NORMAL,
+        /* sourceUrl= */ null,
+        /* path= */ "unknown_source",
+        new ConcurrentHashMap<>());
+  }
+
+  private ClosureBundler(
+      Transpiler transpiler,
+      Transpiler es6ModuleTranspiler,
+      EvalMode mode,
+      String sourceUrl,
+      String path,
       Map<String, String> sourceMapCache) {
     this.transpiler = transpiler;
     this.mode = mode;
     this.sourceUrl = sourceUrl;
     this.path = path;
     this.sourceMapCache = sourceMapCache;
-    this.es6ModuleTranspiler = BaseTranspiler.ES_MODULE_TO_CJS_TRANSPILER;
+    this.es6ModuleTranspiler = es6ModuleTranspiler;
+  }
+
+  public ClosureBundler withTranspilers(
+      Transpiler newTranspiler, Transpiler newEs6ModuleTranspiler) {
+    return new ClosureBundler(
+        newTranspiler, newEs6ModuleTranspiler, mode, sourceUrl, path, sourceMapCache);
+  }
+
+  public ClosureBundler withTranspiler(Transpiler newTranspiler) {
+    return withTranspilers(newTranspiler, es6ModuleTranspiler);
+  }
+
+  public ClosureBundler withEs6ModuleTranspiler(Transpiler newEs6ModuleTranspiler) {
+    return withTranspilers(transpiler, newEs6ModuleTranspiler);
   }
 
   public final ClosureBundler useEval(boolean useEval) {
     EvalMode newMode = useEval ? EvalMode.EVAL : EvalMode.NORMAL;
-    return new ClosureBundler(transpiler, newMode, sourceUrl, path, sourceMapCache);
+    return new ClosureBundler(
+        transpiler, es6ModuleTranspiler, newMode, sourceUrl, path, sourceMapCache);
   }
 
   public final ClosureBundler withSourceUrl(String newSourceUrl) {
-    return new ClosureBundler(transpiler, mode, newSourceUrl, path, sourceMapCache);
+    return new ClosureBundler(
+        transpiler, es6ModuleTranspiler, mode, newSourceUrl, path, sourceMapCache);
   }
 
   public final ClosureBundler withPath(String newPath) {
-    return new ClosureBundler(transpiler, mode, sourceUrl, newPath, sourceMapCache);
+    return new ClosureBundler(
+        transpiler, es6ModuleTranspiler, mode, sourceUrl, newPath, sourceMapCache);
   }
 
   /** Append the contents of the string to the supplied appendable. */
@@ -107,7 +140,10 @@ public final class ClosureBundler {
       CharSource content) throws IOException {
     if (info.isModule()) {
       mode.appendGoogModule(transpile(content.read()), out, sourceUrl);
-    } else if ("es6".equals(info.getLoadFlags().get("module"))) {
+    } else if ("es6".equals(info.getLoadFlags().get("module")) && transpiler == Transpiler.NULL) {
+      // TODO(johnplaisted): Make the default transpiler the ES_MODULE_TO_CJS_TRANSPILER. Currently
+      // some code is passing in unicode identifiers in non-ES6 modules the compiler fails to parse.
+      // Once this compiler bug is fixed we can always transpile.
       mode.appendTraditional(transpileEs6Module(content.read()), out, sourceUrl);
     } else {
       mode.appendTraditional(transpile(content.read()), out, sourceUrl);
@@ -119,7 +155,9 @@ public final class ClosureBundler {
     if (!runtime.isEmpty()) {
       mode.appendTraditional(runtime, out, null);
     }
-    mode.appendTraditional(es6ModuleTranspiler.runtime(), out, null);
+    if (transpiler == Transpiler.NULL) {
+      mode.appendTraditional(es6ModuleTranspiler.runtime(), out, null);
+    }
   }
 
   /**
@@ -131,7 +169,12 @@ public final class ClosureBundler {
   }
 
   private String transpile(String s, Transpiler t) {
-    TranspileResult result = t.transpile(Paths.get(path), s);
+    TranspileResult result;
+    try {
+      result = t.transpile(new URI(path), s);
+    } catch (URISyntaxException e) {
+      throw new RuntimeException(e);
+    }
     sourceMapCache.put(path, result.sourceMap());
     return result.transpiled();
   }
@@ -141,7 +184,7 @@ public final class ClosureBundler {
   }
 
   private String transpileEs6Module(String s) {
-    return transpile(transpile(s, es6ModuleTranspiler));
+    return transpile(s, es6ModuleTranspiler);
   }
 
   private enum EvalMode {

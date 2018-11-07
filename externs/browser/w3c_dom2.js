@@ -128,25 +128,43 @@ HTMLCollection.prototype.namedItem = function(name) {};
 
 /**
  * @constructor
- * @implements {IObject<(string|number),HTMLOptionElement>}
- * @implements {IArrayLike<!HTMLOptionElement>}
- * @see http://www.w3.org/TR/DOM-Level-2-HTML/html.html#HTMLOptionsCollection
+ * @extends {HTMLCollection<HTMLOptionElement>}
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#htmloptionscollection
  */
 function HTMLOptionsCollection() {}
 
 /**
  * @type {number}
- * @see http://www.w3.org/TR/DOM-Level-2-HTML/html.html#HTMLOptionsCollection-length
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmloptionscollection-length
+ * @nosideeffects
  */
 HTMLOptionsCollection.prototype.length;
 
 /**
+ * @param {HTMLOptionElement|HTMLOptGroupElement} element
+ * @param {HTMLElement|number=} before
+ * @return {undefined}
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmloptionscollection-add
+ */
+HTMLOptionsCollection.prototype.add = function(element, before) {};
+
+/**
+ * NOTE(tjgq): The HTMLOptionsCollection#item method is inherited from
+ * HTMLCollection, but it must be declared explicitly to work around an error
+ * when building a jsinterop library for GWT.
  * @param {number} index
- * @return {Node}
- * @see http://www.w3.org/TR/DOM-Level-2-HTML/html.html#HTMLOptionsCollection-item
+ * @return {HTMLOptionElement}
+ * @override
  * @nosideeffects
  */
 HTMLOptionsCollection.prototype.item = function(index) {};
+
+/**
+ * @param {number} index
+ * @return {undefined}
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmloptionscollection-remove
+ */
+HTMLOptionsCollection.prototype.remove = function(index) {};
 
 /**
  * @constructor
@@ -271,7 +289,7 @@ HTMLDocument.prototype.getElementsByName = function(elementName) {};
 var TraversalDocument;
 
 /**
- * @interface
+ * @record
  * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-NodeFilter
 */
 function NodeFilter() {}
@@ -1750,6 +1768,12 @@ HTMLImageElement.prototype.name;
 
 /**
  * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement/referrerPolicy
+ */
+HTMLImageElement.prototype.referrerPolicy;
+
+/**
+ * @type {string}
  * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-87762984
  */
@@ -2106,6 +2130,11 @@ HTMLScriptElement.prototype.event;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-66979266
  */
 HTMLScriptElement.prototype.htmlFor;
+
+/**
+ * @type {?function(!Event)}
+ */
+HTMLScriptElement.prototype.onreadystatechange;
 
 /**
  * @type {string}

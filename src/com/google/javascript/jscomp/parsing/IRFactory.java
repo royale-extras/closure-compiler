@@ -29,6 +29,7 @@ import static com.google.javascript.rhino.TypeDeclarationsIR.stringType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.undefinedType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.unionType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.voidType;
+import static java.lang.Integer.parseInt;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -40,6 +41,7 @@ import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.jscomp.parsing.parser.IdentifierToken;
 import com.google.javascript.jscomp.parsing.parser.LiteralToken;
+import com.google.javascript.jscomp.parsing.parser.TemplateLiteralToken;
 import com.google.javascript.jscomp.parsing.parser.TokenType;
 import com.google.javascript.jscomp.parsing.parser.trees.AmbientDeclarationTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ArrayLiteralExpressionTree;
@@ -77,6 +79,7 @@ import com.google.javascript.jscomp.parsing.parser.trees.ExportDeclarationTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ExportSpecifierTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ExpressionStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.FinallyTree;
+import com.google.javascript.jscomp.parsing.parser.trees.ForAwaitOfStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ForInStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ForOfStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ForStatementTree;
@@ -153,7 +156,6 @@ import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.TokenStream;
 import com.google.javascript.rhino.dtoa.DToA;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -196,7 +198,7 @@ class IRFactory {
 
   static final String STRING_CONTINUATION_WARNING =
       "String continuations are not recommended. See"
-      + " https://google.github.io/styleguide/javascriptguide.xml?showone=Multiline_string_literals#Multiline_string_literals";
+      + " https://google.github.io/styleguide/jsguide.html#features-strings-no-line-continuations";
 
   static final String OCTAL_STRING_LITERAL_WARNING =
       "Octal literals in strings are not supported in this language mode.";
@@ -220,7 +222,6 @@ class IRFactory {
   static final String UNDEFINED_LABEL = "undefined label \"%s\"";
 
   private final String sourceString;
-  private final List<Integer> newlines;
   private final StaticSourceFile sourceFile;
   private final String sourceName;
   private final Config config;
@@ -280,22 +281,12 @@ class IRFactory {
     this.sourceString = sourceString;
     this.nextCommentIter = comments.iterator();
     this.currentComment = skipNonJsDoc(nextCommentIter);
-    this.newlines = new ArrayList<>();
     this.sourceFile = sourceFile;
     // The template node properties are applied to all nodes in this transform.
     this.templateNode = createTemplateNode();
 
     this.fileLevelJsDocBuilder =
         new JSDocInfoBuilder(config.jsDocParsingMode().shouldParseDescriptions());
-
-    // Pre-generate all the newlines in the file.
-    for (int charNo = 0; true; charNo++) {
-      charNo = sourceString.indexOf('\n', charNo);
-      if (charNo == -1) {
-        break;
-      }
-      newlines.add(charNo);
-    }
 
     // Sometimes this will be null in tests.
     this.sourceName = sourceFile == null ? null : sourceFile.getName();
@@ -363,25 +354,6 @@ class IRFactory {
 
     return irFactory;
   }
-
-  static FeatureSet detectFeatures(
-      ProgramTree tree, StaticSourceFile sourceFile, String sourceString) {
-    IRFactory irFactory =
-        new IRFactory(sourceString, sourceFile, NULL_CONFIG, NULL_REPORTER, tree.sourceComments);
-    Node n = irFactory.transformDispatcher.process(tree);
-    irFactory.validateAll(n);
-
-    return irFactory.features;
-  }
-
-  static final Config NULL_CONFIG = Config.builder().build();
-
-  static final ErrorReporter NULL_REPORTER = new ErrorReporter() {
-    @Override
-    public void warning(String message, String sourceName, int line, int lineOffset) {}
-    @Override
-    public void error(String message, String sourceName, int line, int lineOffset) {}
-  };
 
   Node getResultNode() {
     return resultNode;
@@ -510,6 +482,7 @@ class IRFactory {
       case FOR:
       case FOR_IN:
       case FOR_OF:
+      case FOR_AWAIT_OF:
       case WHILE:
       case DO:
       case SWITCH:
@@ -524,6 +497,7 @@ class IRFactory {
       case FOR:
       case FOR_IN:
       case FOR_OF:
+      case FOR_AWAIT_OF:
       case WHILE:
       case DO:
         return true;
@@ -574,7 +548,7 @@ class IRFactory {
   }
 
   private void validateBlockScopedFunctions(Node n) {
-    if (n.isFunction() && n.getParent().isNormalBlock() && !n.getGrandparent().isFunction()) {
+    if (n.isFunction() && n.getParent().isBlock() && !n.getGrandparent().isFunction()) {
       maybeWarnForFeature(n, Feature.BLOCK_SCOPED_FUNCTION_DECLARATION);
     }
   }
@@ -619,7 +593,7 @@ class IRFactory {
 
   Node transformBlock(ParseTree node) {
     Node irNode = transform(node);
-    if (!irNode.isNormalBlock()) {
+    if (!irNode.isBlock()) {
       if (irNode.isEmpty()) {
         irNode.setToken(Token.BLOCK);
       } else {
@@ -722,6 +696,7 @@ class IRFactory {
       case EXPRESSION_STATEMENT:
       case LABELLED_STATEMENT:
       case EXPORT_DECLARATION:
+      case TEMPLATE_SUBSTITUTION:
         return false;
       case CALL_EXPRESSION:
       case CONDITIONAL_EXPRESSION:
@@ -860,14 +835,18 @@ class IRFactory {
     return location.column;
   }
 
+  String languageFeatureWarningMessage(Feature feature) {
+    return "This language feature is only supported for "
+              + LanguageMode.minimumRequiredFor(feature)
+              + " mode or better: "
+              + feature;
+  }
+
   void maybeWarnForFeature(ParseTree node, Feature feature) {
     features = features.with(feature);
     if (!isSupportedForInputLanguageMode(feature)) {
       errorReporter.warning(
-          "this language feature is only supported for "
-              + LanguageMode.minimumRequiredFor(feature)
-              + " mode or better: "
-              + feature,
+          languageFeatureWarningMessage(feature),
           sourceName,
           lineno(node), charno(node));
     }
@@ -878,10 +857,7 @@ class IRFactory {
     features = features.with(feature);
     if (!isSupportedForInputLanguageMode(feature)) {
       errorReporter.warning(
-          "this language feature is only supported for "
-              + LanguageMode.minimumRequiredFor(feature)
-              + " mode or better: "
-              + feature,
+          languageFeatureWarningMessage(feature),
           sourceName,
           lineno(token), charno(token));
     }
@@ -891,10 +867,7 @@ class IRFactory {
     features = features.with(feature);
     if (!isSupportedForInputLanguageMode(feature)) {
       errorReporter.warning(
-          "this language feature is only supported for "
-              + LanguageMode.minimumRequiredFor(feature)
-              + " mode or better: "
-              + feature,
+          languageFeatureWarningMessage(feature),
           sourceName,
           node.getLineno(), node.getCharno());
     }
@@ -1054,41 +1027,153 @@ class IRFactory {
     }
 
     Node processArrayPattern(ArrayPatternTree tree) {
-      maybeWarnForFeature(tree, Feature.DESTRUCTURING);
+      maybeWarnForFeature(tree, Feature.ARRAY_DESTRUCTURING);
 
       Node node = newNode(Token.ARRAY_PATTERN);
       for (ParseTree child : tree.elements) {
-        node.addChildToBack(transformNodeWithInlineJsDoc(child));
+        Node elementNode;
+        if (child.type == ParseTreeType.DEFAULT_PARAMETER) {
+          // processDefaultParameter() knows how to find and apply inline JSDoc to the right node
+          elementNode = processDefaultParameter(child.asDefaultParameter());
+        } else {
+          elementNode = transformNodeWithInlineJsDoc(child);
+        }
+        node.addChildToBack(elementNode);
       }
       return node;
     }
 
     Node processObjectPattern(ObjectPatternTree tree) {
-      maybeWarnForFeature(tree, Feature.DESTRUCTURING);
+      maybeWarnForFeature(tree, Feature.OBJECT_DESTRUCTURING);
 
       Node node = newNode(Token.OBJECT_PATTERN);
       for (ParseTree child : tree.fields) {
-        Node childNode = transformNodeWithInlineJsDoc(child);
-        if (childNode.isDefaultValue()) {
-          // Children of the form {a = b} are parsed as DEFAULT_VALUE{NAME, initializer}.
-          // In this case, insert an extra STRING_KEY node.
-          Node name = childNode.getFirstChild();
-          Node stringKey = newStringNode(Token.STRING_KEY, name.getString());
-          setSourceInfo(stringKey, name);
-          stringKey.setShorthandProperty(true);
-          stringKey.addChildToBack(childNode);
-          childNode = stringKey;
-        } else if (childNode.isRest()) {
-          maybeWarnForFeature(child, Feature.OBJECT_PATTERN_REST);
-        }
+        Node childNode = processObjectPatternElement(child);
         node.addChildToBack(childNode);
       }
       return node;
     }
 
+    private Node processObjectPatternElement(ParseTree child) {
+      switch (child.type) {
+        case DEFAULT_PARAMETER:
+          // shorthand with a default value
+          // let { /** inlineType */ name = default } = something;
+          return processObjectPatternShorthandWithDefault(child.asDefaultParameter());
+        case PROPERTY_NAME_ASSIGNMENT:
+          return processObjectPatternPropertyNameAssignment(child.asPropertyNameAssignment());
+        case COMPUTED_PROPERTY_DEFINITION:
+          // let {[expression]: /** inlineType */ name} = something;
+          ComputedPropertyDefinitionTree computedPropertyDefinition =
+              child.asComputedPropertyDefinition();
+          return processObjectPatternComputedPropertyDefinition(computedPropertyDefinition);
+        default:
+          // let {...restObject} = someObject;
+          checkState(child.type == ParseTreeType.ASSIGNMENT_REST_ELEMENT, child);
+          maybeWarnForFeature(child, Feature.OBJECT_PATTERN_REST);
+          return processAssignmentRestElement(child.asAssignmentRestElement());
+      }
+    }
+
+    /**
+     * Process an object pattern element using shorthand and a default value.
+     *
+     * <p>e.g. the `/** inlineType * / name = default` part of this code
+     *
+     * <pre><code>
+     * let { /** inlineType * / name = default } = something;
+     * </code></pre>
+     */
+    private Node processObjectPatternShorthandWithDefault(DefaultParameterTree defaultParameter) {
+      Node defaultValueNode = processDefaultParameter(defaultParameter);
+      // Store in AST as non-shorthand form & just note it was originally shorthand
+      // {name: /**inlineType */ name = default }
+      Node nameNode = defaultValueNode.getFirstChild();
+      Node stringKeyNode = newStringNode(Token.STRING_KEY, nameNode.getString());
+      setSourceInfo(stringKeyNode, nameNode);
+      stringKeyNode.setShorthandProperty(true);
+      stringKeyNode.addChildToBack(defaultValueNode);
+      return stringKeyNode;
+    }
+
+    /**
+     * Processes property name assignments in an object pattern.
+     *
+     * <p>Covers these cases.
+     *
+     * <pre><code>
+     *   let {name} = someObject;
+     *   let {key: name} = someObject;
+     *   let {key: name = something} = someObject;
+     * </code></pre>
+     */
+    private Node processObjectPatternPropertyNameAssignment(
+        PropertyNameAssignmentTree propertyNameAssignment) {
+      Node key = processObjectLitKeyAsString(propertyNameAssignment.name);
+      key.setToken(Token.STRING_KEY);
+      ParseTree targetTree = propertyNameAssignment.value;
+      final Node valueNode;
+      if (targetTree == null) {
+        // `let { /** inlineType */ key } = something;`
+        // The key is also the target name.
+        valueNode = processNameWithInlineJSDoc(propertyNameAssignment.name.asIdentifier());
+        key.setShorthandProperty(true);
+      } else {
+        valueNode = processDestructuringElementTarget(targetTree);
+      }
+      key.addChildToFront(valueNode);
+      return key;
+    }
+
+    private Node processDestructuringElementTarget(ParseTree targetTree) {
+      final Node valueNode;
+      if (targetTree.type == ParseTreeType.DEFAULT_PARAMETER) {
+        // let {key: /** inlineType */ name = default} = something;
+        // let [/** inlineType */ name = default] = something;
+        // processDefaultParameter() knows how to apply the inline JSDoc, if any, to the right node
+        valueNode = processDefaultParameter(targetTree.asDefaultParameter());
+      } else if (targetTree.type == ParseTreeType.IDENTIFIER_EXPRESSION) {
+        // let {key: /** inlineType */ name} = something
+        // let [/** inlineType */ name] = something
+        // Allow inline JSDoc on the name, since we may well be declaring it here.
+        valueNode = processNameWithInlineJSDoc(targetTree.asIdentifierExpression());
+      } else {
+        // ({prop: /** string */ ns.a.b} = someObject);
+        // NOTE: CheckJSDoc will report an error for this case, since we want qualified names to be
+        // declared with individual statements, like `/** @type {string} */ ns.a.b;`
+        valueNode = transformNodeWithInlineJsDoc(targetTree);
+      }
+      return valueNode;
+    }
+
+    /**
+     * Processes a computed property in an object pattern.
+     *
+     * <p>Covers these cases:
+     *
+     * <pre><code>
+     *   let {[expression]: name} = someObject;
+     *   let {[expression]: name = defaultValue} = someObject;
+     * </code></pre>
+     */
+    private Node processObjectPatternComputedPropertyDefinition(
+        ComputedPropertyDefinitionTree computedPropertyDefinition) {
+      maybeWarnForFeature(computedPropertyDefinition, Feature.COMPUTED_PROPERTIES);
+
+      Node expressionNode = transform(computedPropertyDefinition.property);
+
+      ParseTree valueTree = computedPropertyDefinition.value;
+      Node valueNode = processDestructuringElementTarget(valueTree);
+      Node computedPropertyNode = newNode(Token.COMPUTED_PROP, expressionNode, valueNode);
+      setSourceInfo(computedPropertyNode, computedPropertyDefinition);
+      return computedPropertyNode;
+    }
+
     Node processAssignmentRestElement(AssignmentRestElementTree tree) {
       maybeWarnForFeature(tree, Feature.ARRAY_PATTERN_REST);
-      return newNode(Token.REST, transformNodeWithInlineJsDoc(tree.assignmentTarget));
+      Node restNode = newNode(Token.REST, transformNodeWithInlineJsDoc(tree.assignmentTarget));
+      setSourceInfo(restNode, tree);
+      return restNode;
     }
 
     Node processAstRoot(ProgramTree rootNode) {
@@ -1105,6 +1190,8 @@ class IRFactory {
         scriptNode.addChildToBack(moduleNode);
         if (isGoogModule) {
           scriptNode.putBooleanProp(Node.GOOG_MODULE, true);
+        } else {
+          scriptNode.putBooleanProp(Node.ES6_MODULE, true);
         }
       }
       return scriptNode;
@@ -1234,13 +1321,8 @@ class IRFactory {
     }
 
     Node processForInLoop(ForInStatementTree loopNode) {
+      // TODO(bradfordcsmith): Rename initializer to something more intuitive like "lhs"
       Node initializer = transform(loopNode.initializer);
-      ImmutableSet<Token> invalidInitializers =
-          ImmutableSet.of(Token.ARRAYLIT, Token.OBJECTLIT);
-      if (invalidInitializers.contains(initializer.getToken())) {
-        errorReporter.error("Invalid LHS for a for-in loop", sourceName,
-            lineno(loopNode.initializer), charno(loopNode.initializer));
-      }
       return newNode(
           Token.FOR_IN, initializer, transform(loopNode.collection), transformBlock(loopNode.body));
     }
@@ -1248,14 +1330,18 @@ class IRFactory {
     Node processForOf(ForOfStatementTree loopNode) {
       maybeWarnForFeature(loopNode, Feature.FOR_OF);
       Node initializer = transform(loopNode.initializer);
-      ImmutableSet<Token> invalidInitializers =
-          ImmutableSet.of(Token.ARRAYLIT, Token.OBJECTLIT);
-      if (invalidInitializers.contains(initializer.getToken())) {
-        errorReporter.error("Invalid LHS for a for-of loop", sourceName,
-            lineno(loopNode.initializer), charno(loopNode.initializer));
-      }
       return newNode(
           Token.FOR_OF,
+          initializer,
+          transform(loopNode.collection),
+          transformBlock(loopNode.body));
+    }
+
+    Node processForAwaitOf(ForAwaitOfStatementTree loopNode) {
+      maybeWarnForFeature(loopNode, Feature.FOR_AWAIT_OF);
+      Node initializer = transform(loopNode.initializer);
+      return newNode(
+          Token.FOR_AWAIT_OF,
           initializer,
           transform(loopNode.collection),
           transformBlock(loopNode.body));
@@ -1322,6 +1408,10 @@ class IRFactory {
         maybeWarnForFeature(functionTree, Feature.ASYNC_FUNCTIONS);
       }
 
+      if (isGenerator && isAsync) {
+        maybeWarnForFeature(functionTree, Feature.ASYNC_GENERATORS);
+      }
+
       IdentifierToken name = functionTree.name;
       Node newName;
       if (name != null) {
@@ -1355,7 +1445,7 @@ class IRFactory {
       maybeProcessType(node, functionTree.returnType);
 
       Node bodyNode = transform(functionTree.functionBody);
-      if (!isArrow && !isSignature && !bodyNode.isNormalBlock()) {
+      if (!isArrow && !isSignature && !bodyNode.isBlock()) {
         // When in "keep going" mode the parser tries to parse some constructs the
         // compiler doesn't support, repair it here.
         checkState(config.runMode() == Config.RunMode.KEEP_GOING);
@@ -1378,6 +1468,8 @@ class IRFactory {
         member.setStaticMember(functionTree.isStatic);
         maybeProcessAccessibilityModifier(functionTree, member, functionTree.access);
         node.setDeclaredTypeExpression(node.getDeclaredTypeExpression());
+        // The source info should only include the identifier, not the entire function expression
+        setSourceInfo(member, name);
         result = member;
       } else {
         result = node;
@@ -1390,7 +1482,13 @@ class IRFactory {
       Node params = newNode(Token.PARAM_LIST);
       if (checkParameters(tree.parameters)) {
         for (ParseTree param : tree.parameters) {
-          Node paramNode = transformNodeWithInlineJsDoc(param);
+          Node paramNode;
+          if (param.type == ParseTreeType.DEFAULT_PARAMETER) {
+            // processDefaultParameter() knows how to find and apply inline JSDoc to the right node
+            paramNode = processDefaultParameter(param.asDefaultParameter());
+          } else {
+            paramNode = transformNodeWithInlineJsDoc(param);
+          }
           // Children must be simple names, default parameters, rest
           // parameters, or destructuring patterns.
           checkState(
@@ -1407,16 +1505,33 @@ class IRFactory {
 
     Node processDefaultParameter(DefaultParameterTree tree) {
       maybeWarnForFeature(tree, Feature.DEFAULT_PARAMETERS);
-      return newNode(Token.DEFAULT_VALUE,
-          transform(tree.lhs), transform(tree.defaultValue));
+      ParseTree targetTree = tree.lhs;
+      Node targetNode;
+      if (targetTree.type == ParseTreeType.IDENTIFIER_EXPRESSION) {
+        // allow inline JSDoc on an identifier
+        // let { /** inlineType */ x = defaultValue } = someObject;
+        // TODO(bradfordcsmith): Do we need to allow inline JSDoc for qualified names, too?
+        targetNode = processNameWithInlineJSDoc(targetTree.asIdentifierExpression());
+      } else {
+        // ({prop: /** string */ ns.a.b = 'foo'} = someObject);
+        // NOTE: CheckJSDoc will report an error for this case, since we want qualified names to be
+        // declared with individual statements, like `/** @type {string} */ ns.a.b;`
+        targetNode = transformNodeWithInlineJsDoc(targetTree);
+      }
+      Node defaultValueNode =
+          newNode(Token.DEFAULT_VALUE, targetNode, transform(tree.defaultValue));
+      setSourceInfo(defaultValueNode, tree);
+      return defaultValueNode;
     }
 
     Node processRestParameter(RestParameterTree tree) {
       maybeWarnForFeature(tree, Feature.REST_PARAMETERS);
 
       Node assignmentTarget = transformNodeWithInlineJsDoc(tree.assignmentTarget);
-      if (assignmentTarget.isDestructuringPattern()) {
-        maybeWarnForFeature(tree.assignmentTarget, Feature.DESTRUCTURING);
+      if (assignmentTarget.isObjectPattern()) {
+        maybeWarnForFeature(tree.assignmentTarget, Feature.OBJECT_DESTRUCTURING);
+      } else if (assignmentTarget.isArrayPattern()) {
+        maybeWarnForFeature(tree.assignmentTarget, Feature.ARRAY_DESTRUCTURING);
       }
       return newNode(Token.REST, assignmentTarget);
     }
@@ -1438,11 +1553,11 @@ class IRFactory {
     }
 
     Node processBinaryExpression(BinaryOperatorTree exprNode) {
-      if (exprNode.operator.type == TokenType.STAR_STAR
-          || exprNode.operator.type == TokenType.STAR_STAR_EQUAL) {
-        maybeWarnForFeature(exprNode, Feature.EXPONENT_OP);
-      }
       if (hasPendingCommentBefore(exprNode.right)) {
+        if (exprNode.operator.type == TokenType.STAR_STAR
+            || exprNode.operator.type == TokenType.STAR_STAR_EQUAL) {
+          maybeWarnForFeature(exprNode, Feature.EXPONENT_OP);
+        }
         return newNode(
             transformBinaryTokenType(exprNode.operator.type),
             transform(exprNode.left),
@@ -1460,6 +1575,10 @@ class IRFactory {
       Node current = null;
       Node previous = null;
       while (exprTree != null) {
+        if (exprTree.operator.type == TokenType.STAR_STAR
+            || exprTree.operator.type == TokenType.STAR_STAR_EQUAL) {
+          maybeWarnForFeature(exprTree, Feature.EXPONENT_OP);
+        }
         previous = current;
         // Skip the first child but recurse normally into the right operand as typically this isn't
         // deep and because we have already checked that there isn't any JSDoc we can traverse
@@ -1560,16 +1679,24 @@ class IRFactory {
       return node;
     }
 
-    Node processTemplateLiteralToken(LiteralToken token) {
+    Node processTemplateLiteralToken(TemplateLiteralToken token) {
       checkArgument(
           token.type == TokenType.NO_SUBSTITUTION_TEMPLATE
               || token.type == TokenType.TEMPLATE_HEAD
               || token.type == TokenType.TEMPLATE_MIDDLE
               || token.type == TokenType.TEMPLATE_TAIL);
-      Node node = newStringNode(normalizeString(token, true));
-      node.putProp(Node.RAW_STRING_VALUE, token.value);
+      Node node;
+      if (token.hasError()) {
+        node = newTemplateLitStringNode(null, token.value);
+      } else {
+        node = newTemplateLitStringNode(normalizeString(token, true), token.value);
+      }
       setSourceInfo(node, token);
       return node;
+    }
+
+    private Node processNameWithInlineJSDoc(IdentifierExpressionTree identifierExpression) {
+      return processNameWithInlineJSDoc(identifierExpression.identifierToken);
     }
 
     Node processNameWithInlineJSDoc(IdentifierToken identifierToken) {
@@ -1674,8 +1801,7 @@ class IRFactory {
     Node processComputedPropertyDefinition(ComputedPropertyDefinitionTree tree) {
       maybeWarnForFeature(tree, Feature.COMPUTED_PROPERTIES);
 
-      return newNode(Token.COMPUTED_PROP,
-          transform(tree.property), transform(tree.value));
+      return newNode(Token.COMPUTED_PROP, transform(tree.property), transform(tree.value));
     }
 
     Node processComputedPropertyMemberVariable(ComputedPropertyMemberVariableTree tree) {
@@ -1721,10 +1847,15 @@ class IRFactory {
       maybeWarnForFeature(tree, Feature.COMPUTED_PROPERTIES);
 
       Node key = transform(tree.property);
+
+      Node paramList = processFormalParameterList(tree.parameter);
+      setSourceInfo(paramList, tree.parameter);
+
       Node body = transform(tree.body);
-      Node paramList = IR.paramList(safeProcessName(tree.parameter));
+
       Node function = IR.function(IR.name(""), paramList, body);
       function.useSourceInfoIfMissingFromForTree(body);
+
       Node n = newNode(Token.COMPUTED_PROP, key, function);
       n.putBooleanProp(Node.COMPUTED_PROP_SETTER, true);
       n.putBooleanProp(Node.STATIC_MEMBER, tree.isStatic);
@@ -1750,23 +1881,24 @@ class IRFactory {
     Node processSetAccessor(SetAccessorTree tree) {
       Node key = processObjectLitKeyAsString(tree.propertyName);
       key.setToken(Token.SETTER_DEF);
+
+      Node paramList = processFormalParameterList(tree.parameter);
+      setSourceInfo(paramList, tree.parameter);
+
       Node body = transform(tree.body);
+
       Node dummyName = newStringNode(Token.NAME, "");
       setSourceInfo(dummyName, tree.propertyName);
-      Node paramList = newNode(Token.PARAM_LIST, safeProcessName(tree.parameter));
-      setSourceInfo(paramList, tree.parameter);
-      maybeProcessType(paramList.getFirstChild(), tree.type);
+
       Node value = newNode(Token.FUNCTION, dummyName, paramList, body);
       setSourceInfo(value, tree.body);
+
       key.addChildToFront(value);
       key.setStaticMember(tree.isStatic);
       return key;
     }
 
     Node processPropertyNameAssignment(PropertyNameAssignmentTree tree) {
-      // TODO(tbreisacher): Allow inline JSDoc here (but then forbid it in CheckJSDoc)
-      // so that it's clear we don't support annotations like
-      //   function f({x: /** string */ y}) {}
       Node key = processObjectLitKeyAsString(tree.name);
       key.setToken(Token.STRING_KEY);
       if (tree.value != null) {
@@ -1778,14 +1910,6 @@ class IRFactory {
         key.addChildToFront(value);
       }
       return key;
-    }
-
-    private Node safeProcessName(IdentifierToken identifierToken) {
-      if (identifierToken == null) {
-        return createMissingExpressionNode();
-      } else {
-        return processName(identifierToken);
-      }
     }
 
     private void checkParenthesizedExpression(ParenExpressionTree exprNode) {
@@ -1850,6 +1974,9 @@ class IRFactory {
             Feature feature = flag == 'u' ? Feature.REGEXP_FLAG_U : Feature.REGEXP_FLAG_Y;
             maybeWarnForFeature(tree, feature);
             break;
+          case 's':
+            maybeWarnForFeature(tree, Feature.REGEXP_FLAG_S);
+            break;
           default:
             errorReporter.error(
                 "Invalid RegExp flag '" + flag + "'",
@@ -1910,7 +2037,7 @@ class IRFactory {
     }
 
     Node processTemplateLiteralPortion(TemplateLiteralPortionTree tree) {
-      return processTemplateLiteralToken(tree.value.asLiteral());
+      return processTemplateLiteralToken(tree.value.asTemplateLiteral());
     }
 
     Node processTemplateSubstitution(TemplateSubstitutionTree tree) {
@@ -2200,6 +2327,9 @@ class IRFactory {
       maybeProcessGenerics(name, tree.generics);
 
       Node superClass = transformOrEmpty(tree.superClass, tree);
+      if (!superClass.isEmpty()) {
+        features = features.with(Feature.CLASS_EXTENDS);
+      }
       Node interfaces = transformListOrEmpty(Token.IMPLEMENTS, tree.interfaces);
 
       Node body = newNode(Token.CLASS_MEMBERS);
@@ -2208,6 +2338,12 @@ class IRFactory {
         if (child.type == ParseTreeType.MEMBER_VARIABLE
             || child.type == ParseTreeType.COMPUTED_PROPERTY_MEMBER_VARIABLE) {
           maybeWarnTypeSyntax(child, Feature.MEMBER_VARIABLE_IN_CLASS);
+        }
+        if (child.type == ParseTreeType.COMPUTED_PROPERTY_GETTER
+            || child.type == ParseTreeType.COMPUTED_PROPERTY_SETTER
+            || child.type == ParseTreeType.GET_ACCESSOR
+            || child.type == ParseTreeType.SET_ACCESSOR) {
+          features = features.with(Feature.CLASS_GETTER_SETTER);
         }
         body.addChildToBack(transform(child));
       }
@@ -2337,10 +2473,16 @@ class IRFactory {
       maybeWarnForFeature(tree, Feature.MODULES);
 
       Node firstChild = transformOrEmpty(tree.defaultBindingIdentifier, tree);
-      Node secondChild = (tree.nameSpaceImportIdentifier != null)
-          ? newStringNode(Token.IMPORT_STAR, tree.nameSpaceImportIdentifier.value)
-          : transformListOrEmpty(Token.IMPORT_SPECS, tree.importSpecifierList);
-      setSourceInfo(secondChild, tree);
+      Node secondChild;
+      if (tree.nameSpaceImportIdentifier == null) {
+        secondChild = transformListOrEmpty(Token.IMPORT_SPECS, tree.importSpecifierList);
+        // Currently source info is "import {foo} from '...';" expression. If needed this should be
+        // changed to use only "{foo}" part.
+        setSourceInfo(secondChild, tree);
+      } else {
+        secondChild = newStringNode(Token.IMPORT_STAR, tree.nameSpaceImportIdentifier.value);
+        setSourceInfo(secondChild, tree.nameSpaceImportIdentifier);
+      }
       Node thirdChild = processString(tree.moduleSpecifier);
 
       return newNode(Token.IMPORT, firstChild, secondChild, thirdChild);
@@ -2857,6 +2999,8 @@ class IRFactory {
           return processAwait(node.asAwaitExpression());
         case FOR_OF_STATEMENT:
           return processForOf(node.asForOfStatement());
+        case FOR_AWAIT_OF_STATEMENT:
+          return processForAwaitOf(node.asForAwaitOfStatement());
 
         case EXPORT_DECLARATION:
           return processExportDecl(node.asExportDeclaration());
@@ -2978,6 +3122,8 @@ class IRFactory {
         case 'D':
         case 'f':
         case 'n':
+        case 'p': // 2018 unicode property escapes
+        case 'P': // 2018 unicode property escapes
         case 'r':
         case 's':
         case 'S':
@@ -3005,10 +3151,11 @@ class IRFactory {
 
   String normalizeString(LiteralToken token, boolean templateLiteral) {
     String value = token.value;
-    if (templateLiteral) {
-      // <CR><LF> and <CR> are normalized as <LF> for raw string value
-      value = value.replaceAll("\r\n?", "\n");
-    }
+    // <CR><LF> and <CR> are normalized as <LF>. For raw template literal string values: this is the
+    // spec behaviour. For regular string literals: they can only be part of a line continuation,
+    // which we want to scrub.
+    value = value.replaceAll("\r\n?", "\n");
+
     int start = templateLiteral ? 0 : 1; // skip the leading quote
     int cur = value.indexOf('\\');
     if (cur == -1) {
@@ -3050,15 +3197,27 @@ class IRFactory {
               charno(token.location.start));
           break;
         case '0':
-          if (cur + 1 >= value.length()) {
-            break;
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+          int numDigits;
+
+          if (cur + 1 < value.length() && isOctalDigit(value.charAt(cur + 1))) {
+            if (cur + 2 < value.length() && isOctalDigit(value.charAt(cur + 2))) {
+              numDigits = 3;
+            } else {
+              numDigits = 2;
+            }
+          } else {
+            numDigits = 1;
           }
-          // fall through
-        case '1': case '2': case '3': case '4': case '5': case '6': case '7':
-          char next1 = value.charAt(cur + 1);
 
           if (inStrictContext() || templateLiteral) {
-            if (c == '0' && !isOctalDigit(next1)) {
+            if (c == '0' && numDigits == 1) {
               // No warning: "\0" followed by a character which is not an octal digit
               // is allowed in strict mode.
             } else {
@@ -3068,19 +3227,8 @@ class IRFactory {
             }
           }
 
-          if (!isOctalDigit(next1)) {
-            result.append((char) octaldigit(c));
-          } else {
-            char next2 = value.charAt(cur + 2);
-            if (!isOctalDigit(next2)) {
-              result.append((char) (8 * octaldigit(c) + octaldigit(next1)));
-              cur += 1;
-            } else {
-              result.append((char)
-                  (8 * 8 * octaldigit(c) + 8 * octaldigit(next1) + octaldigit(next2)));
-              cur += 2;
-            }
-          }
+          result.append((char) parseInt(value.substring(cur, cur + numDigits), 8));
+          cur += numDigits - 1;
 
           break;
         case 'x':
@@ -3105,7 +3253,22 @@ class IRFactory {
             hexDigits = value.substring(cur + 2, escapeEnd);
             escapeEnd++;
           }
-          result.append(Character.toChars(Integer.parseInt(hexDigits, 0x10)));
+          int codePointValue = parseInt(hexDigits, 0x10);
+          if (codePointValue > 0x10ffff) {
+            errorReporter.error(
+                "Undefined Unicode code-point",
+                sourceName,
+                lineno(token.location.start),
+                charno(token.location.start));
+
+            // Compilation should stop, but we should finish the string and find more errors.
+            // These appends are just to have a placeholder for the errored normalization.
+            result.append("\\u{");
+            result.append(hexDigits);
+            result.append("}");
+          } else {
+            result.append(Character.toChars(codePointValue));
+          }
           cur = escapeEnd - 1;
           break;
         case '\'':
@@ -3414,6 +3577,10 @@ class IRFactory {
 
   Node newStringNode(Token type, String value) {
     return Node.newString(type, value).clonePropsFrom(templateNode);
+  }
+
+  Node newTemplateLitStringNode(String cooked, String raw) {
+    return Node.newTemplateLitString(cooked, raw).clonePropsFrom(templateNode);
   }
 
   Node newNumberNode(Double value) {

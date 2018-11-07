@@ -16,7 +16,6 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.javascript.jscomp.NewTypeInference.MISTYPED_ASSIGN_RHS;
 import static com.google.javascript.jscomp.PolymerClassRewriter.POLYMER_ELEMENT_PROP_CONFIG;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_CLASS_PROPERTIES_INVALID;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_CLASS_PROPERTIES_NOT_STATIC;
@@ -29,17 +28,23 @@ import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_UNANNOTATED
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_UNEXPECTED_PARAMS;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_UNQUALIFIED_BEHAVIOR;
 import static com.google.javascript.jscomp.TypeValidator.TYPE_MISMATCH_WARNING;
-import static com.google.javascript.jscomp.testing.NodeSubject.assertNode;
+import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.NodeUtil.Visitor;
 import com.google.javascript.rhino.Node;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Unit tests for PolymerPass
+ *
  * @author jlklein@google.com (Jeremy Klein)
  */
-public class PolymerPassTest extends TypeICompilerTestCase {
+@RunWith(JUnit4.class)
+public class PolymerPassTest extends CompilerTestCase {
   private static final String EXTERNS_PREFIX =
       lines(
           MINIMAL_EXTERNS,
@@ -109,13 +114,15 @@ public class PolymerPassTest extends TypeICompilerTestCase {
           "/** @const */ var $jscomp = $jscomp || {};",
           "/** @const */ $jscomp.scope = {};",
           "/**",
-          " * @param {!Function} type",
-          " * @param {Object} object",
-          " * @return {Object}",
+          " * @param {?Object} type",
+          " * @param {T} object",
+          " * @return {T}",
+          " * @template T",
           " */",
           "$jscomp.reflectObject = function (type, object) { return object; };");
 
   private int polymerVersion = 1;
+  private PolymerExportPolicy polymerExportPolicy = PolymerExportPolicy.LEGACY;
   private boolean propertyRenamingEnabled = false;
 
   public PolymerPassTest() {
@@ -124,15 +131,16 @@ public class PolymerPassTest extends TypeICompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new PolymerPass(compiler, polymerVersion, propertyRenamingEnabled);
+    return new PolymerPass(compiler, polymerVersion, polymerExportPolicy, propertyRenamingEnabled);
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
+    enableTypeCheck();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
     allowExternsChanges();
-    this.mode = TypeInferenceMode.BOTH;
     enableRunTypeCheckAfterProcessing();
     enableParseTypeInfo();
   }
@@ -142,6 +150,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
     return 1;
   }
 
+  @Test
   public void testVarTarget() {
     test(
         lines(
@@ -157,7 +166,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "var X = class extends Polymer.Element {",
@@ -173,9 +183,11 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "};"));
   }
 
+  @Test
   public void testLetTarget() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "let X = Polymer({",
@@ -191,7 +203,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "X = Polymer(/** @lends {X.prototype} */ {is:'x-element'});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "let X = class extends Polymer.Element {",
@@ -207,9 +220,11 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "};"));
   }
 
+  @Test
   public void testConstTarget() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     testError(
         lines(
             "const X = Polymer({",
@@ -231,6 +246,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "};"));
   }
 
+  @Test
   public void testDefaultTypeNameTarget() {
     test(
         lines(
@@ -249,6 +265,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testPathAssignmentTarget() {
     test(
         lines(
@@ -266,7 +283,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "const x = {};",
@@ -284,10 +302,12 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "};"));
   }
 
+  @Test
   public void testComputedPropName() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
     // TypeCheck cannot grab a name from a complicated computedPropName
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test("var X = Polymer({is:'x-element', [name + (() => 42)]: function() {return 42;}});",
         lines(
             "/** @constructor @extends {PolymerElement} @implements {PolymerXInterface} */",
@@ -301,10 +321,10 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   }
 
   /**
-   * Since 'x' is a global name, the type system understands
-   * 'x.Z' as a type name, so there is no need to extract the
-   * type to the global namespace.
+   * Since 'x' is a global name, the type system understands 'x.Z' as a type name, so there is no
+   * need to extract the type to the global namespace.
    */
+  @Test
   public void testIIFEExtractionInGlobalNamespace() {
     test(
         lines(
@@ -329,7 +349,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "})()"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "const x = {};",
@@ -352,13 +373,12 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   }
 
   /**
-   * The definition of XElement is placed in the global namespace,
-   * outside the IIFE so that the type system will understand that
-   * XElement is a type.
+   * The definition of XElement is placed in the global namespace, outside the IIFE so that the type
+   * system will understand that XElement is a type.
    */
+  @Test
   public void testIIFEExtractionNoAssignmentTarget() {
     test(
-        1,
         lines(
             "(function() {",
             "  Polymer({",
@@ -380,31 +400,9 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "  });",
             "})()"));
 
-    test(
-        2,
-        lines(
-            "(function() {",
-            "  Polymer({",
-            "    is: 'x',",
-            "    sayHi: function() { alert('hi'); },",
-            "  });",
-            "})()"),
-        lines(
-            "(function() {",
-            "  /**",
-            "   * @constructor @extends {PolymerElement}",
-            "   * @implements {PolymerXElementInterface}",
-            "   */",
-            "  var XElement = function() {};",
-            "  Polymer(/** @lends {XElement.prototype} */ {",
-            "    is: 'x',",
-            "    /** @this {XElement} */",
-            "    sayHi: function() { alert('hi'); },",
-            "  });",
-            "})()"));
-
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "(function() {",
@@ -425,10 +423,10 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   }
 
   /**
-   * The definition of FooThing is placed in the global namespace,
-   * outside the IIFE so that the type system will understand that
-   * FooThing is a type.
+   * The definition of FooThing is placed in the global namespace, outside the IIFE so that the type
+   * system will understand that FooThing is a type.
    */
+  @Test
   public void testIIFEExtractionVarTarget() {
     test(
         1,
@@ -454,6 +452,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "})()"));
   }
 
+  @Test
   public void testConstructorExtraction() {
     test(
         lines(
@@ -478,6 +477,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testShorthandConstructorExtraction() {
     test(
         lines(
@@ -503,6 +503,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testOtherKeysIgnored() {
     test(
         lines(
@@ -533,7 +534,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "class X extends Polymer.Element {",
@@ -552,6 +554,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testListenersAndHostAttributeKeysQuoted() {
     test(
         lines(
@@ -594,6 +597,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testNativeElementExtension() {
     String js = lines(
         "Polymer({",
@@ -617,6 +621,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
     testExternChanges(EXTERNS, js, INPUT_EXTERNS);
   }
 
+  @Test
   public void testExtendNonExistentElement() {
     polymerVersion = 1;
     String js = lines(
@@ -628,6 +633,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
     testError(js, POLYMER_INVALID_EXTENDS);
   }
 
+  @Test
   public void testNativeElementExtensionExternsNotDuplicated() {
     String js =
         lines(
@@ -648,6 +654,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
     testExternChanges(EXTERNS, js, newExterns);
   }
 
+  @Test
   public void testPropertiesAddedToPrototype() {
     test(
         lines(
@@ -696,7 +703,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "/** @constructor */",
@@ -747,6 +755,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "a.B.prototype.thingToDo;"));
   }
 
+  @Test
   public void testPropertiesDefaultValueFunctions() {
     test(
         lines(
@@ -801,7 +810,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "/** @constructor */",
@@ -858,6 +868,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "a.B.prototype.name;"));
   }
 
+  @Test
   public void testPropertiesDefaultValueShortHandFunction() {
     test(
         lines(
@@ -896,7 +907,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
         lines(
             "/** @constructor */",
@@ -953,6 +965,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "a.B.prototype.name;"));
   }
 
+  @Test
   public void testReadOnlyPropertySetters() {
     String js =
         lines(
@@ -1047,7 +1060,8 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "Polymera_BInterface.prototype._setPets;"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     String jsClass = lines(
         "class A extends Polymer.Element {",
         "  static get is() { return 'a-element'; }",
@@ -1081,7 +1095,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "/** @implements {PolymerAInterface} */",
             "class A extends Polymer.Element {",
             "  /** @return {string} */ static get is() { return 'a-element'; }",
-            "  /** @return {Polymer.ElementProperties} */ static get properties() {",
+            "  /** @return {PolymerElementProperties} */ static get properties() {",
             "    return {",
             "      pets: {",
             "        type: Array,",
@@ -1096,6 +1110,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "A.prototype._setPets = function(pets) {};"));
   }
 
+  @Test
   public void testReflectToAttributeProperties() {
     String js =
         lines(
@@ -1190,9 +1205,10 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "Polymera_BInterface.prototype.name;"));
   }
 
+  @Test
   public void testPolymerClassObserversTyped() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         lines(
             "class FooElement extends Polymer.Element {",
@@ -1212,6 +1228,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testShorthandFunctionDefinition() {
     test(
         lines(
@@ -1237,6 +1254,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testArrowFunctionDefinition() {
     test(
         lines(
@@ -1258,6 +1276,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testShorthandLifecycleCallbacks() {
     test(
         lines(
@@ -1284,6 +1303,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testShorthandFunctionDefinitionWithReturn() {
     test(
         lines(
@@ -1309,6 +1329,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testThisTypeAddedToFunctions() {
     test(
         lines(
@@ -1356,7 +1377,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         lines(
             "class Foo extends Polymer.Element {",
@@ -1397,6 +1418,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testDollarSignPropsConvertedToBrackets() {
     test(
         lines(
@@ -1470,7 +1492,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         lines(
             "class Foo extends Polymer.Element {",
@@ -1532,6 +1554,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "Foo.prototype.propName;"));
   }
 
+  @Test
   public void testDollarSignPropsInShorthandFunctionConvertedToBrackets() {
     test(
         lines(
@@ -1568,6 +1591,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   /**
    * Test that behavior property types are copied correctly to multiple elements. See b/21929103.
    */
+  @Test
   public void testBehaviorForMultipleElements() {
     test(
         lines(
@@ -1646,6 +1670,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testSimpleBehavior() {
     test(
         srcs(lines(
@@ -1738,15 +1763,57 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "  },",
             "  behaviors: [ FunBehavior ],",
             "});")),
-        (Postcondition) (Compiler compiler) -> {
-          // The original doSomethingFun definition in FunBehavior is on line 21, so make sure
-          // that line number is preserved when it's copied into the Polymer() call.
-          Node root = compiler.getRoot();
-          DoSomethingFunFinder visitor = new DoSomethingFunFinder();
-          NodeUtil.visitPreOrder(root, visitor);
-          assertThat(visitor.found).isTrue();
-        });
+        (Postcondition)
+            compiler -> {
+              // The original doSomethingFun definition in FunBehavior is on line 21, so make sure
+              // that line number is preserved when it's copied into the Polymer() call.
+              Node root = compiler.getRoot();
+              DoSomethingFunFinder visitor = new DoSomethingFunFinder();
+              NodeUtil.visitPreOrder(root, visitor);
+              assertThat(visitor.found).isTrue();
+            });
+  }
 
+  /** Check that we can resolve behaviors through a chain of identifiers. */
+  @Test
+  public void testIndirectBehaviorAssignment() {
+    test(
+        srcs(
+            lines(
+                "/** @polymerBehavior */",
+                "var MyBehavior = {",
+                "  properties: {",
+                "    behaviorProperty: Boolean",
+                "  }",
+                "};",
+                "var BehaviorAlias1 = MyBehavior;",
+                "var BehaviorAlias2 = BehaviorAlias1;",
+                "var MyElement = Polymer({",
+                "  is: 'my-element',",
+                "  behaviors: [ BehaviorAlias2 ]",
+                "});")),
+        expected(
+            lines(
+                "/** @polymerBehavior @nocollapse */",
+                "var MyBehavior = {",
+                "  properties: {",
+                "    behaviorProperty: Boolean",
+                "  }",
+                "};",
+                "var BehaviorAlias1 = MyBehavior;",
+                "var BehaviorAlias2 = BehaviorAlias1;",
+                "/**",
+                " * @constructor",
+                " * @extends {PolymerElement}",
+                " * @implements {PolymerMyElementInterface}",
+                " */",
+                "var MyElement = function(){};",
+                "/** @type {boolean} */",
+                "MyElement.prototype.behaviorProperty;",
+                "MyElement = Polymer(/** @lends {MyElement.prototype} */ {",
+                "  is: 'my-element',",
+                "  behaviors: [ BehaviorAlias2 ]",
+                "});")));
   }
 
   private static class DoSomethingFunFinder implements Visitor {
@@ -1762,6 +1829,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   }
 
   /** If a behavior method is {@code @protected} there is no visibility warning. */
+  @Test
   public void testBehaviorWithProtectedMethod() {
     enableCheckAccessControls();
     for (int i = 1; i <= 2; i++) {
@@ -1817,6 +1885,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   }
 
   /** If a behavior method is {@code @private} there is a visibility warning. */
+  @Test
   public void testBehaviorWithPrivateMethod() {
     enableCheckAccessControls();
     testWarning(
@@ -1843,6 +1912,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
    * Test that if a behavior function is implemented by the Element, the function from the behavior
    * is not copied to the prototype of the Element.
    */
+  @Test
   public void testBehaviorFunctionOverriddenByElement() {
     test(
         lines(
@@ -1899,6 +1969,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testBehaviorShorthandFunctionOverriddenByElement() {
     test(
         lines(
@@ -1949,6 +2020,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testBehaviorDefaultValueSuppression() {
     test(
         lines(
@@ -2017,6 +2089,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testArrayBehavior() {
     test(
         lines(
@@ -2138,6 +2211,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testInlineLiteralBehavior() {
     test(
         lines(
@@ -2234,6 +2308,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
    * If an element has two or more behaviors which define the same function, only the last
    * behavior's function should be copied over to the element's prototype.
    */
+  @Test
   public void testBehaviorFunctionOverriding() {
     test(
         lines(
@@ -2341,6 +2416,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testBehaviorShorthandFunctionOverriding() {
     test(
         lines(
@@ -2449,6 +2525,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testBehaviorReadOnlyProp() {
     String js =
         lines(
@@ -2554,9 +2631,11 @@ public class PolymerPassTest extends TypeICompilerTestCase {
   }
 
   /**
-   * Behaviors whose declarations are not in the global scope may contain references to
-   * symbols which do not exist in the element's scope. Only copy a function stub.
+   * Behaviors whose declarations are not in the global scope may contain references to symbols
+   * which do not exist in the element's scope. Only copy a function stub.
+   *
    */
+  @Test
   public void testBehaviorInIIFE() {
     test(
         lines(
@@ -2649,6 +2728,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testDuplicatedBehaviorsAreCopiedOnce() {
     test(
         lines(
@@ -2747,9 +2827,10 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testInvalid1() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     testWarning("var x = Polymer('blah');", POLYMER_DESCRIPTOR_NOT_VALID);
     testWarning("var x = Polymer('foo-bar', {});", POLYMER_DESCRIPTOR_NOT_VALID);
     testError("var x = Polymer({},'blah');", POLYMER_UNEXPECTED_PARAMS);
@@ -2772,6 +2853,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
         POLYMER_CLASS_PROPERTIES_NOT_STATIC);
   }
 
+  @Test
   public void testInvalidProperties() {
     testError(
         lines(
@@ -2811,7 +2893,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
         POLYMER_INVALID_PROPERTY);
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     testError(
         lines(
             "var x = class extends Polymer.Element {",
@@ -2854,6 +2936,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
         POLYMER_INVALID_PROPERTY);
   }
 
+  @Test
   public void testInvalidBehavior() {
     testError(
         lines(
@@ -2906,6 +2989,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
         POLYMER_UNQUALIFIED_BEHAVIOR);
   }
 
+  @Test
   public void testUnannotatedBehavior() {
     testError(
         lines(
@@ -2920,6 +3004,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
         POLYMER_UNANNOTATED_BEHAVIOR);
   }
 
+  @Test
   public void testInvalidTypeAssignment() {
     test(
         lines(
@@ -2948,12 +3033,13 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "    this.isHappy = 7;",
             "  },",
             "});"),
-        warningOtiNti(TYPE_MISMATCH_WARNING, MISTYPED_ASSIGN_RHS));
+        warning(TYPE_MISMATCH_WARNING));
   }
 
+  @Test
   public void testFeaturesInFunctionBody() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         lines(
             "var X = Polymer({",
@@ -2990,9 +3076,10 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
   }
 
+  @Test
   public void testPolymerElementAnnotation1() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         lines(
             "/** @constructor */",
@@ -3043,9 +3130,10 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "Foo.prototype.thingToDo;"));
   }
 
+  @Test
   public void testPolymerElementAnnotation2() {
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         lines(
             "/** @constructor */",
@@ -3098,6 +3186,63 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "a.B.prototype.thingToDo;"));
   }
 
+  @Test
+  public void testPolymerElementAnnotation3() {
+    // Type checker doesn't currently understand ES6 code. Remove when it does.
+    disableTypeCheck();
+    test(
+        lines(
+            "/** @interface */",
+            "function User() {};",
+            "/** @type {boolean} */ User.prototype.id;",
+            "var a = {};",
+            "/**",
+            " * @polymer",
+            " * @implements {User}",
+            " */",
+            "a.B = class extends Foo {",
+            "  static get is() { return 'x-element'; }",
+            "  static get properties() {",
+            "    return {",
+            "      id: Boolean,",
+            "      other: {",
+            "        type: String,",
+            "        reflectToAttribute: true",
+            "      }",
+            "    };",
+            "  }",
+            "};"),
+        lines(
+            "/** @interface */",
+            "function User() {};",
+            "/** @type {boolean} */ User.prototype.id;",
+            "var a = {};",
+            "/**",
+            " * @polymer",
+            " * @implements {User}",
+            " * @implements {Polymera_BInterface}",
+            " */",
+            "a.B = class extends Foo {",
+            "  /** @return {string} */",
+            "  static get is() { return 'x-element'; }",
+            "  /** @return {" + POLYMER_ELEMENT_PROP_CONFIG + "} */",
+            "  static get properties() {",
+            "    return {",
+            "      id: Boolean,",
+            "      other: {",
+            "        type: String,",
+            "        reflectToAttribute: true",
+            "      }",
+            "    };",
+            "  }",
+            "};",
+            "/** @type {boolean} */",
+            "a.B.prototype.id;",
+            "/** @type {string} */",
+            "a.B.prototype.other;"));
+  }
+
+  @Test
   public void testObjectReflectionAddedToConfigProperties1() {
     propertyRenamingEnabled = true;
     test(
@@ -3148,7 +3293,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         2,
         lines(
@@ -3201,6 +3346,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "a.B.prototype.thingToDo;"));
   }
 
+  @Test
   public void testObjectReflectionAddedToConfigProperties2() {
     propertyRenamingEnabled = true;
     test(
@@ -3249,7 +3395,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         2,
         lines(
@@ -3300,6 +3446,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "A.prototype.thingToDo;"));
   }
 
+  @Test
   public void testObjectReflectionAddedToConfigProperties3() {
     propertyRenamingEnabled = true;
     test(
@@ -3351,7 +3498,7 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "});"));
 
     // Type checker doesn't currently understand ES6 code. Remove when it does.
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
     test(
         2,
         lines(
@@ -3400,6 +3547,125 @@ public class PolymerPassTest extends TypeICompilerTestCase {
             "XElement.prototype.name;",
             "/** @type {!Function} */",
             "XElement.prototype.thingToDo;"));
+  }
+
+  @Test
+  public void testExportsMethodsFromClassBasedElement() {
+    polymerExportPolicy = PolymerExportPolicy.EXPORT_ALL;
+    test(
+        2,
+        lines(
+            "class TestElement extends PolymerElement {",
+            "  /** @public */ method1() {}",
+            "  /** @private */ method2() {}",
+            "}"),
+        lines(
+            "/** @implements {PolymerTestElementInterface} */",
+            "class TestElement extends PolymerElement {",
+            "  /** @public */ method1() {}",
+            "  /** @private */ method2() {}",
+            "}",
+            "/** @private @export */ TestElement.prototype.method2;",
+            "/** @public @export */ TestElement.prototype.method1;"));
+  }
+
+  @Test
+  public void testExportMethodsFromLegacyElement() {
+    polymerExportPolicy = PolymerExportPolicy.EXPORT_ALL;
+    test(
+        2,
+        lines(
+            "Polymer({",
+            "  is: 'test-element',",
+            "  /** @public */ method1() {},",
+            "  /** @private */ method2() {},",
+            "});"),
+        lines(
+            "/**",
+            " * @constructor",
+            " * @extends {PolymerElement}",
+            " * @implements {PolymerTestElementElementInterface}",
+            " */",
+            "var TestElementElement = function() {};",
+            "Polymer(/** @lends {TestElementElement.prototype} */ {",
+            "  is: \"test-element\",",
+            "  /** @public @this {TestElementElement} */ method1() {},",
+            "  /** @private @this {TestElementElement} */ method2() {},",
+            "});",
+            "/** @private @export */ TestElementElement.prototype.method2;",
+            "/** @public @export */ TestElementElement.prototype.method1;"));
+  }
+
+  @Test
+  public void testExportsUniqueMethodsFromLegacyElementAndBehaviors() {
+    polymerExportPolicy = PolymerExportPolicy.EXPORT_ALL;
+    test(
+        2,
+        lines(
+            "/** @polymerBehavior */",
+            "const Behavior1 = {",
+            "  /** @public */ onAll: function() {},",
+            "  /**",
+            "   * @public",
+            // Note we include this @return annotation to test that we aren't including @return,
+            // @param and other redundant JSDoc in our generated @export statements, since that
+            // would cause a re-declaration error.
+            "   * @return {void}",
+            "   */",
+            "   onBehavior1: function() {},",
+            "};",
+            "/** @polymerBehavior */",
+            "const Behavior2 = {",
+            "  /** @private */ onAll: function() {},",
+            "  /** @private */ onBehavior2: function() {},",
+            "};",
+            "Polymer({",
+            "  is: 'test-element',",
+            "  behaviors: [Behavior1, Behavior2],",
+            "  /** @private */ onAll: function() {},",
+            "  /** @private */ onElement: function() {},",
+            "});"),
+        lines(
+            "/** @nocollapse @polymerBehavior */",
+            "const Behavior1 = {",
+            "  /** @suppress {checkTypes,globalThis,visibility} */",
+            "  onAll: function() {},",
+            "  /** @suppress {checkTypes,globalThis,visibility} */",
+            "  onBehavior1: function() {}",
+            "};",
+            "/** @nocollapse @polymerBehavior */",
+            "const Behavior2 = {",
+            "  /** @suppress {checkTypes,globalThis,visibility} */",
+            "  onAll: function() {},",
+            "  /** @suppress {checkTypes,globalThis,visibility} */",
+            "  onBehavior2: function() {}",
+            "};",
+            "/**",
+            " * @constructor",
+            " * @extends {PolymerElement}",
+            " * @implements {PolymerTestElementElementInterface}",
+            " */",
+            "var TestElementElement = function() {};",
+            "/**",
+            " * @public",
+            " * @suppress {unusedPrivateMembers}",
+            " * @return {void}",
+            " */",
+            "TestElementElement.prototype.onBehavior1 = function() {};",
+            "/** @private @suppress {unusedPrivateMembers} */",
+            "TestElementElement.prototype.onBehavior2 = function() {};",
+            "Polymer(/** @lends {TestElementElement.prototype} */ {",
+            "  is: \"test-element\",",
+            "  behaviors: [Behavior1, Behavior2],",
+            "  /** @private @this {TestElementElement} */",
+            "  onAll: function() {},",
+            "  /** @private @this {TestElementElement} */",
+            "  onElement: function() {}",
+            "});",
+            "/** @private @export */ TestElementElement.prototype.onElement;",
+            "/** @private @export */ TestElementElement.prototype.onBehavior2;",
+            "/** @public @export */ TestElementElement.prototype.onBehavior1;",
+            "/** @private @export */ TestElementElement.prototype.onAll;"));
   }
 
   @Override

@@ -650,7 +650,7 @@ function Int8Array(length, opt_byteOffset, opt_length) {}
 Int8Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -683,7 +683,7 @@ function Uint8Array(length, opt_byteOffset, opt_length) {}
 Uint8Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -716,7 +716,7 @@ function Uint8ClampedArray(length, opt_byteOffset, opt_length) {}
 Uint8ClampedArray.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -758,7 +758,7 @@ function Int16Array(length, opt_byteOffset, opt_length) {}
 Int16Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -791,7 +791,7 @@ function Uint16Array(length, opt_byteOffset, opt_length) {}
 Uint16Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -824,7 +824,7 @@ function Int32Array(length, opt_byteOffset, opt_length) {}
 Int32Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -857,7 +857,7 @@ function Uint32Array(length, opt_byteOffset, opt_length) {}
 Uint32Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -890,7 +890,7 @@ function Float32Array(length, opt_byteOffset, opt_length) {}
 Float32Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -923,7 +923,7 @@ function Float64Array(length, opt_byteOffset, opt_length) {}
 Float64Array.BYTES_PER_ELEMENT;
 
 /**
- * @param {!Array<number>} source
+ * @param {string|!IArrayLike<number>|!Iterable<number>} source
  * @param {function(this:S, number): number=} opt_mapFn
  * @param {S=} opt_this
  * @template S
@@ -1226,6 +1226,13 @@ Promise.prototype.catch = function(onRejected) {};
 
 
 /**
+ * @param {function()} callback
+ * @return {!Promise<TYPE>}
+ */
+Promise.prototype.finally = function(callback) {};
+
+
+/**
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/of
  * @param {...T} var_args
  * @return {!Array<T>}
@@ -1247,6 +1254,14 @@ Array.from = function(arrayLike, opt_mapFn, opt_this) {};
 
 /** @return {!IteratorIterable<number>} */
 Array.prototype.keys;
+
+
+/**
+ * @return {!IteratorIterable<T>}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/values
+ */
+Array.prototype.values;
 
 
 /**
@@ -1307,6 +1322,7 @@ Array.prototype.copyWithin = function(target, start, opt_end) {};
  * @return {boolean}
  * @this {!IArrayLike<T>|string}
  * @template T
+ * @nosideeffects
  * @see https://tc39.github.io/ecma262/#sec-array.prototype.includes
  */
 Array.prototype.includes = function(searchElement, opt_fromIndex) {};
@@ -1350,9 +1366,9 @@ Number.MAX_SAFE_INTEGER;
 
 
 /**
- * Parse an integer. Use of {@code parseInt} without {@code base} is strictly
+ * Parse an integer. Use of `parseInt` without `base` is strictly
  * banned in Google. If you really want to parse octal or hex based on the
- * leader, then pass {@code undefined} as the base.
+ * leader, then pass `undefined` as the base.
  *
  * @param {string} string
  * @param {number|undefined} radix
@@ -1406,7 +1422,7 @@ Number.isSafeInteger = function(value) {};
 
 /**
  * @param {!Object} target
- * @param {...Object} var_args
+ * @param {...(Object|null|undefined)} var_args
  * @return {!Object}
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/assign
  */
@@ -1667,3 +1683,65 @@ Atomics.wake = function(typedArray, index, count) {}
  * @return {number}
  */
 Atomics.xor = function(typedArray, index, value) {}
+
+
+/**
+ * @see https://tc39.github.io/proposal-async-iteration/
+ * @const {symbol}
+ */
+Symbol.asyncIterator;
+
+
+/**
+ * @interface
+ * @extends {AsyncIterable<VALUE>}
+ * @template VALUE
+ * @see https://tc39.github.io/proposal-async-iteration/
+ */
+function AsyncIterator() {}
+
+/**
+ * @param {?=} opt_value
+ * @return {!Promise<!IIterableResult<VALUE>>}
+ */
+AsyncIterator.prototype.next;
+
+
+/**
+ * @interface
+ * @template VALUE
+ */
+function AsyncIterable() {}
+
+
+/**
+ * @return {!AsyncIterator<VALUE>}
+ */
+AsyncIterable.prototype[Symbol.asyncIterator] = function() {};
+
+/**
+ * @interface
+ * @see https://tc39.github.io/proposal-async-iteration/
+ * @extends {AsyncIterator<VALUE>}
+ * @template VALUE
+ */
+function AsyncGenerator() {}
+
+/**
+ * @param {?=} opt_value
+ * @return {!Promise<!IIterableResult<VALUE>>}
+ * @override
+ */
+AsyncGenerator.prototype.next = function(opt_value) {};
+
+/**
+ * @param {VALUE} value
+ * @return {!Promise<!IIterableResult<VALUE>>}
+ */
+AsyncGenerator.prototype.return = function(value) {};
+
+/**
+ * @param {?} exception
+ * @return {!Promise<!IIterableResult<VALUE>>}
+ */
+AsyncGenerator.prototype.throw = function(exception) {};
