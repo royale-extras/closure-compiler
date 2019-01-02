@@ -3549,6 +3549,9 @@ HTMLTextAreaElement.prototype.labels;
 /** @type {string} */
 HTMLTextAreaElement.prototype.placeholder;
 
+/** @type {boolean} */
+HTMLTextAreaElement.prototype.required;
+
 /** @type {string} */
 HTMLTextAreaElement.prototype.validationMessage;
 
