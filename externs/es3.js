@@ -651,15 +651,16 @@ Array.prototype.slice = function(opt_begin, opt_end) {};
  * Sorts the elements of an array in place.
  *
  * @return {!Array<?>}
- * @param {function(T,T):number=} opt_compareFn Specifies a function that
+ * @param {function(T,T):number|number=} opt_compareFn Specifies a function that
  *     defines the sort order.
+ * @param {number=} sort_opt Specifies a function that
  * @this {IArrayLike<T>}
  * @template T
  * @modifies {this}
  * @return {!Array<T>}
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort
  */
-Array.prototype.sort = function(opt_compareFn) {};
+Array.prototype.sort = function(opt_compareFn,sort_opt) {};
 
 /**
  * Changes the content of an array, adding new elements while removing old
