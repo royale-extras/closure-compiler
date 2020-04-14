@@ -22,9 +22,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/child_process.js
  */
 
-var events = require('events');
-var stream = require('stream');
-
 /**
  * @const
  */

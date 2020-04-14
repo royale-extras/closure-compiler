@@ -20,8 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/net.js
  */
 
-var events = require('events');
-
 /**
  * @const
  */

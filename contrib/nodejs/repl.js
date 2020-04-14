@@ -20,9 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/repl.js
  */
 
-var events = require('events');
-var stream = require('stream');
-
 /**
  * @const
  */

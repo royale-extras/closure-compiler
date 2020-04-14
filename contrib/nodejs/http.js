@@ -20,10 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/http.js
  */
 
-var events = require('events');
-var net = require('net');
-var stream = require('stream');
-
 /** @const */
 var http = {};
 

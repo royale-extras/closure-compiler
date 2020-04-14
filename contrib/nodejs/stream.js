@@ -20,8 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/stream.js
  */
 
-var events = require('events');
-
 /** @const */
 var stream = {};
 

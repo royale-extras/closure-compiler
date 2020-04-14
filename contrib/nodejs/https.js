@@ -20,9 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/https.js
  */
 
-var http = require('http');
-var tls = require('tls');
-
 /** @const */
 var https = {};
 

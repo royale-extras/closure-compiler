@@ -20,9 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/cluster.js
  */
 
-var child_process = require('child_process');
-var events = require('events');
-
 /**
  * @const
  */

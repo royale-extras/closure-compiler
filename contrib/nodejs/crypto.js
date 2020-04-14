@@ -20,8 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/crypto.js
  */
 
-var stream = require('stream');
-
 /**
  * @const
  */

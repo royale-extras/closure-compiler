@@ -20,8 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/tty.js
  */
 
-var net = require('net');
-
 /**
  * @const
  */

@@ -19,9 +19,6 @@
  * @see http://nodejs.org/api/readline.html
  */
 
-var events = require('events');
-var stream = require('stream');
-
 /**
  * @const
  */

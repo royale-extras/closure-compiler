@@ -20,8 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/zlib.js
  */
 
-var stream = require('stream');
-
 /**
  * @const
  */

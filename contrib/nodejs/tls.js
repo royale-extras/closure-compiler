@@ -20,10 +20,6 @@
  * @see https://github.com/joyent/node/blob/master/lib/tls.js
  */
 
-var crypto = require('crypto');
-var events = require('events');
-var net = require('net');
-var stream = require('stream');
 
 /**
  * @const
