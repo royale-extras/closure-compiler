@@ -817,6 +817,7 @@ Document.prototype.activeElement;
 Document.prototype.charset;
 
 /**
+ * @type {string}
  * @see http://msdn.microsoft.com/en-us/library/ms533693(VS.85).aspx
  */
 Document.prototype.cookie;
