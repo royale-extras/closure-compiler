@@ -22,14 +22,15 @@ import com.google.common.annotations.GwtIncompatible;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Map;
+import java.util.Objects;
 import javax.annotation.Nullable;
 
 /**
  * ReplaceMessages replaces user-visible messages with alternatives.
  * It uses Google specific JsMessageVisitor implementation.
- *
- * @author anatol@google.com (Anatol Pomazau)
  */
 @GwtIncompatible("JsMessage")
 final class ReplaceMessages extends JsMessageVisitor {
@@ -40,8 +41,21 @@ final class ReplaceMessages extends JsMessageVisitor {
       DiagnosticType.error("JSC_BUNDLE_DOES_NOT_HAVE_THE_MESSAGE",
           "Message with id = {0} could not be found in replacement bundle");
 
-  ReplaceMessages(AbstractCompiler compiler, MessageBundle bundle,
-      boolean checkDuplicatedMessages, JsMessage.Style style,
+  static final DiagnosticType INVALID_ALTERNATE_MESSAGE_PARTS =
+      DiagnosticType.error(
+          "JSC_INVALID_ALTERNATE_MESSAGE_PARTS",
+          "Alternate message ID={0} with {1} parts differs from {2} with {3} parts.");
+
+  static final DiagnosticType INVALID_ALTERNATE_MESSAGE_PLACEHOLDERS =
+      DiagnosticType.error(
+          "JSC_INVALID_ALTERNATE_MESSAGE_PLACEHOLDERS",
+          "Alternate message ID={0} placeholders ({1}) differs from {2} placeholders ({3}).");
+
+  ReplaceMessages(
+      AbstractCompiler compiler,
+      MessageBundle bundle,
+      boolean checkDuplicatedMessages,
+      JsMessage.Style style,
       boolean strictReplacement) {
     super(compiler, checkDuplicatedMessages, style, bundle.idGenerator());
 
@@ -49,16 +63,56 @@ final class ReplaceMessages extends JsMessageVisitor {
     this.strictReplacement = strictReplacement;
   }
 
+  private JsMessage lookupMessage(Node callNode, MessageBundle bundle, JsMessage message) {
+    JsMessage translatedMessage = bundle.getMessage(message.getId());
+    if (translatedMessage != null) {
+      return translatedMessage;
+    }
+
+    String alternateId = message.getAlternateId();
+    if (alternateId == null) {
+      return null;
+    }
+
+    JsMessage alternateMessage = bundle.getMessage(alternateId);
+    if (alternateMessage != null) {
+      // Validate that the alternate message is compatible with this message. Ideally we'd also
+      // check meaning and description, but they're not populated by `MessageBundle.getMessage`.
+      if (message.parts().size() != alternateMessage.parts().size()) {
+        compiler.report(
+            JSError.make(
+                callNode,
+                INVALID_ALTERNATE_MESSAGE_PARTS,
+                alternateId,
+                String.valueOf(alternateMessage.parts().size()),
+                message.getKey(),
+                String.valueOf(message.parts().size())));
+        return null;
+      }
+      if (!Objects.equals(message.placeholders(), alternateMessage.placeholders())) {
+        compiler.report(
+            JSError.make(
+                callNode,
+                INVALID_ALTERNATE_MESSAGE_PLACEHOLDERS,
+                alternateId,
+                String.valueOf(alternateMessage.placeholders()),
+                message.getKey(),
+                String.valueOf(message.placeholders())));
+        return null;
+      }
+    }
+    return alternateMessage;
+  }
+
   @Override
   void processMessageFallback(
       Node callNode, JsMessage message1, JsMessage message2) {
-    boolean isFirstMessageTranslated =
-        (bundle.getMessage(message1.getId()) != null);
-    boolean isSecondMessageTranslated =
-        (bundle.getMessage(message2.getId()) != null);
+    boolean isFirstMessageTranslated = (lookupMessage(callNode, bundle, message1) != null);
+    boolean isSecondMessageTranslated = (lookupMessage(callNode, bundle, message2) != null);
     Node replacementNode =
-        isSecondMessageTranslated && !isFirstMessageTranslated ?
-        callNode.getChildAtIndex(2) : callNode.getSecondChild();
+        (isSecondMessageTranslated && !isFirstMessageTranslated)
+            ? callNode.getChildAtIndex(2)
+            : callNode.getSecondChild();
     callNode.replaceWith(replacementNode.detach());
     Node changeScope = NodeUtil.getEnclosingChangeScopeRoot(replacementNode);
     if (changeScope != null) {
@@ -71,12 +125,11 @@ final class ReplaceMessages extends JsMessageVisitor {
       JsMessageDefinition definition) {
 
     // Get the replacement.
-    JsMessage replacement = bundle.getMessage(message.getId());
+    Node callNode = definition.getMessageNode();
+    JsMessage replacement = lookupMessage(callNode, bundle, message);
     if (replacement == null) {
       if (strictReplacement) {
-        compiler.report(JSError.make(
-            definition.getMessageNode(), BUNDLE_DOES_NOT_HAVE_THE_MESSAGE,
-            message.getId()));
+        compiler.report(JSError.make(callNode, BUNDLE_DOES_NOT_HAVE_THE_MESSAGE, message.getId()));
         // Fallback to the default message
         return;
       } else {
@@ -183,9 +236,12 @@ final class ReplaceMessages extends JsMessageVisitor {
     Node valueNode = constructAddOrStringNode(iterator, argListNode);
     Node newBlockNode = IR.block(IR.returnNode(valueNode));
 
-    // TODO(user): checkTreeEqual is overkill. I am in process of rewriting
-    // these functions.
-    if (newBlockNode.checkTreeEquals(oldBlockNode) != null) {
+    if (!newBlockNode.isEquivalentTo(
+        oldBlockNode,
+        /* compareType= */ false,
+        /* recurse= */ true,
+        /* jsDoc= */ false,
+        /* sideEffect= */ false)) {
       newBlockNode.useSourceInfoIfMissingFromForTree(oldBlockNode);
       functionNode.replaceChild(oldBlockNode, newBlockNode);
       compiler.reportChangeToEnclosingScope(newBlockNode);
@@ -262,11 +318,11 @@ final class ReplaceMessages extends JsMessageVisitor {
    *  |
    *  |-- string 'Hi {$userName}! Welcome to {$product}.'
    *  +-- objlit
-   *      |-- string 'userName'
-   *      |-- name 'someUserName'
-   *      |-- string 'product'
-   *      +-- call
-   *          +-- name 'getProductName'
+   *      |-- string_key 'userName'
+   *      |   +-- name 'someUserName'
+   *      +-- string_key 'product'
+   *          +-- call
+   *              +-- name 'getProductName'
    * <pre>
    * <p>
    * For that example, we'd return:
@@ -290,37 +346,39 @@ final class ReplaceMessages extends JsMessageVisitor {
    * @throws MalformedException if the passed node's subtree structure is
    *   not as expected
    */
-  private Node replaceCallNode(JsMessage message, Node callNode)
-      throws MalformedException {
+  private Node replaceCallNode(JsMessage message, Node callNode) throws MalformedException {
     checkNode(callNode, Token.CALL);
     Node getPropNode = callNode.getFirstChild();
     checkNode(getPropNode, Token.GETPROP);
     Node stringExprNode = getPropNode.getNext();
     checkStringExprNode(stringExprNode);
     Node objLitNode = stringExprNode.getNext();
+    Map<String, Boolean> options = getOptions(objLitNode != null ? objLitNode.getNext() : null);
 
     // Build the replacement tree.
     Iterator<CharSequence> iterator = message.parts().iterator();
     return iterator.hasNext()
-        ? constructStringExprNode(iterator, objLitNode, callNode)
+        ? constructStringExprNode(iterator, objLitNode, options, callNode)
         : IR.string("");
   }
 
   /**
-   * Creates a parse tree corresponding to the remaining message parts in an
-   * iteration. The result consists of one or more STRING nodes, placeholder
-   * replacement value nodes (which can be arbitrary expressions), and ADD
-   * nodes.
+   * Creates a parse tree corresponding to the remaining message parts in an iteration. The result
+   * consists of one or more STRING nodes, placeholder replacement value nodes (which can be
+   * arbitrary expressions), and ADD nodes.
    *
-   * @param parts  an iterator over message parts
-   * @param objLitNode  an OBJLIT node mapping placeholder names to values
+   * @param parts an iterator over message parts
+   * @param objLitNode an OBJLIT node mapping placeholder names to values
    * @return the root of the constructed parse tree
-   *
-   * @throws MalformedException if {@code parts} contains a placeholder
-   *   reference that does not correspond to a valid placeholder name
+   * @throws MalformedException if {@code parts} contains a placeholder reference that does not
+   *     correspond to a valid placeholder name
    */
   private static Node constructStringExprNode(
-      Iterator<CharSequence> parts, Node objLitNode, Node refNode) throws MalformedException {
+      Iterator<CharSequence> parts,
+      @Nullable Node objLitNode,
+      Map<String, Boolean> options,
+      Node refNode)
+      throws MalformedException {
     checkNotNull(refNode);
 
     CharSequence part = parts.next();
@@ -331,8 +389,8 @@ final class ReplaceMessages extends JsMessageVisitor {
 
       // The translated message is null
       if (objLitNode == null) {
-        throw new MalformedException("Empty placeholder value map " +
-            "for a translated message with placeholders.", refNode);
+        throw new MalformedException(
+            "Empty placeholder value map for a translated message with placeholders.", refNode);
       }
 
       for (Node key = objLitNode.getFirstChild(); key != null;
@@ -350,15 +408,48 @@ final class ReplaceMessages extends JsMessageVisitor {
       }
     } else {
       // The part is just a string literal.
-      partNode = IR.string(part.toString());
+      String s = part.toString();
+      if (options.getOrDefault("html", false)) {
+        // Note that "&" is not replaced because the translation can contain HTML entities.
+        s = s.replace("<", "&lt;");
+      }
+      partNode = IR.string(s);
     }
 
     if (parts.hasNext()) {
-      return IR.add(partNode,
-          constructStringExprNode(parts, objLitNode, refNode));
+      return IR.add(partNode, constructStringExprNode(parts, objLitNode, options, refNode));
     } else {
       return partNode;
     }
+  }
+
+  private static Map<String, Boolean> getOptions(@Nullable Node optionsNode)
+      throws MalformedException {
+    Map<String, Boolean> options = new HashMap<>();
+    if (optionsNode == null) {
+      return options;
+    }
+    if (!optionsNode.isObjectLit()) {
+      throw new MalformedException("OBJLIT node expected", optionsNode);
+    }
+    for (Node aNode = optionsNode.getFirstChild(); aNode != null; aNode = aNode.getNext()) {
+      if (!aNode.isStringKey()) {
+        throw new MalformedException("STRING_KEY node expected as OBJLIT key", aNode);
+      }
+      String optName = aNode.getString();
+      Node value = aNode.getFirstChild();
+      if (!value.isTrue() && !value.isFalse()) {
+        throw new MalformedException("Literal true or false expected", value);
+      }
+      switch (optName) {
+        case "html":
+          options.put(optName, value.isTrue());
+          break;
+        default:
+          throw new MalformedException("Unexpected option", aNode);
+      }
+    }
+    return options;
   }
 
   /**

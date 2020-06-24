@@ -55,6 +55,66 @@ CharacterData.prototype.remove = function() {};
 DocumentType.prototype.replaceWith = function(nodes) {};
 
 /**
+ * @const {string}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#sec-domerror
+ */
+DOMException.prototype.name;
+
+/**
+ * @const {string}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#sec-domerror
+ */
+DOMException.prototype.message;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.SECURITY_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.NETWORK_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.ABORT_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.URL_MISMATCH_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.QUOTA_EXCEEDED_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.TIMEOUT_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.INVALID_NODE_TYPE_ERR;
+
+/**
+ * @const {number}
+ * @see https://www.w3.org/TR/2015/REC-dom-20151119/#dfn-error-names-table
+ */
+DOMException.DATA_CLONE_ERR;
+
+/**
  * @param {...(!Node|string)} nodes
  * @return {undefined}
  * @see https://dom.spec.whatwg.org/#dom-childnode-replacewith
@@ -157,3 +217,34 @@ DocumentType.prototype.after = function(nodes) {};
  * @see https://dom.spec.whatwg.org/#dom-childnode-after
  */
 CharacterData.prototype.after = function(nodes) {};
+
+/**
+ * @param {string} name
+ * @param {boolean=} force
+ * @return {boolean}
+ * @throws {DOMException}
+ * @see https://dom.spec.whatwg.org/#dom-element-toggleattribute
+ */
+Element.prototype.toggleAttribute = function(name, force) {};
+
+/**
+ * @type {Element}
+ * @see http://msdn.microsoft.com/en-us/library/ms534327(VS.85).aspx
+ */
+Node.prototype.parentElement;
+
+/**
+ * @param {string} name
+ * @return {!HTMLCollection<!Element>}
+ * @nosideeffects
+ * @see https://dom.spec.whatwg.org/#dom-document-getelementsbyclassname-classnames-classnames
+ */
+Document.prototype.getElementsByClassName = function(name) {};
+
+/**
+ * @param {string} classNames
+ * @return {!HTMLCollection<!Element>}
+ * @nosideeffects
+ * @see https://dom.spec.whatwg.org/#dom-element-getelementsbyclassname-classnames-classnames
+ */
+Element.prototype.getElementsByClassName = function(classNames) {};

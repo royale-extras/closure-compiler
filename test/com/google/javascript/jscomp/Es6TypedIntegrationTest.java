@@ -24,7 +24,6 @@ import org.junit.runners.JUnit4;
  * Integration tests for compilation in {@link LanguageMode#ECMASCRIPT6_TYPED} mode, with type
  * checking by {@link TypeValidator}.
  */
-
 @RunWith(JUnit4.class)
 public final class Es6TypedIntegrationTest extends IntegrationTestCase {
 
@@ -102,6 +101,7 @@ public final class Es6TypedIntegrationTest extends IntegrationTestCase {
     CompilationLevel.ADVANCED_OPTIMIZATIONS.setOptionsForCompilationLevel(options);
     options.setLanguageIn(LanguageMode.ECMASCRIPT6_TYPED);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
+    options.setWarningLevel(DiagnosticGroups.FEATURES_NOT_SUPPORTED_BY_PASS, CheckLevel.OFF);
     options.preserveTypeAnnotations = true;
     WarningLevel.VERBOSE.setOptionsForWarningLevel(options);
     return options;

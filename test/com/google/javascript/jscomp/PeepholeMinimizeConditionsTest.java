@@ -51,11 +51,6 @@ public final class PeepholeMinimizeConditionsTest extends CompilerTestCase {
     return peepholePass;
   }
 
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
-  }
-
   private void foldSame(String js) {
     testSame(js);
   }
@@ -240,6 +235,15 @@ public final class PeepholeMinimizeConditionsTest extends CompilerTestCase {
          "    else { bar(); goo(); }" +
          "  return true;" +
          "}");
+  }
+
+  @Test
+  public void testFoldReturnsIntegration2() {
+    late = true;
+    disableNormalize();
+
+    // if-then-else duplicate statement removal handles this case:
+    testSame("function test(a) {if (a) {const a = Math.random();if(a) {return a;}} return a; }");
   }
 
   @Test
@@ -522,6 +526,8 @@ public final class PeepholeMinimizeConditionsTest extends CompilerTestCase {
 
   @Test
   public void testSubsituteReturn() {
+    late = false;
+    enableNormalize();
 
     fold("function f() { while(x) { return }}",
          "function f() { while(x) { break }}");
@@ -594,6 +600,8 @@ public final class PeepholeMinimizeConditionsTest extends CompilerTestCase {
 
   @Test
   public void testSubsituteBreakForThrow() {
+    late = false;
+    enableNormalize();
 
     foldSame("function f() { while(x) { throw Error }}");
 
@@ -669,6 +677,9 @@ public final class PeepholeMinimizeConditionsTest extends CompilerTestCase {
 
   @Test
   public void testRemoveDuplicateReturn() {
+    late = false;
+    enableNormalize();
+
     fold("function f() { return; }",
          "function f(){}");
     foldSame("function f() { return a; }");
@@ -698,6 +709,9 @@ public final class PeepholeMinimizeConditionsTest extends CompilerTestCase {
 
   @Test
   public void testRemoveDuplicateThrow() {
+    late = false;
+    enableNormalize();
+
     foldSame("function f() { throw a; }");
     fold("function f() { if (x) { throw a } throw a; }",
          "function f() { if (x) {} throw a; }");

@@ -35,8 +35,6 @@ import java.util.Set;
  * "Object.keys".
  *
  * This class is based on RemoveUnusedCode, some effort should be made to extract the common pieces.
- *
- * @author johnlenz@google.com (John Lenz)
  */
 class CheckUnusedPrivateProperties
     implements HotSwapCompilerPass, NodeTraversal.Callback {
@@ -88,6 +86,9 @@ class CheckUnusedPrivateProperties
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
     if (n.isScript()) {
       used.clear();
+      // Even if a constructor is unused , we still want to prevent the construction of the class
+      // outside the file.  i.e. a container of static methods.
+      used.add("constructor");
       candidates.clear();
     }
     return true;

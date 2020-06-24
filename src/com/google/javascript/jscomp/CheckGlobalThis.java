@@ -18,6 +18,7 @@ package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.JSDocInfo;
+import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 
@@ -51,7 +52,6 @@ import com.google.javascript.rhino.Token;
  * }
  * </pre>
  * which would get flagged.
- *
  */
 final class CheckGlobalThis implements Callback {
 
@@ -99,6 +99,23 @@ final class CheckGlobalThis implements Callback {
         return false;
       }
 
+      if (jsDoc != null) {
+        JSTypeExpression functionType = jsDoc.getType();
+        if (functionType != null) {
+          Node functionNode = functionType.getRoot();
+          if (functionNode != null && functionNode.isFunction()) {
+            // function(this: ThisType, ...)
+            // `this:` is only allowed as the very first child of the
+            // FUNCTION node.
+            Node thisNode = functionNode.getFirstChild();
+            if (thisNode != null && thisNode.isThis()) {
+              // Type of `this` is specified, so no need to check further.
+              return false;
+            }
+          }
+        }
+      }
+
       // Don't traverse functions unless they would normally
       // be able to have a @this annotation associated with them. e.g.,
       // var a = function() { }; // or
@@ -118,7 +135,7 @@ final class CheckGlobalThis implements Callback {
 
       // Don't traverse functions that are getting lent to a prototype.
       Node grandparent = parent.getParent();
-      if (NodeUtil.isObjectLitKey(parent)) {
+      if (NodeUtil.mayBeObjectLitKey(parent)) {
         JSDocInfo maybeLends = grandparent.getJSDocInfo();
         if (maybeLends != null
             && maybeLends.hasLendsName()
@@ -141,7 +158,7 @@ final class CheckGlobalThis implements Callback {
       } else {
         // Only traverse the right side if it's not an assignment to a prototype
         // property or subproperty.
-        if (NodeUtil.isGet(lhs)) {
+        if (NodeUtil.isNormalGet(lhs)) {
           if (lhs.isGetProp() &&
               lhs.getLastChild().getString().equals("prototype")) {
             return false;
@@ -159,9 +176,9 @@ final class CheckGlobalThis implements Callback {
   }
 
   @Override
-  public void visit(NodeTraversal t, Node n, Node parent) {
+  public void visit(NodeTraversal unused, Node n, Node parent) {
     if (n.isThis() && shouldReportThis(n)) {
-      compiler.report(t.makeError(n, GLOBAL_THIS));
+      compiler.report(JSError.make(n, GLOBAL_THIS));
     }
     if (n == assignLhsChild) {
       assignLhsChild = null;
@@ -176,6 +193,6 @@ final class CheckGlobalThis implements Callback {
     }
 
     // Also report a THIS with a property access.
-    return parent != null && NodeUtil.isGet(parent);
+    return parent != null && NodeUtil.isNormalGet(parent);
   }
 }

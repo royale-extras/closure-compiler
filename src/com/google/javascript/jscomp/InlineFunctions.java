@@ -18,10 +18,10 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Predicates.alwaysTrue;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.CompilerOptions.Reach;
@@ -30,7 +30,6 @@ import com.google.javascript.jscomp.FunctionInjector.InliningMode;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -52,8 +51,6 @@ import java.util.Set;
  *
  * <p>"directly" inlined functions must meet these additional requirements: - consists of a single
  * return statement
- *
- * @author johnlenz@google.com (John Lenz)
  */
 class InlineFunctions implements CompilerPass {
 
@@ -68,6 +65,7 @@ class InlineFunctions implements CompilerPass {
   private final AbstractCompiler compiler;
 
   private final FunctionInjector injector;
+  private final FunctionArgumentInjector functionArgumentInjector;
 
   private final Reach reach;
   private final boolean assumeMinimumCapture;
@@ -95,9 +93,21 @@ class InlineFunctions implements CompilerPass {
     this.enforceMaxSizeAfterInlining =
         maxSizeAfterInlining != CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING;
 
+    // TODO(b/124253050): Update bookkeeping logic and reenable method call inliing.
+    // Method call decomposition creates new call nodes after all the analysis
+    // is done, which would cause such calls to function to be left behind after
+    // the function itself is removed.  The function inliner need to be made
+    // aware of these new calls in order to enble it.
+
+    this.functionArgumentInjector = new FunctionArgumentInjector(compiler.getAstAnalyzer());
     this.injector =
-        new FunctionInjector(
-            compiler, safeNameIdSupplier, true, assumeStrictThis, assumeMinimumCapture);
+        new FunctionInjector.Builder(compiler)
+            .safeNameIdSupplier(safeNameIdSupplier)
+            .assumeStrictThis(assumeStrictThis)
+            .assumeMinimumCapture(assumeMinimumCapture)
+            .allowMethodCallDecomposing(false)
+            .functionArgumentInjector(this.functionArgumentInjector)
+            .build();
   }
 
   FunctionState getOrCreateFunctionState(String fnName) {
@@ -301,18 +311,18 @@ class InlineFunctions implements CompilerPass {
       if (functionState.canInline()) {
         functionState.setModule(module);
 
-        Set<String> namesToAlias = FunctionArgumentInjector.findModifiedParameters(fnNode);
+        Set<String> namesToAlias = functionArgumentInjector.findModifiedParameters(fnNode);
         if (!namesToAlias.isEmpty()) {
           functionState.inlineDirectly(false);
           functionState.setNamesToAlias(namesToAlias);
         }
 
         Node block = NodeUtil.getFunctionBody(fnNode);
-        if (NodeUtil.referencesThis(block)) {
+        if (NodeUtil.referencesEnclosingReceiver(block)) {
           functionState.setReferencesThis(true);
         }
 
-        if (NodeUtil.containsFunction(block)) {
+        if (NodeUtil.has(block, Node::isFunction, alwaysTrue())) {
           functionState.setHasInnerFunctions(true);
           // If there are inner functions, we can inline into global scope
           // if there are no local vars or named functions.
@@ -330,8 +340,7 @@ class InlineFunctions implements CompilerPass {
         Node block = functionState.getFn().getDeclaringBlock();
         if (block.isBlock()
             && !block.getParent().isFunction()
-            && (NodeUtil.containsType(block, Token.LET)
-                || NodeUtil.containsType(block, Token.CONST))) {
+            && NodeUtil.has(block, (n) -> n.isLet() || n.isConst(), alwaysTrue())) {
           // The function might capture a variable that's not in scope at the call site,
           // so don't inline.
           functionState.disallowInlining();
@@ -419,7 +428,7 @@ class InlineFunctions implements CompilerPass {
           } else if (child.isFunction()) {
             name = anonFunctionMap.get(child);
           } else if (NodeUtil.isFunctionObjectCall(n)) {
-            checkState(NodeUtil.isGet(child));
+            checkState(NodeUtil.isNormalGet(child));
             Node fnIdentifyingNode = child.getFirstChild();
             if (fnIdentifyingNode.isName()) {
               name = fnIdentifyingNode.getString();
@@ -466,7 +475,7 @@ class InlineFunctions implements CompilerPass {
     //     This-Value
     //     Function-parameter-1
     //     ...
-    if (NodeUtil.isGet(parent)
+    if (NodeUtil.isNormalGet(parent)
         && name == parent.getFirstChild()
         && name.getNext().isString()
         && name.getNext().getString().equals("call")) {
@@ -569,18 +578,6 @@ class InlineFunctions implements CompilerPass {
         return;
       }
 
-      // Unlike normal call/new parameters, references passed to
-      // JSCompiler_ObjectPropertyString are not aliases of a value, but
-      // a reference to the name itself, as such the value of the name is
-      // unknown and can not be inlined.
-      if (parent.isNew()) {
-        Node target = parent.getFirstChild();
-        if (target.isName() && target.getString().equals(NodeUtil.EXTERN_OBJECT_PROPERTY_STRING)) {
-          // This method is going to be replaced so don't inline it anywhere.
-          functionState.disallowInlining();
-        }
-      }
-
       // If the name is being assigned to it can not be inlined.
       if (parent.isAssign() && parent.getFirstChild() == n) {
         // e.g. bar = something; <== we can't inline "bar"
@@ -630,7 +627,7 @@ class InlineFunctions implements CompilerPass {
       Node fnNode = functionState.getSafeFnNode();
 
       Node newExpr = injector.inline(ref, fnName, fnNode);
-      if (!newExpr.isEquivalentTo(ref.callNode)) {
+      if (!newExpr.equals(ref.callNode)) {
         t.getCompiler().reportChangeToEnclosingScope(newExpr);
       }
     }
@@ -733,7 +730,7 @@ class InlineFunctions implements CompilerPass {
         }
       };
 
-    return NodeUtil.has(node, pred, Predicates.alwaysTrue());
+    return NodeUtil.has(node, pred, alwaysTrue());
   }
 
   /** @see #resolveInlineConflicts */
@@ -803,12 +800,14 @@ class InlineFunctions implements CompilerPass {
 
   /** Removed inlined functions that no longer have any references. */
   void removeInlinedFunctions() {
-    for (FunctionState functionState : fns.values()) {
+    for (Map.Entry<String, FunctionState> entry : fns.entrySet()) {
+      String name = entry.getKey();
+      FunctionState functionState = entry.getValue();
       if (functionState.canRemove()) {
         Function fn = functionState.getFn();
         checkState(functionState.canInline());
         checkState(fn != null);
-        verifyAllReferencesInlined(functionState);
+        verifyAllReferencesInlined(name, functionState);
         fn.remove();
         NodeUtil.markFunctionsDeleted(fn.getFunctionNode(), compiler);
       }
@@ -816,14 +815,17 @@ class InlineFunctions implements CompilerPass {
   }
 
   /** Check to verify that expression rewriting didn't make a call inaccessible. */
-  void verifyAllReferencesInlined(FunctionState functionState) {
+  void verifyAllReferencesInlined(String name, FunctionState functionState) {
     for (Reference ref : functionState.getReferences()) {
       if (!ref.inlined) {
+        Node parent = ref.callNode.getParent();
         throw new IllegalStateException(
-            "Call site missed.\n call: "
+            "Call site missed ("
+                + name
+                + ").\n call: "
                 + ref.callNode.toStringTree()
                 + "\n parent:  "
-                + ref.callNode.getParent().toStringTree());
+                + ((parent == null) ? "null" : parent.toStringTree()));
       }
     }
   }

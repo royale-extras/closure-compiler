@@ -44,15 +44,10 @@ public final class CheckNullableReturnTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerOptions getOptions(CompilerOptions options) {
-    super.getOptions(options);
+  protected CompilerOptions getOptions() {
+    CompilerOptions options = super.getOptions();
     options.setWarningLevel(DiagnosticGroups.ANALYZER_CHECKS, CheckLevel.WARNING);
     return options;
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
   }
 
   @Override

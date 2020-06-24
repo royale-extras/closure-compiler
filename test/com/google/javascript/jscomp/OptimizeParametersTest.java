@@ -17,6 +17,8 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.javascript.jscomp.CompilerOptions.LanguageMode.ECMASCRIPT_NEXT_IN;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -46,9 +48,39 @@ public final class OptimizeParametersTest extends CompilerTestCase {
     enableGatherExternProperties();
   }
 
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
+  @Test
+  public void testAliasingAssignment() {
+    testSame(
+        lines(
+            "", //
+            "/** @constructor */",
+            "function MyClass() {",
+            "  this.myField = null;",
+            "}",
+            "",
+            // This assignment creates an alias, so we can't know all of the callers and cannot
+            // safely optimize away `myArgument`.
+            "MyClass.prototype[\"myMethod\"] =",
+            "    MyClass.prototype.myMethod = function (myArgument) {",
+            "  if (undefined === myArgument) {",
+            "      myArgument = this.myField;",
+            "  }",
+            "  return \"myMethod with argument: \" + myArgument;",
+            "};",
+            "",
+            "function globalMyMethod(oMyClass) {",
+            // One call to `myMethod` exists, and it doesn't use the optional argument.
+            "  return oMyClass.myMethod();",
+            "}",
+            ""));
+  }
+
+  @Test
+  public void nullishCoalesce() {
+    setAcceptedLanguage(ECMASCRIPT_NEXT_IN);
+    test(
+        "var f = (function(...p1){            }) ?? (function(...p2){           }); f()",
+        "var f = (function(     ){ var p1 = []}) ?? (function(     ){var p2 = []}); f()");
   }
 
   @Test
@@ -75,6 +107,21 @@ public final class OptimizeParametersTest extends CompilerTestCase {
     testSame("function f(p1) {} f(...x);");
     testSame("function f(...p1) {} f(...x);");
     test("function f(p1, ...p2) {} f(1, ...x);", "function f(...p2) {var p1 = 1;} f(...x);");
+    test(
+        "function f(p1, p2) {} f(1, ...x); f(1, 2);",
+        "function f(p2) {var p1 = 1;} f(...x); f(2);");
+    testSame("function f(p1, p2) {} f(1, ...x); f(2, ...y);");
+    // Test spread argument with side effects
+    testSame(
+        lines(
+            "function foo(x) {sideEffect(); return x;}",
+            "function f(p1, p2) {}",
+            "f(foo(0), ...[foo(1)]);",
+            "f(foo(0), 1);"));
+    // Test should not remove arguments following spread
+    test(
+        "function f(p1, p2, p3) {} f(1, ...[2], 3); f(1, 2, 3);",
+        "function f(p2, p3) {var p1 = 1;} f(...[2], 3); f(2, 3);");
   }
 
   @Test
@@ -175,7 +222,20 @@ public final class OptimizeParametersTest extends CompilerTestCase {
   }
 
   @Test
-  public void testNoRemoveParamWithDefault() {
+  public void testInlineParamWithDefault_referencingOutsideVariable() {
+    test(
+        "var x = 0; function f(a = x) {} f(1);", //
+        "var x = 0; function f() { var a = 1; } f();");
+    test(
+        "var x = 0; function f(a = x + x) {} f(1);", //
+        "var x = 0; function f() { var a = 1; } f();");
+    test(
+        "function g(x) { return x; } function f(a = g(0)) {} f(1);", //
+        "function g() { var x = 0; return x; } function f() { var a = 1; } f();");
+  }
+
+  @Test
+  public void testNoRemoveParamWithDefault_whenArgPossiblyUndefined() {
     // different scopes
     testSame(
         "function f(p = 1){} function _g(x) { f(x); f(x); }");
@@ -184,6 +244,84 @@ public final class OptimizeParametersTest extends CompilerTestCase {
     // so that this can be inlined into the function body
     testSame(
         "function f(a = 2){} f(alert);");
+
+    testSame("function f(a = 2){} f(void 0);");
+
+    // Make sure `sideEffects()` is always evaluated before `x`;
+    testSame("var x = 0; function f(a = sideEffects(), b = x) {}; f(void 0, something);");
+  }
+
+  @Test
+  public void testNoRemoveParam_beingUsedInSubsequentDefault() {
+    testSame("function f(a, b = a) { return b; }; f(x);");
+
+    testSame("function f(a, b = foo(a)) { return b; }; f(x);");
+
+    testSame("function f(a, b = (c) => a) { return b; }; f(x);");
+
+    testSame("function f({a}, {b: [{c = a}]}) { return c; }; f(x);");
+  }
+
+  @Test
+  public void testNoRemoveParam_beingUsedInSubsequentDefault_fromSingleFormal() {
+    testSame("function f([a, b = a]) { return b; }; f(x);");
+
+    testSame("function f({a, [a]: b}) { return b; }; f(x);");
+  }
+
+  @Test
+  public void testNoInlineParam_beingUsedInSubsequentDefault() {
+    testSame("function f(a, b = a) { return a + b; }; f(1, x);");
+
+    testSame("function f(a, b = (a = 9)) { return a + b; }; f(1, x);");
+
+    // These would actually be fine to inline, but it's hard to detect that in general.
+    testSame("function f(a, b = a) { return a + b; }; f(1, 1);");
+    testSame("function f(a, b = a) { return a + b; }; f(1);");
+  }
+
+  @Test
+  public void testNoInlineYieldExpression() {
+    testSame(
+        lines(
+            "", //
+            "function f(a) { return a; }",
+            "function *g() { f(yield 1); }",
+            "use(g().next());",
+            ""));
+  }
+
+  @Test
+  public void testNoRemoveYieldExpression() {
+    testSame(
+        lines(
+            "", //
+            "function f(a) { }",
+            "function *g() { f(yield 1); }",
+            "use(g().next());",
+            ""));
+  }
+
+  @Test
+  public void testNoInlineAwaitExpression() {
+    testSame(
+        lines(
+            "", //
+            "function f(a) { return a; }",
+            "async function g() { f(await 1); }",
+            "use(g().next());",
+            ""));
+  }
+
+  @Test
+  public void testNoRemoveAwaitExpression() {
+    testSame(
+        lines(
+            "", //
+            "function f(a) { }",
+            "async function g() { f(await 1); }",
+            "use(g().next());",
+            ""));
   }
 
   @Test
@@ -636,6 +774,9 @@ public final class OptimizeParametersTest extends CompilerTestCase {
     test("function foo(p1, p2) {}; foo(1,2); foo(2,2);",
          "function foo(p1) {var p2 = 2}; foo(1); foo(2)");
 
+    // @noinline prevents constant inlining
+    testSame("/** @noinline */ function foo(p1, p2) {}; foo(1,2); foo(2,2);");
+
     // Remove nothing
     testSame("function foo(p1, p2) {}; foo(1); foo(2,3);");
 
@@ -734,10 +875,28 @@ public final class OptimizeParametersTest extends CompilerTestCase {
   }
 
   @Test
-  public void testFunctionWithReferenceToArgumentsShouldNotBeOptimize() {
+  public void testFunctionWithReferenceToArgumentsShouldNotBeOptimized() {
     testSame("function foo(a,b,c) { return arguments.size; }; foo(1);");
     testSame("var foo = function(a,b,c) { return arguments.size }; foo(1);");
     testSame("var foo = function bar(a,b,c) { return arguments.size }; foo(2); bar(2);");
+  }
+
+  @Test
+  public void testClassMemberWithReferenceToArgumentsShouldNotBeOptimize() {
+    testSame(
+        lines(
+            "class C {", //
+            "  constructor() {",
+            "  }",
+            "  setValue(value) {",
+            "    if (!arguments.length) {",
+            "      return 0;",
+            "    }",
+            "    return value;",
+            "  }",
+            "}",
+            "var c = new C();",
+            "alert(c.setValue(42));"));
   }
 
   @Test
@@ -875,12 +1034,6 @@ public final class OptimizeParametersTest extends CompilerTestCase {
   }
 
   @Test
-  public void testDoNotOptimizeJSCompiler_ObjectPropertyString() {
-    testSame("function JSCompiler_ObjectPropertyString(a, b) {return a[b]};" +
-             "JSCompiler_renameProperty(window,'b');");
-  }
-
-  @Test
   public void testMutableValues1() {
     test("function foo(p1) {} foo()",
          "function foo() {var p1} foo()");
@@ -987,6 +1140,15 @@ public final class OptimizeParametersTest extends CompilerTestCase {
         "var x; var y; var z;" +
         "function foo(p2, p3) {var p1=[]}" +
         "new foo(y(), z()); new foo(y(),3)");
+  }
+
+  @Test
+  public void testMutableValuesDoNotMoveSuper() {
+    testSame(
+        lines(
+            "var A;",
+            "function fn(p1) {}",
+            "class B extends A { constructor() { fn(super.x); } }"));
   }
 
   @Test
@@ -1184,4 +1346,51 @@ public final class OptimizeParametersTest extends CompilerTestCase {
         "f()"));
   }
 
+  @Test
+  public void testSuperInvocation_preventsParamInlining_whenImplicit() {
+    // TODO(b/130054506): It would be better if we did inline in this case. However, right now it's
+    // sufficient that we don't inline at all, since it would be dangerous if we overlooked `super`
+    // calls.
+    testSame(
+        lines(
+            "class Foo {",
+            "  constructor(x) {",
+            "    this.x = x;",
+            "  }",
+            "}",
+            "",
+            "class Bar extends Foo { }",
+            "",
+            "new Foo(4);",
+            "new Bar(4);"));
+  }
+
+  @Test
+  public void testSuperInvocation_preventsParamInlining_whenExplicit() {
+    // TODO(b/130054506): It would be better if we did inline in this case. However, right now it's
+    // sufficient that we don't inline at all, since it would be dangerous if we overlooked `super`
+    // calls.
+    testSame(
+        lines(
+            "class Foo {",
+            "  constructor(x) {",
+            "    this.x = x;",
+            "  }",
+            "}",
+            "",
+            "class Bar extends Foo {",
+            "  constructor() {",
+            "    super(4);",
+            "  }",
+            "}",
+            "",
+            "new Foo(4);",
+            "new Bar();"));
+  }
+
+  @Test
+  public void testRemoveOptionalDestructuringParam() {
+    test("function f({x}) {} f();", "function f() { var {x} = void 0; } f();");
+    test("function f({x} = {}) {} f();", "function f() { var {x} = {}; } f();");
+  }
 }

@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.common.base.Ascii;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
@@ -35,7 +36,6 @@ import java.util.Set;
  * foo();;  // probably just a stray-semicolon. Doesn't hurt to check though
  * </pre>
  * and generates warnings.
- *
  */
 final class CheckSideEffects extends AbstractPostOrderCallback
     implements HotSwapCompilerPass {
@@ -55,6 +55,9 @@ final class CheckSideEffects extends AbstractPostOrderCallback
   private final AbstractCompiler compiler;
 
   private final boolean protectSideEffectFreeCode;
+
+  /** Whether the synthetic extern for JSCOMPILER_PRESERVE has been injected */
+  private boolean preserveFunctionInjected = false;
 
   CheckSideEffects(AbstractCompiler compiler, boolean report,
       boolean protectSideEffectFreeCode) {
@@ -115,7 +118,7 @@ final class CheckSideEffects extends AbstractPostOrderCallback
     boolean isResultUsed = NodeUtil.isExpressionResultUsed(n);
     boolean isSimpleOp = NodeUtil.isSimpleOperator(n);
     if (!isResultUsed) {
-      if (isSimpleOp || !NodeUtil.mayHaveSideEffects(n, t.getCompiler())) {
+      if (isSimpleOp || !t.getCompiler().getAstAnalyzer().mayHaveSideEffects(n)) {
         if (report) {
           String msg = "This code lacks side-effects. Is there a bug?";
           if (n.isString() || n.isTemplateLit()) {
@@ -123,7 +126,7 @@ final class CheckSideEffects extends AbstractPostOrderCallback
           } else if (isSimpleOp) {
             msg =
                 "The result of the '"
-                    + n.getToken().toString().toLowerCase()
+                    + Ascii.toLowerCase(n.getToken().toString())
                     + "' operator is not being used.";
           }
 
@@ -170,7 +173,9 @@ final class CheckSideEffects extends AbstractPostOrderCallback
    */
   private void protectSideEffects() {
     if (!problemNodes.isEmpty()) {
-      addExtern();
+      if (!preserveFunctionInjected) {
+        addExtern(compiler);
+      }
       for (Node n : problemNodes) {
         Node name = IR.name(PROTECTOR_FN).srcref(n);
         name.putBooleanProp(Node.IS_CONSTANT_NAME, true);
@@ -183,7 +188,8 @@ final class CheckSideEffects extends AbstractPostOrderCallback
     }
   }
 
-  private void addExtern() {
+  /** Injects JSCOMPILER_PRESEVE into the synthetic externs */
+  static void addExtern(AbstractCompiler compiler) {
     Node name = IR.name(PROTECTOR_FN);
     name.putBooleanProp(Node.IS_CONSTANT_NAME, true);
     Node var = IR.var(name);
@@ -244,6 +250,10 @@ final class CheckSideEffects extends AbstractPostOrderCallback
           String name = NodeUtil.getName(n);
           noSideEffectExterns.add(name);
         }
+      }
+
+      if (n.isName() && PROTECTOR_FN.equals(n.getString())) {
+        preserveFunctionInjected = true;
       }
     }
   }

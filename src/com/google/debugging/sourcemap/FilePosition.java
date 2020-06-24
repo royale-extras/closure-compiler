@@ -16,9 +16,12 @@
 
 package com.google.debugging.sourcemap;
 
+import static com.google.common.base.MoreObjects.toStringHelper;
+
+import com.google.errorprone.annotations.DoNotCall;
+
 /**
  * Represents a position in a source file.
- *
  */
 public final class FilePosition {
   private final int line;
@@ -45,5 +48,13 @@ public final class FilePosition {
    */
   public int getColumn() {
     return column;
+  }
+
+  @Override
+  @DoNotCall // Only for debugging.
+  public String toString() {
+    // TODO(nickreid): Make this class an @AutoValue and delete this. Too many places were using the
+    // public constructor to do so when this method was added.
+    return toStringHelper(this).add("line", line).add("column", column).toString();
   }
 }

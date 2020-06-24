@@ -52,8 +52,6 @@ import java.util.stream.Collectors;
 /**
  * Generates deps.js files by scanning JavaScript files for
  * calls to goog.provide(), goog.require() and goog.addDependency().
- *
- * @author agrieve@google.com (Andrew Grieve)
  */
 public class DepsGenerator {
 
@@ -85,9 +83,11 @@ public class DepsGenerator {
       "DEPS_SAME_FILE",
       "Namespace \"{0}\" is both required and provided in the same file.");
 
-  static final DiagnosticType NEVER_PROVIDED_ERROR = DiagnosticType.error(
-      "DEPS_NEVER_PROVIDED",
-      "Namespace \"{0}\" is required but never provided.");
+  static final DiagnosticType NEVER_PROVIDED_ERROR =
+      DiagnosticType.error(
+          "DEPS_NEVER_PROVIDED",
+          "Namespace \"{0}\" is required but never provided.\nYou "
+              + "need to pass a library that has it in srcs or exports to your target''s deps.");
 
   static final DiagnosticType DUPE_PROVIDES_WARNING = DiagnosticType.warning(
       "DEPS_DUPE_PROVIDES",
@@ -401,8 +401,8 @@ public class DepsGenerator {
     }
   }
 
-  protected DepsFileParser createDepsFileParser() {
-    DepsFileParser depsParser = new DepsFileParser(errorManager);
+  protected DepsFileRegexParser createDepsFileParser() {
+    DepsFileRegexParser depsParser = new DepsFileRegexParser(errorManager);
     depsParser.setShortcutMode(true);
     return depsParser;
   }
@@ -419,7 +419,7 @@ public class DepsGenerator {
    * closure-relative path -> DependencyInfo.
    */
   private Map<String, DependencyInfo> parseDepsFiles() throws IOException {
-    DepsFileParser depsParser = createDepsFileParser();
+    DepsFileRegexParser depsParser = createDepsFileParser();
     Map<String, DependencyInfo> depsFiles = new LinkedHashMap<>();
     for (SourceFile file : deps) {
       if (!shouldSkipDepsFile(file)) {
@@ -453,7 +453,7 @@ public class DepsGenerator {
   }
 
   private DependencyInfo removeRelativePathProvide(DependencyInfo info) {
-    // DepsFileParser adds an ES6 module's relative path to closure as a provide so that
+    // DepsFileRegexParser adds an ES6 module's relative path to closure as a provide so that
     // the resulting depgraph is valid. But we don't want to write this "fake" provide
     // back out, so remove it here.
     return SimpleDependencyInfo.Builder.from(info)
@@ -475,7 +475,7 @@ public class DepsGenerator {
   private Map<String, DependencyInfo> parseSources(
       Set<String> preparsedFiles) throws IOException {
     Map<String, DependencyInfo> parsedFiles = new LinkedHashMap<>();
-    JsFileParser jsParser = new JsFileParser(errorManager).setModuleLoader(loader);
+    JsFileRegexParser jsParser = new JsFileRegexParser(errorManager).setModuleLoader(loader);
     Compiler compiler = new Compiler();
     compiler.init(ImmutableList.of(), ImmutableList.of(), new CompilerOptions());
 

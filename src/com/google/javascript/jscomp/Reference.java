@@ -216,12 +216,14 @@ public final class Reference implements StaticRef, Serializable {
       case INC:
       case DEC:
       case CATCH:
-      case REST:
+      case ITER_REST:
+      case OBJECT_REST:
       case PARAM_LIST:
         return true;
       case FOR:
       case FOR_IN:
       case FOR_OF:
+      case FOR_AWAIT_OF:
         return NodeUtil.isEnhancedFor(parent) && parent.getFirstChild() == nameNode;
       case ARRAY_PATTERN:
       case STRING_KEY:

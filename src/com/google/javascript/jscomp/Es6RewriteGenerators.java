@@ -42,9 +42,11 @@ import javax.annotation.Nullable;
  * for yield and generators have been transpiled.
  *
  * <p>Genertor transpilation pass uses two sets of node properties:
- * <ul><li>generatorMarker property - to indicate that subtee contains YIELD nodes;
- *     <li>generatorSafe property - the node is known to require no further modifications to work in
- *         the transpiled form of the generator body.
+ *
+ * <ul>
+ *   <li>generatorMarker property - to indicate that subtee contains YIELD nodes;
+ *   <li>generatorSafe property - the node is known to require no further modifications to work in
+ *       the transpiled form of the generator body.
  * </ul>
  *
  * <p>The conversion is done in the following steps:
@@ -55,14 +57,14 @@ import javax.annotation.Nullable;
  *   <li>Mark all nodes in original body that contain any YIELD nodes
  *   <li>Transpile every statement of the original body into replaced template
  *       <ul>
- *         <li>unmarked nodes may be copied into the template with a trivial transpilation
- *             of "this", "break", "continue", "return" and "arguments" keywords.
- *         <li>marked nodes must be broken up into multiple states to support the yields
- *             they contain.
+ *         <li>unmarked nodes may be copied into the template with a trivial transpilation of
+ *             "this", "break", "continue", "return" and "arguments" keywords.
+ *         <li>marked nodes must be broken up into multiple states to support the yields they
+ *             contain.
  *       </ul>
  * </ul>
  *
- * <p>{@code Es6RewriteGenerators} depends on {@link Es6InjectRuntimeLibraries} to inject
+ * <p>{@code Es6RewriteGenerators} depends on {@link InjectTranspilationRuntimeLibraries} to inject
  * <code>generator_engine.js</code> template.
  */
 final class Es6RewriteGenerators implements HotSwapCompilerPass {
@@ -152,7 +154,7 @@ final class Es6RewriteGenerators implements HotSwapCompilerPass {
    * }
    * </pre>
    *
-   * <p>Expression should always be inside a block, so that other statemetns could be added at need.
+   * <p>Expression should always be inside a block, so that other statements could be added at need.
    *
    * <p>Uses the {@link ExpressionDecomposer} class.
    */
@@ -167,7 +169,7 @@ final class Es6RewriteGenerators implements HotSwapCompilerPass {
               compiler.getUniqueNameIdSupplier(),
               new HashSet<>(),
               Scope.createGlobalScope(new Node(Token.SCRIPT)),
-              compiler.getOptions().allowMethodCallDecomposing());
+              /* allowMethodCallDecomposing = */ true);
     }
 
     @Override
@@ -266,7 +268,7 @@ final class Es6RewriteGenerators implements HotSwapCompilerPass {
         if (genFunc.getJSType() != null && genFunc.getJSType().isFunctionType()) {
           FunctionType fnType = genFunc.getJSType().toMaybeFunctionType();
           this.originalGenReturnType = fnType.getReturnType();
-          yieldType = TypeCheck.getTemplateTypeOfGenerator(registry, originalGenReturnType);
+          yieldType = JsIterables.getElementType(originalGenReturnType, registry);
         }
 
         JSType globalContextType = registry.getGlobalType("$jscomp.generator.Context");
@@ -323,14 +325,14 @@ final class Es6RewriteGenerators implements HotSwapCompilerPass {
       //   function ($jscomp$generator$context) {
       //   }
       final Node program;
-      JSType programType = shouldAddTypes
-          // function(!Context<YIELD_TYPE>): (void|{value: YIELD_TYPE})
-          ? registry.createFunctionType(
-              registry.createUnionType(
-                  voidType,
-                  registry.createRecordType(ImmutableMap.of("value", yieldType))),
-              context.contextType)
-          : null;
+      JSType programType =
+          shouldAddTypes
+              // function(!Context<YIELD_TYPE>): (void|{value: YIELD_TYPE})
+              ? registry.createFunctionType(
+                  registry.createUnionType(
+                      voidType, registry.createRecordType(ImmutableMap.of("value", yieldType))),
+                  context.contextType)
+              : null;
       Node generatorBody = IR.block();
 
       final Node changeScopeNode;
@@ -352,8 +354,9 @@ final class Es6RewriteGenerators implements HotSwapCompilerPass {
         callTarget.getSecondChild().setString("asyncExecutePromiseGeneratorProgram");
         JSType oldType = callTarget.getJSType();
         if (oldType != null && oldType.isFunctionType()) {
-          callTarget.setJSType(registry.createFunctionType(
-              oldType.toMaybeFunctionType().getReturnType(), programType));
+          callTarget.setJSType(
+              registry.createFunctionType(
+                  oldType.toMaybeFunctionType().getReturnType(), programType));
         }
 
         program = originalGeneratorBody.getParent();

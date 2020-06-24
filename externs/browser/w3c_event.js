@@ -32,9 +32,11 @@ function EventTarget() {}
 
 /**
  * @param {string} type
- * @param {EventListener|function(!Event):(boolean|undefined)} listener
+ * @param {EventListener|function(this:THIS, !Event):*} listener
  * @param {(boolean|!AddEventListenerOptions)=} opt_options
  * @return {undefined}
+ * @this {THIS}
+ * @template THIS
  * @see https://dom.spec.whatwg.org/#dom-eventtarget-addeventlistener
  */
 EventTarget.prototype.addEventListener = function(type, listener, opt_options) {
@@ -42,9 +44,11 @@ EventTarget.prototype.addEventListener = function(type, listener, opt_options) {
 
 /**
  * @param {string} type
- * @param {EventListener|function(!Event):(boolean|undefined)} listener
+ * @param {EventListener|function(this:THIS, !Event):*} listener
  * @param {(boolean|!EventListenerOptions)=} opt_options
  * @return {undefined}
+ * @this {THIS}
+ * @template THIS
  * @see https://dom.spec.whatwg.org/#dom-eventtarget-removeeventlistener
  */
 EventTarget.prototype.removeEventListener = function(
@@ -432,6 +436,7 @@ KeyboardEventInit.prototype.char;
 KeyboardEventInit.prototype.locale;
 
 /**
+ * @see https://w3c.github.io/uievents/#idl-keyboardevent
  * @constructor
  * @extends {UIEvent}
  * @param {string} type
@@ -453,6 +458,18 @@ KeyboardEvent.prototype.altKey;
 
 /** @type {boolean} */
 KeyboardEvent.prototype.metaKey;
+
+/** @type {number} */
+KeyboardEvent.DOM_KEY_LOCATION_STANDARD;
+
+/** @type {number} */
+KeyboardEvent.DOM_KEY_LOCATION_LEFT;
+
+/** @type {number} */
+KeyboardEvent.DOM_KEY_LOCATION_RIGHT;
+
+/** @type {number} */
+KeyboardEvent.DOM_KEY_LOCATION_NUMPAD;
 
 /**
  * @param {string} keyIdentifierArg

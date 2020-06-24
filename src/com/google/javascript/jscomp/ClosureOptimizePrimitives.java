@@ -19,6 +19,7 @@ package com.google.javascript.jscomp;
 import static com.google.javascript.rhino.dtoa.DToA.numberToString;
 
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -35,8 +36,6 @@ import java.util.Set;
  * where all the values are {@code true}.
  *
  * <p>Converts goog.reflect.objectProperty(propName, object) to JSCompiler_renameProperty
- *
- * @author agrieve@google.com (Andrew Grieve)
  */
 final class ClosureOptimizePrimitives implements CompilerPass {
   static final DiagnosticType DUPLICATE_SET_MEMBER =
@@ -64,10 +63,10 @@ final class ClosureOptimizePrimitives implements CompilerPass {
             .getCodingConvention()
             .isPropertyRenameFunction(fn.getOriginalQualifiedName())) {
           processRenamePropertyCall(n);
-        } else if (fn.matchesQualifiedName("goog$object$create")
+        } else if (fn.matchesName("goog$object$create")
             || fn.matchesQualifiedName("goog.object.create")) {
           processObjectCreateCall(n);
-        } else if (fn.matchesQualifiedName("goog$object$createSet")
+        } else if (fn.matchesName("goog$object$createSet")
             || fn.matchesQualifiedName("goog.object.createSet")) {
           processObjectCreateSetCall(n);
         }
@@ -106,7 +105,7 @@ final class ClosureOptimizePrimitives implements CompilerPass {
         callNode.removeChild(keyNode);
         callNode.removeChild(valueNode);
 
-        addKeyValueToObjLit(objNode, keyNode, valueNode);
+        addKeyValueToObjLit(objNode, keyNode, valueNode, NodeUtil.getEnclosingScript(callNode));
       }
       callNode.replaceWith(objNode);
       compiler.reportChangeToEnclosingScope(objNode);
@@ -179,7 +178,7 @@ final class ClosureOptimizePrimitives implements CompilerPass {
         curParam = curParam.getNext();
         callNode.removeChild(keyNode);
 
-        addKeyValueToObjLit(objNode, keyNode, valueNode);
+        addKeyValueToObjLit(objNode, keyNode, valueNode, NodeUtil.getEnclosingScript(callNode));
       }
       callNode.replaceWith(objNode);
       compiler.reportChangeToEnclosingScope(objNode);
@@ -190,6 +189,15 @@ final class ClosureOptimizePrimitives implements CompilerPass {
    * Returns whether the given call to goog.object.createSet can be converted to an object literal.
    */
   private boolean canOptimizeObjectCreateSet(Node firstParam) {
+    if (firstParam != null
+        && firstParam.getNext() == null
+        && !(firstParam.isNumber() || firstParam.isString())) {
+      // if there is only one argument, and it's an array, then the method uses the array elements
+      // as keys. Don't optimize it to {[arr]: true}. We only special-case number and string
+      // arguments in order to not regress ES5-out behavior
+      return false;
+    }
+
     Node curParam = firstParam;
     Set<String> keys = new HashSet<>();
     while (curParam != null) {
@@ -210,7 +218,8 @@ final class ClosureOptimizePrimitives implements CompilerPass {
     return true;
   }
 
-  private void addKeyValueToObjLit(Node objNode, Node keyNode, Node valueNode) {
+  private void addKeyValueToObjLit(Node objNode, Node keyNode, Node valueNode,
+      Node scriptNode) {
     if (keyNode.isNumber() || keyNode.isString()) {
       if (keyNode.isNumber()) {
         keyNode = IR.string(numberToString(keyNode.getDouble()))
@@ -221,6 +230,7 @@ final class ClosureOptimizePrimitives implements CompilerPass {
       objNode.addChildToBack(IR.propdef(keyNode, valueNode));
     } else {
       objNode.addChildToBack(IR.computedProp(keyNode, valueNode).srcref(keyNode));
+      NodeUtil.addFeatureToScript(scriptNode, Feature.COMPUTED_PROPERTIES, compiler);
     }
   }
 
@@ -246,8 +256,11 @@ final class ClosureOptimizePrimitives implements CompilerPass {
       tagName = n.getString().substring(prefix.length());
     } else if (n.isGetProp() && !n.getParent().isGetProp()
         && n.getFirstChild().matchesQualifiedName("goog.dom.TagName")) {
-      tagName = n.getSecondChild().getString()
-          .replaceFirst(".*\\$", ""); // Added by DisambiguateProperties.
+      tagName =
+          n.getSecondChild()
+              .getString()
+              .replaceFirst("JSC\\$[0-9]+_", "") // Added by DisambiguateProperties2.
+              .replaceFirst(".*\\$", ""); // Added by DisambiguateProperties.
     } else {
       return;
     }

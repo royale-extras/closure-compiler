@@ -19,15 +19,18 @@ package com.google.javascript.jscomp.ant;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.io.Files;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.CommandLineRunner;
 import com.google.javascript.jscomp.CompilationLevel;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
+import com.google.javascript.jscomp.DependencyOptions;
 import com.google.javascript.jscomp.DiagnosticGroup;
 import com.google.javascript.jscomp.DiagnosticGroups;
 import com.google.javascript.jscomp.MessageFormatter;
+import com.google.javascript.jscomp.ModuleIdentifier;
 import com.google.javascript.jscomp.Result;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.SourceMap;
@@ -64,7 +67,6 @@ import org.apache.tools.ant.types.resources.FileResource;
  *
  * Most of the public methods of this class are entry points for the
  * Ant code to hook into.
- *
  */
 public final class CompileTask
     extends Task {
@@ -98,6 +100,7 @@ public final class CompileTask
   private File sourceMapOutputFile;
   private String sourceMapLocationMapping;
   private boolean applyInputSourceMaps;
+  private boolean strictModeInput;
 
   public CompileTask() {
     this.languageIn = CompilerOptions.LanguageMode.ECMASCRIPT_2015;
@@ -106,6 +109,7 @@ public final class CompileTask
     this.debugOptions = false;
     this.compilationLevel = CompilationLevel.SIMPLE_OPTIMIZATIONS;
     this.environment = CompilerOptions.Environment.BROWSER;
+    this.strictModeInput = true;
     this.manageDependencies = false;
     this.prettyPrint = false;
     this.printInputDelimiter = false;
@@ -124,25 +128,12 @@ public final class CompileTask
   }
 
   private static CompilerOptions.LanguageMode parseLanguageMode(String value) {
-    switch (value) {
-      case "ECMASCRIPT6_STRICT":
-      case "ES6_STRICT":
-      case "ECMASCRIPT6":
-      case "ES6":
-        return CompilerOptions.LanguageMode.ECMASCRIPT_2015;
-      case "ECMASCRIPT5_STRICT":
-      case "ES5_STRICT":
-        return CompilerOptions.LanguageMode.ECMASCRIPT5_STRICT;
-      case "ECMASCRIPT5":
-      case "ES5":
-        return CompilerOptions.LanguageMode.ECMASCRIPT5;
-      case "ECMASCRIPT3":
-      case "ES3":
-        return CompilerOptions.LanguageMode.ECMASCRIPT3;
-      default:
+    CompilerOptions.LanguageMode language = CompilerOptions.LanguageMode.fromString(value);
+    if (language == null) {
         throw new BuildException(
             "Unrecognized 'languageIn' option value (" + value + ")");
     }
+    return language;
   }
 
   /**
@@ -223,6 +214,10 @@ public final class CompileTask
       throw new BuildException(
           "Unrecognized 'compilation' option value (" + value + ")");
     }
+  }
+
+  public void setStrictModeInput(boolean strictModeInput) {
+    this.strictModeInput = strictModeInput;
   }
 
   public void setManageDependencies(boolean value) {
@@ -307,7 +302,7 @@ public final class CompileTask
   public void setForceRecompile(boolean forceRecompile) {
     this.forceRecompile = forceRecompile;
   }
-
+  
   public void setAngularPass(boolean angularPass) {
     this.angularPass = angularPass;
   }
@@ -437,6 +432,7 @@ public final class CompileTask
     }
 
     options.setEnvironment(this.environment);
+    options.setStrictModeInput(this.strictModeInput);
 
     options.setPrettyPrint(this.prettyPrint);
     options.setPrintInputDelimiter(this.printInputDelimiter);
@@ -448,7 +444,10 @@ public final class CompileTask
     options.setOutputCharset(this.outputEncoding);
 
     this.warningLevel.setOptionsForWarningLevel(options);
-    options.setManageClosureDependencies(manageDependencies);
+    options.setDependencyOptions(
+        manageDependencies
+            ? DependencyOptions.pruneLegacyForEntryPoints(ImmutableList.of())
+            : DependencyOptions.sortOnly());
     convertEntryPointParameters(options);
     options.setTrustedStrings(true);
     options.setAngularPass(angularPass);
@@ -462,7 +461,7 @@ public final class CompileTask
     for (Warning warning : warnings) {
       CheckLevel level = warning.getLevel();
       String groupName = warning.getGroup();
-      DiagnosticGroup group = new DiagnosticGroups().forName(groupName);
+      DiagnosticGroup group = DiagnosticGroups.forName(groupName);
       if (group == null) {
         throw new BuildException(
             "Unrecognized 'warning' option value (" + groupName + ")");
@@ -533,13 +532,13 @@ public final class CompileTask
    * replacements.
    */
   private void convertEntryPointParameters(CompilerOptions options) {
-    List<String> entryPoints = new ArrayList<>();
+    ImmutableList.Builder<ModuleIdentifier> entryPointsBuilder = ImmutableList.builder();
     for (Parameter p : entryPointParams) {
-      String key = p.getName();
-      entryPoints.add(key);
+      entryPointsBuilder.add(ModuleIdentifier.forClosure(p.getName()));
     }
     if (this.manageDependencies) {
-      options.setManageClosureDependencies(entryPoints);
+      options.setDependencyOptions(
+          DependencyOptions.pruneLegacyForEntryPoints(entryPointsBuilder.build()));
     }
   }
 

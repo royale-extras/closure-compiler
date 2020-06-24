@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Chars;
@@ -31,7 +32,6 @@ import javax.annotation.Nullable;
  * A simple class for generating unique JavaScript variable/property names.
  *
  * <p>This class is not thread safe.
- *
  */
 final class DefaultNameGenerator implements NameGenerator {
 
@@ -94,6 +94,14 @@ final class DefaultNameGenerator implements NameGenerator {
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789$"
         .toCharArray();
 
+  /**
+   * Initializes names that must not be generated. TokenStream.isKeyword() skips scanning new
+   * keywords such as "let", "await", etc. Hence, those names must be explicitly checked for on top
+   * of the successfully scanned ES3 reservedNames
+   */
+  private static final ImmutableSet<String> BAD_NAMES =
+      ImmutableSet.of("let", "yield", "await", "eval");
+
   private Set<String> reservedNames;
   private String prefix;
   private int nameCount;
@@ -155,6 +163,11 @@ final class DefaultNameGenerator implements NameGenerator {
       priorityLookupMap.put(c, new CharPriority(c, order));
       order++;
     }
+  }
+
+  /** Returns if name is a badName (let, yield, eval, etc) that must not be generated */
+  private static boolean isBadName(String name) {
+    return BAD_NAMES.contains(name);
   }
 
   @Override
@@ -301,7 +314,7 @@ final class DefaultNameGenerator implements NameGenerator {
       nameCount++;
 
       // Make sure it's not a JS keyword or reserved name.
-    } while (TokenStream.isKeyword(name) || reservedNames.contains(name));
+    } while (TokenStream.isKeyword(name) || reservedNames.contains(name) || isBadName(name));
 
     return name;
   }

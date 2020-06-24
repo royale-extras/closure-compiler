@@ -36,15 +36,13 @@ import java.util.Map;
 
 /**
  * An enum of boolean CGI parameters to the compilation.
- *
- * @author nicksantos@google.com (Nick Santos)
  */
 public enum CompilationParam {
   ENABLE_ALL_DIAGNOSTIC_GROUPS(ParamGroup.ERROR_CHECKING) {
     @Override
     public void apply(CompilerOptions options, boolean value) {
       if (value) {
-        for (DiagnosticGroup group : new DiagnosticGroups().getRegisteredGroups().values()) {
+        for (DiagnosticGroup group : DiagnosticGroups.getRegisteredGroups().values()) {
           options.setWarningLevel(group, CheckLevel.WARNING);
         }
       }
@@ -57,10 +55,10 @@ public enum CompilationParam {
   },
 
   /** If true, the output language is ES5. If false, we skip transpilation. */
-  TRANSPILE(true, ParamGroup.TRANSPILATION) {
+  TRANSPILE(ParamGroup.TRANSPILATION) {
     @Override
     public void apply(CompilerOptions options, boolean value) {
-      options.setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2017);
+      options.setLanguageIn(CompilerOptions.LanguageMode.STABLE);
       options.setLanguageOut(
           value
               ? CompilerOptions.LanguageMode.ECMASCRIPT5
@@ -127,6 +125,14 @@ public enum CompilationParam {
     }
   },
 
+  /** Run the module rewriting pass before the typechecking pass. */
+  REWRITE_MODULES_BEFORE_TYPECHECKING(true, ParamGroup.ERROR_CHECKING) {
+    @Override
+    public void apply(CompilerOptions options, boolean value) {
+      options.setBadRewriteModulesBeforeTypecheckingThatWeWantToGetRidOf(value);
+    }
+  },
+
   /** Checks visibility. */
   CHECK_CONSTANTS(ParamGroup.ERROR_CHECKING) {
     @Override
@@ -188,21 +194,21 @@ public enum CompilationParam {
   CHECK_GLOBAL_THIS(ParamGroup.ERROR_CHECKING) {
     @Override
     public void apply(CompilerOptions options, boolean value) {
-      options.setCheckGlobalThisLevel(value ? CheckLevel.WARNING : CheckLevel.OFF);
+      options.setWarningLevel(
+          DiagnosticGroups.GLOBAL_THIS, value ? CheckLevel.WARNING : CheckLevel.OFF);
     }
 
     @Override
     public String getJavaInfo() {
-      return "options.setCheckGlobalThisLevel(CheckLevel.WARNING)";
+      return diagGroupWarningInfo("GLOBAL_THIS");
     }
   },
 
   CHECK_LINT(ParamGroup.ERROR_CHECKING) {
     @Override
     public void apply(CompilerOptions options, boolean value) {
-      if (value) {
-        options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
-      }
+      options.setWarningLevel(
+          DiagnosticGroups.LINT_CHECKS, value ? CheckLevel.WARNING : CheckLevel.OFF);
     }
 
     @Override
@@ -453,18 +459,6 @@ public enum CompilationParam {
     }
   },
 
-  MARK_NO_SIDE_EFFECT_CALLS(ParamGroup.OPTIMIZATION){
-    @Override
-    public void apply(CompilerOptions options, boolean value) {
-      options.setMarkNoSideEffectCalls(value);
-    }
-
-    @Override
-    public boolean isApplied(CompilerOptions options) {
-      return options.markNoSideEffectCalls;
-    }
-  },
-
   /** Converts quoted property accesses to dot syntax (a['b'] -> a.b) */
   CONVERT_TO_DOTTED_PROPERTIES(ParamGroup.OPTIMIZATION){
     @Override
@@ -519,15 +513,15 @@ public enum CompilationParam {
     }
   },
 
-  DEVIRTUALIZE_PROTOTYPE_METHODS(ParamGroup.OPTIMIZATION) {
+  DEVIRTUALIZE_METHODS(ParamGroup.OPTIMIZATION) {
     @Override
     public void apply(CompilerOptions options, boolean value) {
-      options.setDevirtualizePrototypeMethods(value);
+      options.setDevirtualizeMethods(value);
     }
 
     @Override
     public boolean isApplied(CompilerOptions options) {
-      return options.devirtualizePrototypeMethods;
+      return options.devirtualizeMethods;
     }
   },
 
@@ -646,6 +640,18 @@ public enum CompilationParam {
     @Override
     public boolean isApplied(CompilerOptions options) {
       return options.optimizeCalls;
+    }
+  },
+
+  OPTIMIZE_ARGUMENTS_ARRAY(ParamGroup.OPTIMIZATION) {
+    @Override
+    public void apply(CompilerOptions options, boolean value) {
+      options.setOptimizeArgumentsArray(value);
+    }
+
+    @Override
+    public boolean isApplied(CompilerOptions options) {
+      return options.optimizeArgumentsArray;
     }
   },
 

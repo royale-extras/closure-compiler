@@ -17,8 +17,10 @@
 package com.google.javascript.jscomp;
 
 import static com.google.javascript.jscomp.ClosureOptimizePrimitives.DUPLICATE_SET_MEMBER;
+import static com.google.javascript.jscomp.parsing.parser.testing.FeatureSetSubject.assertFS;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -83,6 +85,8 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   public void testObjectCreateNonConstKey1() {
     test("var a = goog.object.create('a', 1, 2, 3, foo, bar);",
          "var a = {'a': 1, 2: 3, [foo]: bar};");
+
+    assertFS(getLastCompiler().getFeatureSet()).has(Feature.COMPUTED_PROPERTIES);
   }
 
   @Test
@@ -115,23 +119,23 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testObjectCreateSet1() {
+  public void testObjectCreateSetZeroArg() {
     test("var a = goog.object.createSet()", "var a = {}");
   }
 
   @Test
-  public void testObjectCreateSet2() {
+  public void testObjectCreateSetTwoNumericalArgs() {
     test("var a = goog.object.createSet(1,2)", "var a = {1:true,2:true}");
   }
 
   @Test
-  public void testObjectCreateSet3() {
+  public void testObjectCreateSetOneNumericalArg() {
     test("alert(goog.object.createSet(1).toString())",
          "alert({1:true}.toString())");
   }
 
   @Test
-  public void testObjectCreateSet4() {
+  public void testObjectCreateSetOneStringArg() {
     test("goog.object.createSet('a').toString()", "({'a':true}).toString()");
   }
 
@@ -155,15 +159,28 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testObjectCreateSetNonConstKey3() {
-    test("goog.object.createSet(() => {}).toString()",
-        "({[() => {}]: true}).toString()");
+  public void testObjectCreateSetNonConstSingleKey() {
+    // this triggers the 'first argument may be an array' case and we back off
+    testSame("goog.object.createSet(() => {}).toString()");
   }
 
   @Test
   public void testObjectCreateSetNonConstKeyNotEs6() {
     canUseEs6Syntax = false;
     testSame("var a = goog.object.createSet(foo, bar);");
+  }
+
+  @Test
+  public void testObjectCreateSetSingleNonLiteralArg() {
+    testSame("const arr = [1, 2, 3]; const s = goog.object.createSet(arr);");
+    testSame("const num = 1; const s = goog.object.createSet(num);");
+    testSame("const s = goog.object.createSet(undefined || [1, 2, 3]);");
+  }
+
+  @Test
+  public void testObjectCreateSetSingleLiteralArg() {
+    test("const s = goog.object.createSet(3);", "const s = {3: true};");
+    test("const s = goog.object.createSet('a');", "const s = {'a': true};");
   }
 
   @Test
@@ -174,6 +191,7 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
     test("goog$dom$createDom(goog$dom$TagName$A)", "goog$dom$createDom('A')");
     test("goog.dom.createDom(goog.dom.TagName.A + 'REA')", "goog.dom.createDom('A' + 'REA')");
     test("goog.dom.TagName.function__new_goog_dom_TagName__string___undefined$DIV", "'DIV'");
+    test("goog.dom.TagName.JSC$0935_DIV", "'DIV'");
   }
 
   @Test
@@ -190,11 +208,13 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testEs6Compatibility() {
+  public void testEs6ArrowCompatibility() {
     // Arrow
     test("var f = () => goog.object.create(1, 2);", "var f = () => ({1: 2});");
+  }
 
-    // Class
+  @Test
+  public void testEs6ClassCompatibility() {
     test(
         lines(
             "class C {",
@@ -208,8 +228,10 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
             "    this.x = {1: 2};",
             "  }",
             "}"));
+  }
 
-    // Shorthand methods
+  @Test
+  public void testEs6MemberFunctionDefCompatibility() {
     test(
         lines(
             "var obj = {",
@@ -223,8 +245,10 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
             "    return {'a': 2};",
             "  }",
             "}"));
+  }
 
-    // Computed Prop
+  @Test
+  public void testEs6ComputedPropCompatibility() {
     test(
         lines(
             "var obj = {",
@@ -234,8 +258,10 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
             "var obj = {",
             "  [{1: 2}]: 42",
             "}"));
+  }
 
-    // Template Literals
+  @Test
+  public void testEs6TemplateLitCompatibility() {
     test(
         lines(
             "function tag(strings) {",
@@ -247,11 +273,15 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
             "  return {'a': 2};",
             "}",
             "tag`template`"));
+  }
 
-    // Destructuring
+  @Test
+  public void testEs6DestructuringCompatibility() {
     test("var {a: x} = goog.object.create('a', 2);", "var {a: x} = {'a': 2};");
+  }
 
-    // Async
+  @Test
+  public void testEs6AsyncCompatibility() {
     test(
         lines(
             "async function foo() {",

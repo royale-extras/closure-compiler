@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.javascript.jscomp.AbstractCompiler.LifeCycleStage;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
@@ -87,6 +88,27 @@ public final class MaybeReachingVariableUseTest {
   }
 
   @Test
+  public void nullishCoalesce() {
+    // LHS always executed
+    assertMatch("var x=0; var y; D:(x=1)??y; U:x");
+    assertMatch("var x=0; var y=0; D:(x=1)??(y=0); U:x");
+
+    // y is undefined so RHS is executed
+    assertMatch("var x=0; var y; D:y??(x=1); U:x");
+
+    // one of the paths will reach the definition
+    assertMatch("var x=0; var y=0; D:(y=0)??(x=1); U:x");
+
+    // x is redefined because LHS is always executed
+    assertNotMatch("D: var x=0; var y=0; (x=1)??(y=0); U:x");
+
+    // RHS not always executed due to short circuiting
+    assertMatch("D: var x=0; var y=0; (y=1)??((y=2)||(x=1)); U:x");
+    assertMatch("D: var x=0; var y=0; (y=1)&&((y=2)??(x=1)); U:x");
+    assertMatch("D: var x=0; var y=0; (y=0)??(x=1); U:x");
+  }
+
+  @Test
   public void testUseAndDefInSameInstruction() {
     assertNotMatch("D:var x=0; U:x=1,x");
     assertMatch("D:var x=0; U:x,x=1");
@@ -142,6 +164,17 @@ public final class MaybeReachingVariableUseTest {
   }
 
   @Test
+  public void testForAwaitOf() {
+    assertNotAsyncMatch("D: var x = [], foo; U: for await (x of foo) { }");
+    assertNotAsyncMatch("D: var x = [], foo; for await (x of foo) { U:x }");
+    assertAsyncMatch("var x = [], foo; D: for await (x of foo) { U:x }");
+    assertAsyncMatch("var foo; D: for await (let x of foo) { U:x }");
+    assertAsyncMatch("var foo; D: for await (const x of foo) { U:x }");
+    assertAsyncMatch("D: var x = 1, foo; U: x; U: for await (let [z = x] of foo) {}");
+    assertAsyncMatch("D: var x = 1, foo; U: x; for await (let [x] of foo) {}");
+  }
+
+  @Test
   public void testTryCatch() {
     assertMatch(""
         + "D: var x = 1; "
@@ -157,36 +190,48 @@ public final class MaybeReachingVariableUseTest {
     assertMatch("var x; x = 3; D: [x] = 5; U: x;");
   }
 
-  /**
-   * The def of x at D: may be used by the read of x at U:.
-   */
   private void assertMatch(String src) {
-    computeUseDef(src);
-    Collection<Node> result = useDef.getUses("x", def);
-    assertThat(result).hasSize(uses.size());
-    assertThat(result.containsAll(uses)).isTrue();
+    assertMatch(src, false);
   }
 
-  /**
-   * The def of x at D: is not used by the read of x at U:.
-   */
+  private void assertAsyncMatch(String src) {
+    assertMatch(src, true);
+  }
+
+  /** The def of x at D: may be used by the read of x at U:. */
+  private void assertMatch(String src, boolean async) {
+    computeUseDef(src, async);
+    Collection<Node> result = useDef.getUses("x", def);
+    assertThat(result).containsAtLeastElementsIn(uses);
+  }
+
   private void assertNotMatch(String src) {
-    computeUseDef(src);
+    assertNotMatch(src, false);
+  }
+
+  private void assertNotAsyncMatch(String src) {
+    assertNotMatch(src, true);
+  }
+
+  /** The def of x at D: is not used by the read of x at U:. */
+  private void assertNotMatch(String src, boolean async) {
+    computeUseDef(src, async);
     assertThat(useDef.getUses("x", def)).doesNotContain(uses);
   }
 
-  /**
-   * Computes reaching use on given source.
-   */
-  private void computeUseDef(String src) {
+  /** Computes reaching use on given source. */
+  private void computeUseDef(String src, boolean async) {
     Compiler compiler = new Compiler();
     compiler.setLifeCycleStage(LifeCycleStage.NORMALIZED);
-    Es6SyntacticScopeCreator scopeCreator = new Es6SyntacticScopeCreator(compiler);
-    src = "function _FUNCTION(param1, param2){" + src + "}";
+    CompilerOptions options = new CompilerOptions();
+    options.setLanguageIn(LanguageMode.ECMASCRIPT_NEXT_IN);
+    compiler.initOptions(options);
+    SyntacticScopeCreator scopeCreator = new SyntacticScopeCreator(compiler);
+    src = (async ? "async " : "") + "function _FUNCTION(param1, param2){" + src + "}";
     Node script = compiler.parseTestCode(src);
     Node root = script.getFirstChild();
     Node functionBlock = root.getLastChild();
-    assertThat(compiler.getErrorCount()).isEqualTo(0);
+    assertThat(compiler.getErrors()).isEmpty();
     Scope globalScope = scopeCreator.createScope(script, null);
     Scope functionScope = scopeCreator.createScope(root, globalScope);
     Scope funcBlockScope = scopeCreator.createScope(functionBlock, functionScope);

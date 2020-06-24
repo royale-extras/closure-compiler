@@ -20,6 +20,7 @@ import static com.google.javascript.jscomp.CheckGlobalNames.NAME_DEFINED_LATE_WA
 import static com.google.javascript.jscomp.CheckGlobalNames.STRICT_MODULE_DEP_QNAME;
 import static com.google.javascript.jscomp.CheckGlobalNames.UNDEFINED_NAME_WARNING;
 
+import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
 import org.junit.Test;
@@ -83,8 +84,8 @@ public final class CheckGlobalNamesTest extends CompilerTestCase {
   private static final String NAMES = "var a = {d: 1}; a.b = 3; a.c = {e: 5};";
   private static final String LET_NAMES = "let a = {d: 1}; a.b = 3; a.c = {e: 5};";
   private static final String CONST_NAMES = "const a = {d: 1, b: 3, c: {e: 5}};";
-  private static final String CLASS_DECLARATION_NAMES = "class A{ b(){} }";
-  private static final String CLASS_EXPRESSION_NAMES_STUB = "A = class{ b(){} };";
+  private static final String CLASS_DECLARATION_NAMES = "class A{ static b(){} }";
+  private static final String CLASS_EXPRESSION_NAMES_STUB = "A = class{ static b(){} };";
   private static final String CLASS_EXPRESSION_NAMES = "var " + CLASS_EXPRESSION_NAMES_STUB;
   private static final String EXT_OBJLIT_NAMES = "var a = {b(){}, d}; a.c = 3;";
 
@@ -195,6 +196,12 @@ public final class CheckGlobalNamesTest extends CompilerTestCase {
   }
 
   @Test
+  public void testRefToClassPrototypeMemberThroughCtor() {
+    testWarning("class C { b() {} } C.b()", UNDEFINED_NAME_WARNING);
+    testSame("class C { static b() {} b() {} } C.b();");
+  }
+
+  @Test
   public void testRefToDescendantOfUndefinedProperty1() {
     testWarning(NAMES + "var c = a.x.b;", UNDEFINED_NAME_WARNING);
 
@@ -255,6 +262,17 @@ public final class CheckGlobalNamesTest extends CompilerTestCase {
   }
 
   @Test
+  public void testTypedefAliasGivesNoWarning() {
+
+    testSame("var a = {}; /** @typedef {number} */ a.b; const b = a.b;");
+  }
+
+  @Test
+  public void testDestructuringTypedefAliasGivesNoWarning() {
+    testSame("var a = {}; /** @typedef {number} */ a.b; const {b} = a;");
+  }
+
+  @Test
   public void testRefToDescendantOfUndefinedPropertyGivesCorrectWarning() {
     testWarning(NAMES + "a.x.b = 3;", UNDEFINED_NAME_WARNING,
         UNDEFINED_NAME_WARNING.format("a.x"));
@@ -296,58 +314,89 @@ public final class CheckGlobalNamesTest extends CompilerTestCase {
 
   @Test
   public void testNoWarningForSimpleVarModuleDep1() {
-    testSame(createModuleChain(
-        NAMES,
-        "var c = a;"
-    ));
+    testSame(JSChunkGraphBuilder.forChain().addChunk(NAMES).addChunk("var c = a;").build());
   }
 
   @Test
   public void testNoWarningForSimpleVarModuleDep2() {
-    testSame(createModuleChain(
-        "var c = a;",
-        NAMES
-    ));
+    testSame(JSChunkGraphBuilder.forChain().addChunk("var c = a;").addChunk(NAMES).build());
   }
 
   @Test
   public void testNoWarningForGoodModuleDep1() {
-    testSame(createModuleChain(
-        NAMES,
-        "var c = a.b;"
-    ));
+    testSame(JSChunkGraphBuilder.forChain().addChunk(NAMES).addChunk("var c = a.b;").build());
+  }
+
+  @Test
+  public void testNoWarningForModuleDep_onUnknownOriginNamespace() {
+    testSame(
+        JSChunkGraphBuilder.forStar()
+            // root module, e.g. a legacy namespace goog.module.
+            .addChunk("const ns = {}; class C { static m() {} }; ns.C = C;")
+            // leaf 1, uses ns.C.
+            .addChunk("alert(ns.C.m);")
+            // leaf 2, a mod.
+            .addChunk("ns.C.m = function() { return 0; };")
+            .build());
   }
 
   @Test
   public void testBadModuleDep1() {
-    testSame(createModuleChain(
-        "var c = a.b;",
-        NAMES
-    ), STRICT_MODULE_DEP_QNAME);
+    testSame(
+        JSChunkGraphBuilder.forChain().addChunk("var c = a.b;").addChunk(NAMES).build(),
+        STRICT_MODULE_DEP_QNAME);
   }
 
   @Test
   public void testBadModuleDep2() {
-    testSame(createModuleStar(
-        NAMES,
-        "a.xxx = 3;",
-        "var x = a.xxx;"
-    ), STRICT_MODULE_DEP_QNAME);
+    testSame(
+        JSChunkGraphBuilder.forStar()
+            .addChunk(NAMES)
+            .addChunk("a.xxx = 3;")
+            .addChunk("var x = a.xxx;")
+            .build(),
+        STRICT_MODULE_DEP_QNAME);
+  }
+
+  @Test
+  public void testGlobalNameSetTwiceInSiblingModulesAllowed() {
+    testSame(
+        JSChunkGraphBuilder.forStar()
+            // root module
+            .addChunk("class C {};")
+            // leaf 1
+            .addChunk("C.m = 1; alert(C.m);")
+            // leaf 2
+            .addChunk("C.m = 1; alert(C.m);")
+            .build());
+  }
+
+  @Test
+  public void testGlobalNameSetOnlyInOtherSiblingModuleNotAllowed() {
+    testSame(
+        JSChunkGraphBuilder.forStar()
+            // root module
+            .addChunk("class C {};")
+            // leaf 1 sets than uses C.m
+            .addChunk("C.m = 1; alert(C.m);")
+            // leaf 2 also sets then uses C.m
+            .addChunk("C.m = 1; alert(C.m);")
+            // leaf 3 uses C.m without it having been set
+            .addChunk("alert(C.m);")
+            .build(),
+        STRICT_MODULE_DEP_QNAME);
   }
 
   @Test
   public void testSelfModuleDep() {
-    testSame(createModuleChain(
-        NAMES + "var c = a.b;"
-    ));
+    testSame(JSChunkGraphBuilder.forChain().addChunk(NAMES + "var c = a.b;").build());
   }
 
   @Test
   public void testUndefinedModuleDep1() {
-    testSame(createModuleChain(
-        "var c = a.xxx;",
-        NAMES
-    ), UNDEFINED_NAME_WARNING);
+    testSame(
+        JSChunkGraphBuilder.forChain().addChunk("var c = a.xxx;").addChunk(NAMES).build(),
+        UNDEFINED_NAME_WARNING);
   }
 
   @Test
@@ -552,6 +601,16 @@ public final class CheckGlobalNamesTest extends CompilerTestCase {
   }
 
   @Test
+  public void testDestructuringUndefinedProperty() {
+    testSame(
+        lines(
+            "var ns = {};", //
+            "/** @enum */",
+            "ns.Modes = {A, B};",
+            "const {C} = ns.Modes;"));
+  }
+
+  @Test
   public void testObjectDestructuringAlias() {
     testSame(
         lines(
@@ -620,5 +679,16 @@ public final class CheckGlobalNamesTest extends CompilerTestCase {
             "var a = {};",
             "var alias = a;",
             "alert(a.b.c.d);")); // This will cause a runtime error but not a compiler warning.
+  }
+
+  @Test
+  public void testReassignedName() {
+    // regression test for an obscure bug triggered by redefining a name as a class after its
+    // original definition, and also adding a property to that name.
+    testSame(
+        lines(
+            "let fnOrClass = function() {};", //
+            "fnOrClass = class {};",
+            "fnOrClass.PROP = 0;"));
   }
 }

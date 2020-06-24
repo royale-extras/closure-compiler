@@ -25,9 +25,7 @@ import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfoBuilder;
-import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -102,25 +100,28 @@ import java.util.Set;
  * <p>
  * TODO(tdeegan): In the future the type information for getter/setter properties could be stored
  * in the defineProperties functions.  It would reduce the complexity of this pass significantly.
- *
- * @author mattloring@google.com (Matthew Loring)
- * @author tdeegan@google.com (Thomas Deegan)
  */
 public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
 
-  static final DiagnosticType DUPLICATE_CLASS = DiagnosticType.error(
-      "DUPLICATE_CLASS",
-      "Multiple classes cannot share the same name.");
+  static final DiagnosticType DUPLICATE_CLASS =
+      DiagnosticType.error("DUPLICATE_CLASS", "Multiple classes cannot share the same name: {0}");
 
   private final Set<String> duplicateClassNames = new HashSet<>();
 
   private static class JavascriptClass {
     // All static members to the class including get set properties.
     private final Set<Node> staticMembers = new LinkedHashSet<>();
+    // Keep updated the set of static member names to avoid O(n^2) searches.
+    private final Set<String> staticMemberNames = new HashSet<>();
     // Collect all the static field accesses to the class.
     private final Set<Node> staticFieldAccess = new LinkedHashSet<>();
     // Collect all get set properties as defined by Object.defineProperties(...)
     private final Set<String> definedProperties = new LinkedHashSet<>();
+
+    void addStaticMember(Node node) {
+      staticMembers.add(node);
+      staticMemberNames.add(node.getFirstChild().getLastChild().getString());
+    }
   }
 
   private final AbstractCompiler compiler;
@@ -158,7 +159,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
       JavascriptClass superClass = classByAlias.get(superclassQname);
       JavascriptClass subClass = classByAlias.get(subclassQname);
       if (duplicateClassNames.contains(superclassQname)) {
-        compiler.report(JSError.make(inheritsCall, DUPLICATE_CLASS));
+        compiler.report(JSError.make(inheritsCall, DUPLICATE_CLASS, superclassQname));
         return;
       }
       if (superClass == null || subClass == null) {
@@ -191,12 +192,8 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
       }
       Node subclassNameNode = inheritsCall.getSecondChild();
       Node getprop = IR.getprop(subclassNameNode.cloneTree(), IR.string(memberName));
-      JSDocInfoBuilder info = JSDocInfoBuilder.maybeCopyFrom(staticGetProp.getJSDocInfo());
-      JSTypeExpression unknown = new JSTypeExpression(new Node(Token.QMARK), "<synthetic>");
-      info.recordType(unknown); // In case there wasn't a type specified on the base class.
-      info.addSuppression("visibility");
-      getprop.setJSDocInfo(info.build());
 
+      getprop.setJSDocInfo(null);
       Node declaration = IR.exprResult(getprop);
       declaration.useSourceInfoIfMissingFromForTree(inheritsCall);
       Node parent = inheritsCall.getParent();
@@ -260,18 +257,15 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
       compiler.reportChangeToEnclosingScope(inheritsExpressionResult);
 
       // Add the static member to the subclass so that subclasses also copy this member.
-      subClass.staticMembers.add(assign);
+      subClass.addStaticMember(assign);
     }
   }
 
   private boolean isOverriden(JavascriptClass subClass, String memberName) {
-    for (Node subclassMember : subClass.staticMembers) {
-      checkState(subclassMember.isAssign(), subclassMember);
-      if (subclassMember.getFirstChild().getLastChild().getString().equals(memberName)) {
-        // This subclass overrides the static method, so there is no need to copy the
-        // method from the base class.
-        return true;
-      }
+    if (subClass.staticMemberNames.contains(memberName)) {
+      // This subclass overrides the static method, so there is no need to copy the
+      // method from the base class.
+      return true;
     }
     if (subClass.definedProperties.contains(memberName)) {
       return true;
@@ -379,7 +373,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
         Node getProp = n.getFirstChild();
         Node classNode = getProp.getFirstChild();
         if (isReferenceToClass(t, classNode)) {
-          classByAlias.get(classNode.getQualifiedName()).staticMembers.add(n);
+          classByAlias.get(classNode.getQualifiedName()).addStaticMember(n);
           nodeOrder.put(n, nodeOrder.size());
         }
       }

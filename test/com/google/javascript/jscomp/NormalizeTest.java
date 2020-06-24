@@ -44,7 +44,7 @@ public final class NormalizeTest extends CompilerTestCase {
   @Before
   public void setUp() throws Exception {
     super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2018);
   }
 
   @Override
@@ -53,9 +53,35 @@ public final class NormalizeTest extends CompilerTestCase {
   }
 
   @Override
+  public CompilerOptions getOptions() {
+    CompilerOptions options = super.getOptions();
+    options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
+    return options;
+  }
+
+  @Override
   protected int getNumRepetitions() {
     // The normalize pass is only run once.
     return 1;
+  }
+
+  @Test
+  public void testNullishCoalesce() {
+    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
+    test("var a = x ?? y, b = foo()", "var a = x ?? y; var b = foo()");
+    test(
+        lines(
+            "let x = a ?? b;",
+            "{ let x = a ?? b; }",
+            "{ let x = a ?? b; }",
+            "{ let x = a ?? b; }",
+            "{ let x = a ?? b; }"),
+        lines(
+            "let x = a ?? b;",
+            "{ let x$jscomp$1 = a ?? b; }",
+            "{ let x$jscomp$2 = a ?? b; }",
+            "{ let x$jscomp$3 = a ?? b; }",
+            "{ let x$jscomp$4 = a ?? b; }"));
   }
 
   @Test
@@ -291,6 +317,15 @@ public final class NormalizeTest extends CompilerTestCase {
   }
 
   @Test
+  public void testFunctionDeclInBlockScope() {
+    test("var x; { function g() {} }", "var x; { var g = function() {} }");
+    test("var g; { function g() {} }", "var g; { var g$jscomp$1 = function() {} }");
+
+    testInFunction("var x; { function g() {} }", "var x; { var g = function() {} }");
+    testInFunction("var g; { function g() {} }", "var g; { var g$jscomp$1 = function() {} }");
+  }
+
+  @Test
   public void testAssignShorthand() {
     test("x |= 1;", "x = x | 1;");
     test("x ^= 1;", "x = x ^ 1;");
@@ -408,6 +443,40 @@ public final class NormalizeTest extends CompilerTestCase {
     test("for (var [a, b] of c) foo();", "var a; var b; for ([a, b] of c) foo();");
 
     test("for (var {a, b} of c) foo();", "var a; var b; for ({a: a, b: b} of c) foo();");
+  }
+
+  @Test
+  public void testForAwaitOf() {
+    // Verify nothing happens with simple for-await-of
+    testSame("async () => { for await (a of b) foo(); }");
+
+    // Verify vars are extracted from the FOR-AWAIT-OF node.
+    test(
+        "async () => { for await (var a of b) foo() }",
+        "async () => { var a; for await (a of b) foo() }");
+
+    // Verify vars are extracted from the FOR init before the label node.
+    test(
+        "async () => { a:for await (var a of b) foo() }",
+        "async () => { var a; a: for await (a of b) foo() }");
+    // Verify vars are extracted from the FOR init before the labels node.
+    test(
+        "async () => { a: b: for await (var a of b) foo() }",
+        "async () => { var a; a: b: for await (a of b) foo() }");
+
+    // Verify block are properly introduced for ifs.
+    test(
+        "async () => { if (x) for await (var a of b) foo() }",
+        "async () => { if (x) { var a; for await (a of b) foo() } }");
+
+    // Verify names in destructuring declarations are individually declared.
+    test(
+        "async () => { for await (var [a, b] of c) foo(); }",
+        "async () => { var a; var b; for await ([a, b] of c) foo(); }");
+
+    test(
+        "async () => { for await (var {a, b} of c) foo(); }",
+        "async () => { var a; var b; for await ({a: a, b: b} of c) foo(); }");
   }
 
   @Test
@@ -608,21 +677,15 @@ public final class NormalizeTest extends CompilerTestCase {
         "f = 1; function f(){}");
     test("var f; function f(){}",
         "function f(){}");
-    test("if (a) { var f = 1; } else { function f(){} }",
-        "if (a) { var f = 1; } else { f = function (){} }");
 
     test("function f(){} var f = 1;",
         "function f(){} f = 1;");
     test("function f(){} var f;",
         "function f(){}");
-    test("if (a) { function f(){} } else { var f = 1; }",
-        "if (a) { var f = function (){} } else { f = 1; }");
 
     // TODO(johnlenz): Do we need to handle this differently for "third_party"
     // mode? Remove the previous function definitions?
     testSame("function f(){} function f(){}");
-    test("if (a) { function f(){} } else { function f(){} }",
-        "if (a) { var f = function (){} } else { f = function (){} }");
   }
 
   // It's important that we not remove this var completely. See

@@ -26,7 +26,8 @@ import org.junit.runners.JUnit4;
 public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
 
   @Override
-  protected CompilerOptions getOptions(CompilerOptions options) {
+  protected CompilerOptions getOptions() {
+    CompilerOptions options = super.getOptions();
     options.setWarningLevel(DiagnosticGroups.ANALYZER_CHECKS, CheckLevel.WARNING);
     return options;
   }
@@ -34,11 +35,6 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new ImplicitNullabilityCheck(compiler);
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
   }
 
   @Override
@@ -57,7 +53,7 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
     noWarning("/** @type {?Object} */ var x;");
     noWarning("/** @type {function(new:Object)} */ function f(){}");
     noWarning("/** @type {function(this:Object)} */ function f(){}");
-    noWarning("/** @typedef {!Object} */ var Obj; var /** Obj */ x;");
+    noWarning("/** @typedef {!Object} */ var Obj; var /** ?Obj */ x;");
 
     // Test let and const
     noWarning("/** @type {boolean} */ let x;");
@@ -108,6 +104,25 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
   }
 
   @Test
+  public void testNonnullTypedef() {
+    test(
+        srcs("/** @typedef {number} */ var Num; var /** Num */ x;"),
+        warning(ImplicitNullabilityCheck.IMPLICITLY_NONNULL_JSDOC));
+  }
+
+  @Test
+  public void testNonnullEnum() {
+    test(
+        srcs("/** @enum {number} */ var Enum = {NUM: 0}; var /** Enum */ x;"),
+        warning(ImplicitNullabilityCheck.IMPLICITLY_NONNULL_JSDOC));
+  }
+
+  @Test
+  public void testNonnullRecordType() {
+    noWarning("var /** {x: number} */ o;");
+  }
+
+  @Test
   public void testUnknownTypenameDoesntWarn() {
     test(
         externs(DEFAULT_EXTERNS),
@@ -119,6 +134,11 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
   public void testThrowsDoesntWarn() {
     noWarning("/** @throws {Error} */ function f() {}");
     noWarning("/** @throws {TypeError}\n * @throws {SyntaxError} */ function f() {}");
+  }
+
+  @Test
+  public void testTypeofDoesntWarn() {
+    noWarning("/** @type {typeof Object} */ var x;");
   }
 
   @Test
