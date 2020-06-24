@@ -27,10 +27,7 @@ function mathTest() {
   assert.isFalse(2 < 0);
 }
 
-/**
- * Another example
- * @suppress {suspiciousCode} false || null
- */
+/** Another example */
 function nullAndUndefinedTest() {
   assert.isNull(false || null);
   assert.isUndefined(someVar);
@@ -41,10 +38,7 @@ function okTest() {
   assert.isOk('a string');
 }
 
-/**
- * The .to.not.be variations.
- * @suppress {suspiciousCode} false || null
- */
+/** The .to.not.be variations. */
 function negativeTest() {
   assert.isNotTrue(1 > 0);
   assert.isNotFalse(2 < 0);

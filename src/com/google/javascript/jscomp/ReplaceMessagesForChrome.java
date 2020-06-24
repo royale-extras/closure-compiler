@@ -29,6 +29,8 @@ import java.util.List;
  * message, as a string. If the message contains placeholders, the second
  * argument is an array of the values being used for the placeholders, sorted
  * by placeholder name.
+ *
+ * @author tbreisacher@google.com (Tyler Breisacher)
  */
 @GwtIncompatible("JsMessage")
 class ReplaceMessagesForChrome extends JsMessageVisitor {
@@ -66,9 +68,8 @@ class ReplaceMessagesForChrome extends JsMessageVisitor {
       throws MalformedException {
     Node newValueNode = getChromeI18nGetMessageNode(message.getId());
 
-    boolean isHtml = isHtml(origNode);
-    if (!message.placeholders().isEmpty() || isHtml) {
-      Node placeholderValues = origNode.getChildAtIndex(2);
+    if (!message.placeholders().isEmpty()) {
+      Node placeholderValues = origNode.getLastChild();
       checkNode(placeholderValues, Token.OBJECTLIT);
 
       // Output the placeholders, sorted alphabetically by placeholder name,
@@ -85,40 +86,11 @@ class ReplaceMessagesForChrome extends JsMessageVisitor {
         }
         placeholderValueArray.addChildToBack(value);
       }
-      if (isHtml) {
-        Node args = IR.arraylit(IR.string(message.getId()), placeholderValueArray);
-        Node options = IR.arraylit(IR.objectlit(IR.stringKey("escapeLt", IR.trueNode())));
-        Node regexp = IR.regexp(IR.string("Chrome\\/(\\d+)"));
-        Node userAgent = NodeUtil.newQName(compiler, "navigator.userAgent");
-        Node version =
-            IR.getelem(
-                IR.or(IR.call(IR.getprop(regexp, "exec"), userAgent), IR.arraylit()), IR.number(1));
-        Node condition = IR.ge(version, IR.number(79));
-        args = IR.call(IR.getprop(args, "concat"), IR.hook(condition, options, IR.arraylit()));
-        newValueNode =
-            IR.call(
-                NodeUtil.newQName(compiler, "chrome.i18n.getMessage.apply"), IR.nullNode(), args);
-      } else {
-        newValueNode.addChildToBack(placeholderValueArray);
-      }
+      newValueNode.addChildToBack(placeholderValueArray);
     }
 
     newValueNode.useSourceInfoIfMissingFromForTree(origNode);
     return newValueNode;
-  }
-
-  private boolean isHtml(Node node) throws MalformedException {
-    if (node.getChildCount() > 3) {
-      Node options = node.getChildAtIndex(3);
-      checkNode(options, Token.OBJECTLIT);
-      for (Node opt = options.getFirstChild(); opt != null; opt = opt.getNext()) {
-        checkNode(opt, Token.STRING_KEY);
-        if (opt.getString().equals("html")) {
-          return opt.getFirstChild().isTrue();
-        }
-      }
-    }
-    return false;
   }
 
   private static Node getPlaceholderValue(

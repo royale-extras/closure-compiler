@@ -17,6 +17,7 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.NodeTraversal.AbstractShallowStatementCallback;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
@@ -49,11 +50,36 @@ import java.util.Set;
  *
  * <p>For lots of examples, see the unit test.
  *
+ *
  */
 final class RescopeGlobalSymbols implements CompilerPass {
 
   // Appended to variables names that conflict with globalSymbolNamespace.
   private static final String DISAMBIGUATION_SUFFIX = "$";
+  private static final String WINDOW = "window";
+  private static final ImmutableSet<String> SPECIAL_EXTERNS =
+      ImmutableSet.of(
+          WINDOW,
+          "eval",
+          "arguments",
+          "undefined",
+          // The javascript built-in objects (listed in Ecma 262 section 4.2)
+          "Object",
+          "Function",
+          "Array",
+          "String",
+          "Boolean",
+          "Number",
+          "Math",
+          "Date",
+          "RegExp",
+          "JSON",
+          "Error",
+          "EvalError",
+          "ReferenceError",
+          "SyntaxError",
+          "TypeError",
+          "URIError");
 
   private final AbstractCompiler compiler;
   private final String globalSymbolNamespace;
@@ -113,9 +139,7 @@ final class RescopeGlobalSymbols implements CompilerPass {
       return false;
     }
     Var v = t.getScope().getVar(varname);
-    return v == null
-        || v.isExtern()
-        || (v.getScope().isGlobal() && this.externNames.contains(varname));
+    return v == null || v.isExtern() || (v.scope.isGlobal() && this.externNames.contains(varname));
   }
 
   private void addExternForGlobalSymbolNamespace() {
@@ -287,7 +311,9 @@ final class RescopeGlobalSymbols implements CompilerPass {
         // a function referencing this is being assigned. Otherwise we
         // check whether the function assigned is a) an arrow function, which has a
         // lexically-scoped this, or b) a non-arrow function that does not reference this.
-        if (value == null || !value.isFunction() || NodeUtil.referencesOwnReceiver(value)) {
+        if (value == null
+            || !value.isFunction()
+            || (!value.isArrowFunction() && NodeUtil.referencesThis(value))) {
           maybeReferencesThis.add(name);
         }
       }
@@ -430,6 +456,7 @@ final class RescopeGlobalSymbols implements CompilerPass {
         return;
       }
       if (isExternVar(name, t)) {
+        visitExtern(n, parent);
         return;
       }
       // When the globalSymbolNamespace is used as a local variable name
@@ -468,12 +495,28 @@ final class RescopeGlobalSymbols implements CompilerPass {
     }
 
     /**
+     * Rewrites extern names to be explicit children of window instead of only implicitly
+     * referencing it. This enables injecting window into a scope and make all global symbols
+     * depend on the injected object.
+     */
+    private void visitExtern(Node nameNode, Node parent) {
+      String name = nameNode.getString();
+      if (globalSymbolNamespace.equals(name) || SPECIAL_EXTERNS.contains(name)) {
+        return;
+      }
+      Node windowPropAccess = IR.getprop(IR.name(WINDOW), IR.string(name));
+      parent.replaceChild(nameNode, windowPropAccess.srcrefTree(nameNode));
+      compiler.reportChangeToEnclosingScope(parent);
+    }
+
+    /**
      * Adds back declarations for variables that do not cross module boundaries.
      * Must be called after RemoveGlobalVarCallback.
      */
     void declareModuleGlobals() {
       for (ModuleGlobal global : preDeclarations) {
-        if (global.root.hasChildren() && global.root.getFirstChild().isVar()) {
+        if (global.root.getFirstChild() != null
+            && global.root.getFirstChild().isVar()) {
           global.root.getFirstChild().addChildToBack(global.name);
         } else {
           global.root.addChildToFront(IR.var(global.name).srcref(global.name));
@@ -578,4 +621,3 @@ final class RescopeGlobalSymbols implements CompilerPass {
     }
   }
 }
-

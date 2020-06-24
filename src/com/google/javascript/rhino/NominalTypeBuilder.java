@@ -49,60 +49,31 @@ import com.google.javascript.rhino.jstype.ObjectType;
  * them separately: (1) the constructor function, (2) the instance type, and (3) the prototype
  * object.
  *
- * <p>This builder is used during the first part of type checking, while the type checker builds
- * up the set of known types. Thus, this interface serves as a placeholder to allow operating on
- * (i.e. both assigning properties to, and referencing the yet-to-exist type) these
- * not-yet-available types.
+ * This interface is used during the first part of type checking, while the type checker builds up
+ * the set of known types. At this stage, not all types actually exist in a usable form:
+ * specifically, NTI cannot express the type of a prototype object until immediately before the
+ * owner type is frozen. Thus, this interface serves as a placeholder to allow operating on (i.e.
+ * both assigning properties to, and referencing the yet-to-exist type) these not-yet-available
+ * types.
  */
-public class NominalTypeBuilder {
-
-  private final FunctionType constructor;
-  private final ObjectType instance;
-  private final ObjectType prototype;
-
-  public NominalTypeBuilder(FunctionType constructor, ObjectType instance) {
-    this.constructor = constructor;
-    this.instance = instance;
-    this.prototype = constructor.getPrototypeProperty();
-  }
-
-  /** Declares a property on the nominal type's prototype. */
-  public void declarePrototypeProperty(String name, JSType type, Node defSite) {
-    prototype.defineDeclaredProperty(name, type, defSite);
-  }
-
-  /** Declares an instance property on the nominal type. */
-  public void declareInstanceProperty(String name, JSType type, Node defSite) {
-    instance.defineDeclaredProperty(name, type, defSite);
-  }
+public interface NominalTypeBuilder {
 
   /** Declares a static property on the nominal type's constructor. */
-  public void declareConstructorProperty(String name, JSType type, Node defSite) {
-    constructor.defineDeclaredProperty(name, type, defSite);
-  }
+  void declareConstructorProperty(String name, JSType type, Node defSite);
+  /** Declares an instance property on the nominal type. */
+  void declareInstanceProperty(String name, JSType type, Node defSite);
+  /** Declares a property on the nominal type's prototype. */
+  void declarePrototypeProperty(String name, JSType type, Node defSite);
 
   /** Returns a NominalTypeBuilder for this type's superclass. */
-  public NominalTypeBuilder superClass() {
-    FunctionType ctor = instance.getSuperClassConstructor();
-    if (ctor == null) {
-      return null;
-    }
-    return new NominalTypeBuilder(ctor, ctor.getInstanceType());
-  }
+  NominalTypeBuilder superClass();
 
   /** Returns the constructor as a JSType. */
-  public FunctionType constructor() {
-    return constructor;
-  }
-
+  FunctionType constructor();
   /** Returns the instance type as a JSType. */
-  public ObjectType instance() {
-    return instance;
-  }
+  ObjectType instance();
 
   // TODO(sdh): See if we can just delete this entirely and use instance() instead?
-  /** Returns the type of the prototype object (OTI). */
-  public ObjectType prototypeOrInstance() {
-    return prototype;
-  }
+  /** Returns the type of the prototype object (OTI) or instance (NTI). */
+  ObjectType prototypeOrInstance();
 }

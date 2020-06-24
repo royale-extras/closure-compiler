@@ -87,6 +87,6 @@ public class SimpleSlot implements StaticTypedSlot, Serializable {
 
   @Override
   public StaticTypedScope getScope() {
-    return null;
+    throw new UnsupportedOperationException();
   }
 }

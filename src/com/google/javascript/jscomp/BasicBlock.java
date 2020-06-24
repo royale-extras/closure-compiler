@@ -55,7 +55,6 @@ final class BasicBlock implements Serializable {
               || pType == Token.WHILE
               || pType == Token.FOR
               || pType == Token.FOR_OF
-              || pType == Token.FOR_AWAIT_OF
               || pType == Token.FOR_IN;
     } else {
       this.isLoop = false;

@@ -23,6 +23,7 @@ import static com.google.javascript.jscomp.parsing.JsDocInfoParser.BAD_TYPE_WIKI
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
@@ -36,10 +37,13 @@ import org.junit.runners.JUnit4;
  */
 @RunWith(JUnit4.class)
 public final class RhinoErrorReporterTest {
+
+  private boolean reportEs3Props;
   private boolean reportLintWarnings;
 
   @Before
   public void setUp() throws Exception {
+    reportEs3Props = true;
     reportLintWarnings = true;
   }
 
@@ -67,6 +71,12 @@ public final class RhinoErrorReporterTest {
 
   @Test
   public void testInvalidEs3Prop() {
+    reportEs3Props = false;
+
+    assertNoWarningOrError("var x = y.function;");
+
+    reportEs3Props = true;
+
     String message =
         "Keywords and reserved words are not allowed as unquoted property " +
         "names in older versions of JavaScript. " +
@@ -129,9 +139,10 @@ public final class RhinoErrorReporterTest {
     Compiler compiler = parseCode(code);
     assertWithMessage("Expected error").that(compiler.getErrorCount()).isEqualTo(1);
 
-    JSError error = Iterables.getOnlyElement(compiler.getErrors());
+    JSError error =
+        Iterables.getOnlyElement(Arrays.asList(compiler.getErrors()));
     assertThat(error.getType()).isEqualTo(type);
-    assertThat(error.getDescription()).isEqualTo(description);
+    assertThat(error.description).isEqualTo(description);
     return error;
   }
 
@@ -143,9 +154,10 @@ public final class RhinoErrorReporterTest {
     Compiler compiler = parseCode(code);
     assertWithMessage("Expected warning").that(compiler.getWarningCount()).isEqualTo(1);
 
-    JSError error = Iterables.getOnlyElement(compiler.getWarnings());
+    JSError error =
+        Iterables.getOnlyElement(Arrays.asList(compiler.getWarnings()));
     assertThat(error.getType()).isEqualTo(type);
-    assertThat(error.getDescription()).isEqualTo(description);
+    assertThat(error.description).isEqualTo(description);
     return error;
   }
 
@@ -153,6 +165,12 @@ public final class RhinoErrorReporterTest {
     Compiler compiler = new Compiler();
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT3);
+
+    if (!reportEs3Props) {
+      options.setWarningLevel(
+          DiagnosticGroups.ES3,
+          CheckLevel.OFF);
+    }
 
     if (!reportLintWarnings) {
       options.setWarningLevel(

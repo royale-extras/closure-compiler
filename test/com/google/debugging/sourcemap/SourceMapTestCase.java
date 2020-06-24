@@ -19,12 +19,8 @@ package com.google.debugging.sourcemap;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.reflect.TypeToken;
 import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
-import com.google.gson.Gson;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
@@ -33,7 +29,6 @@ import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.SourceMap;
 import com.google.javascript.jscomp.SourceMap.DetailLevel;
 import java.io.IOException;
-import java.lang.reflect.Type;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,9 +37,6 @@ import org.junit.Before;
 
 /** @author johnlenz@google.com (John Lenz) */
 public abstract class SourceMapTestCase {
-
-  private static final Gson GSON = new Gson();
-  private static final Type JSON_MAP_TYPE = (new TypeToken<Map<String, ?>>() {}).getType();
 
   private boolean validateColumns = true;
 
@@ -58,17 +50,11 @@ public abstract class SourceMapTestCase {
   protected DetailLevel detailLevel = SourceMap.DetailLevel.ALL;
   protected boolean sourceMapIncludeSourcesContent = false;
 
-  private static final Joiner LINE_JOINER = Joiner.on('\n');
-
-  public static final String lines(String... lines) {
-    return LINE_JOINER.join(lines);
-  }
-
   protected static class RunResult {
-    public String generatedSource;
-    SourceMap sourceMap;
-    public String sourceMapFileContent;
-  }
+      String generatedSource;
+      SourceMap sourceMap;
+      public String sourceMapFileContent;
+    }
 
   protected static class Token {
       final String tokenName;
@@ -87,23 +73,18 @@ public abstract class SourceMapTestCase {
   }
 
   /**
-   * Creates a source map for the given JS code and asserts it is equal to the expected golden map.
+   * Creates a source map for the given JS code and asserts it is
+   * equal to the expected golden map.
    */
-  protected void checkSourceMap(String js, ImmutableMap<String, ?> expectedMap) throws IOException {
+  protected void checkSourceMap(String js, String expectedMap)
+      throws IOException {
     checkSourceMap("testcode", js, expectedMap);
   }
 
-  protected void checkSourceMap(String fileName, String js, ImmutableMap<String, ?> expectedMap)
-      throws IOException {
+  protected void checkSourceMap(String fileName, String js, String expectedMap) throws IOException {
     RunResult result = compile(js, fileName);
-    // We round-trip the expectation to coerce any of its types in the same way as the actual map.
-    Map<String, ?> roundTrippedExpectedMap = GSON.fromJson(GSON.toJson(expectedMap), JSON_MAP_TYPE);
-
-    Map<String, ?> resultMap = GSON.fromJson(result.sourceMapFileContent, JSON_MAP_TYPE);
-    assertWithMessage(result.generatedSource).that(resultMap).isEqualTo(roundTrippedExpectedMap);
-
-    Map<String, ?> resultMapMap = GSON.fromJson(getSourceMap(result), JSON_MAP_TYPE);
-    assertWithMessage(result.generatedSource).that(resultMapMap).isEqualTo(roundTrippedExpectedMap);
+    assertThat(result.sourceMapFileContent).isEqualTo(expectedMap);
+    assertThat(getSourceMap(result)).isEqualTo(result.sourceMapFileContent);
   }
 
   protected String getSourceMap(RunResult result) throws IOException {
@@ -245,9 +226,7 @@ public abstract class SourceMapTestCase {
 
       // Ensure that the map correctly points to the token (we add 1
       // to normalize versus the Rhino line number indexing scheme).
-      assertWithMessage("Checking line for token %s ", token.tokenName)
-          .that(inputToken.position.getLine() + 1)
-          .isEqualTo(mapping.getLineNumber());
+      assertThat(inputToken.position.getLine() + 1).isEqualTo(mapping.getLineNumber());
 
       int start = inputToken.position.getColumn() + 1;
       if (inputToken.tokenName.startsWith("STR")) {
@@ -256,9 +235,7 @@ public abstract class SourceMapTestCase {
       }
 
       if (validateColumns) {
-        assertWithMessage("Checking column for token %s ", token.tokenName)
-            .that(mapping.getColumnPosition())
-            .isEqualTo(start);
+        assertThat(mapping.getColumnPosition()).isEqualTo(start);
       }
 
       // Ensure that if the token name does not being with an 'STR' (meaning a
@@ -316,7 +293,7 @@ public abstract class SourceMapTestCase {
 
   protected CompilerOptions getCompilerOptions() {
     CompilerOptions options = new CompilerOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_2018);
+    options.setLanguageIn(LanguageMode.ECMASCRIPT3);
     options.setSourceMapOutputPath("testcode_source_map.out");
     options.setSourceMapFormat(getSourceMapFormat());
     options.setSourceMapDetailLevel(detailLevel);

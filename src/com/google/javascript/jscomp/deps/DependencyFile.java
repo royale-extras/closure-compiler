@@ -89,7 +89,8 @@ public final class DependencyFile implements SourceFile {
 
     // Parse the deps.js file.
     ErrorManager errorManager = new LoggerErrorManager(logger);
-    DepsFileRegexParser parser = new DepsFileRegexParser(errorManager);
+    DepsFileParser parser =
+        new DepsFileParser(errorManager);
     List<DependencyInfo> depInfos =
         parser.parseFile(getName(), getContent());
 

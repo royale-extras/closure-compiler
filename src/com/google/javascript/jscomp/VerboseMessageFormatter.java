@@ -21,6 +21,7 @@ import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 /**
  * Verbose message formatter. This formatter generates very loud and long
  * messages with multi-line source excerpts.
+ *
  */
 class VerboseMessageFormatter extends AbstractMessageFormatter {
   VerboseMessageFormatter(SourceExcerptProvider source) {
@@ -38,9 +39,9 @@ class VerboseMessageFormatter extends AbstractMessageFormatter {
   }
 
   private String format(JSError message) {
-    String description = message.getDescription();
-    String sourceName = message.getSourceName();
-    int lineNumber = message.getLineNumber();
+    String description = message.description;
+    String sourceName = message.sourceName;
+    int lineNumber = message.lineNumber;
     Region sourceRegion = getSource().getSourceRegion(sourceName, lineNumber);
     String lineSource = null;
     if (sourceRegion != null) {

@@ -48,10 +48,6 @@ final class FileInfo {
     recordDeclaration(PotentialDeclaration.fromDefine(callNode));
   }
 
-  void recordAliasDeclaration(Node nameNode) {
-    recordDeclaration(PotentialDeclaration.fromAlias(nameNode));
-  }
-
   ListMultimap<String, PotentialDeclaration> getDeclarations() {
     return declarations;
   }

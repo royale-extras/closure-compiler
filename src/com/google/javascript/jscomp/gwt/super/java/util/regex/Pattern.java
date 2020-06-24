@@ -16,21 +16,22 @@
 
 package java.util.regex;
 
-import elemental2.core.JsRegExp;
+import elemental2.core.RegExp;
 import jsinterop.annotations.JsMethod;
 
 /**
  * GWT compatible minimal emulation of {@code Pattern}
  *
+ * @author moz@google.com (Michael Zhou)
  */
 public final class Pattern {
-  private JsRegExp regExp;
+  private RegExp regExp;
 
   private Pattern() {}
 
   public static Pattern compile(String string) {
     Pattern pattern = new Pattern();
-    pattern.regExp = new JsRegExp(string);
+     pattern.regExp = new RegExp(string);
     return pattern;
   }
 
@@ -43,4 +44,3 @@ public final class Pattern {
     return new Matcher(regExp, string);
   }
 }
-

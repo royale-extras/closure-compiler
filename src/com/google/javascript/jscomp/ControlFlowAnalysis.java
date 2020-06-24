@@ -40,6 +40,7 @@ import java.util.PriorityQueue;
 /**
  * This is a compiler pass that computes a control flow graph. Note that this is only a CompilerPass
  * because the Compiler invokes it via Compiler#process. It is never included in a PassConfig.
+ *
  */
 public final class ControlFlowAnalysis implements Callback, CompilerPass {
 
@@ -168,7 +169,7 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
     if (shouldTraverseFunctions) {
       // If we're traversing inner functions, we need to rank the
       // priority of them too.
-      for (DiGraphNode<Node, Branch> candidate : cfg.getNodes()) {
+      for (DiGraphNode<Node, Branch> candidate : cfg.getDirectedGraphNodes()) {
         Node value = candidate.getValue();
         if (value != null && value.isFunction()) {
           prioritizeFromEntryNode(candidate);
@@ -180,7 +181,7 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
     // unreachable nodes have not been given a priority. Put them last.
     // Presumably, it doesn't really matter what priority they get, since
     // this shouldn't happen in real code.
-    for (DiGraphNode<Node, Branch> candidate : cfg.getNodes()) {
+    for (DiGraphNode<Node, Branch> candidate : cfg.getDirectedGraphNodes()) {
       nodePriorities.computeIfAbsent(candidate, k -> ++priorityCounter);
     }
 
@@ -205,7 +206,7 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
 
       nodePriorities.put(current, ++priorityCounter);
 
-      List<? extends DiGraphNode<Node, Branch>> successors = cfg.getDirectedSuccNodes(current);
+      List<DiGraphNode<Node, Branch>> successors = cfg.getDirectedSuccNodes(current);
       worklist.addAll(successors);
     }
   }
@@ -277,8 +278,6 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
         case VAR:
         case LET:
         case CONST:
-        case EXPORT:
-        case IMPORT:
         case RETURN:
         case THROW:
           return false;
@@ -341,7 +340,6 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
       case BLOCK:
       case ROOT:
       case SCRIPT:
-      case MODULE_BODY:
         handleStmtList(n);
         return;
       case FUNCTION:
@@ -547,7 +545,6 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
         case TRY:
           break;
         case ROOT:
-          // TODO(b/71873602): why is this path necessary?
           if (node.isRoot() && node.getNext() != null) {
             createEdge(node, Branch.UNCOND, node.getNext());
           }
@@ -564,7 +561,7 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
   private void handleFunction(Node node) {
     // A block transfer control to its first child if it is not empty.
     checkState(node.isFunction());
-    checkState(node.hasXChildren(3));
+    checkState(node.getChildCount() == 3);
     createEdge(node, Branch.UNCOND,
         computeFallThrough(node.getLastChild()));
     checkState(exceptionHandler.peek() == node);
@@ -997,7 +994,6 @@ public final class ControlFlowAnalysis implements Callback, CompilerPass {
       case FOR:
       case FOR_IN:
       case FOR_OF:
-      case FOR_AWAIT_OF:
       case DO:
       case WHILE:
       case SWITCH:

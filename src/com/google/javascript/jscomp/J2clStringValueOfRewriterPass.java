@@ -42,7 +42,7 @@ final class J2clStringValueOfRewriterPass extends AbstractPeepholeOptimization {
     if (replacement != node) {
       replacement = replacement.useSourceInfoIfMissingFrom(node);
       node.replaceWith(replacement);
-      reportChangeToEnclosingScope(replacement);
+      compiler.reportChangeToEnclosingScope(replacement);
     }
     return replacement;
   }

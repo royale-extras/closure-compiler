@@ -20,8 +20,6 @@ import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 import static com.google.javascript.rhino.testing.TypeSubject.assertType;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.testing.NoninjectingCompiler;
-import com.google.javascript.jscomp.testing.TestExternsBuilder;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.FunctionType;
@@ -47,7 +45,6 @@ import org.junit.runners.JUnit4;
  * </ul>
  */
 @RunWith(JUnit4.class)
-@SuppressWarnings("RhinoNodeGetFirstFirstChild")
 public final class Es6ConvertSuperTest extends CompilerTestCase {
 
   public Es6ConvertSuperTest() {
@@ -79,6 +76,11 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
     return new Es6ConvertSuper(compiler);
+  }
+
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
   }
 
   // Instance `super` resolution
@@ -625,7 +627,7 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     // A
     Node superReplacement = superGetelemReplacement.getFirstChild();
     assertNode(superReplacement)
-        .matchesName("A")
+        .matchesQualifiedName("A")
         .hasLineno(5) // position and length of `super`
         .hasCharno(19)
         .hasLength(5)
@@ -1044,7 +1046,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
                 "}",
                 "",
                 "class B extends A {",
-                "  constructor() { super(...arguments); }",
+                "  /** @param {...?} var_args */",
+                "  constructor(var_args) { super(...arguments); }",
                 "}")));
 
     // get the types we'll need to check
@@ -1148,7 +1151,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
             "}",
             "",
             "class B extends A {",
-            "  constructor() { }",
+            "  /** @param {...?} var_args */",
+            "  constructor(var_args) { }",
             "}"));
     // TODO(bradfordcsmith): Test addition of types in externs.
     // Currently testExternChanges() doesn't set things up correctly for getting the last compiler
@@ -1239,9 +1243,10 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         srcs("/** @interface */ class B extends A { }"),
         expected(
             lines(
-                "/** @interface */", //
+                "/** @interface */",
                 "class B extends A {",
-                "  constructor() { }",
+                "  /** @param {...?} var_args */",
+                "  constructor(var_args) { }",
                 "}")));
   }
 

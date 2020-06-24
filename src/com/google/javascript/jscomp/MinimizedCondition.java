@@ -32,6 +32,8 @@ import com.google.javascript.rhino.Token;
  * Depending on the context, a leading NOT node in front of the conditional
  * may or may not be counted as a cost, so this class provides ways to
  * access minimized versions of both of those abstract syntax trees (ASTs).
+ *
+ * @author blickly@google.com (Ben Lickly)
  */
 class MinimizedCondition {
 
@@ -151,7 +153,7 @@ class MinimizedCondition {
       }
       case AND:
       case OR: {
-          Node complementNode = new Node(n.isAnd() ? Token.OR : Token.AND).srcref(n);
+        Node complementNode = new Node(n.getToken() == Token.AND ? Token.OR : Token.AND).srcref(n);
         MinimizedCondition leftSubtree = computeMinimizedCondition(n.getFirstChild());
         MinimizedCondition rightSubtree = computeMinimizedCondition(n.getLastChild());
         MeasuredNode positive = pickBest(

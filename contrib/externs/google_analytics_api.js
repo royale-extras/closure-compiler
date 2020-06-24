@@ -15,12 +15,7 @@
  */
 
 /**
- * @fileoverview Externs for the Google Classic Analytics API, implemented by
- * https://www.google-analytics.com/ga.js.
- *
- * The externs for the new API (https://www.google-analytics.com/analytics.js)
- * can be found at ./universal_analytics_api.js.
- *
+ * @fileoverview Externs for the Google Classic Analytics API (ga.js).
  * @see https://developers.google.com/analytics/devguides/collection/gajs/gaTrackingOverview
  * @externs
  */

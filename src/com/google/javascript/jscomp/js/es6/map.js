@@ -95,6 +95,10 @@ $jscomp.polyfill('Map',
     if (isConformant()) return NativeMap;
   }
 
+  // We depend on Symbol.iterator, so ensure it's loaded.
+  $jscomp.initSymbolIterator();
+
+
   /** @const {!WeakMap<!Object, string>} */
   var idMap = new WeakMap();
 

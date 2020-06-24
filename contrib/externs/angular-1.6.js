@@ -510,15 +510,6 @@ angular.JQLite.prototype.children = function() {};
 angular.JQLite.prototype.clone = function() {};
 
 /**
- * `cleanData` is an undocumented method that is relied upon for ngUpgrade.
- * Without this extern, clients cannot enable property_renaming for ngUpgrade
- * applications that downgrade components.
- *
- * @param {?} element
- */
-angular.JQLite.prototype.cleanData = function(element) {};
-
-/**
  * @return {!angular.JQLite}
  */
 angular.JQLite.prototype.contents = function() {};
@@ -2012,11 +2003,6 @@ angular.NgModelController.prototype.$formatters;
 angular.NgModelController.prototype.$invalid;
 
 /**
- * @type {!angular.NgModelOptions}
- */
-angular.NgModelController.prototype.$options;
-
-/**
  * @param {!Object} options
  */
 angular.NgModelController.prototype.$overrideModelOptions = function(options) {};
@@ -2123,28 +2109,6 @@ angular.NgModelController.prototype.$commitViewValue = function() {};
  * @type {!Object<string, boolean>|undefined}
  */
 angular.NgModelController.prototype.$pending;
-
-/******************************************************************************
- * NgModelOptions
- *****************************************************************************/
-
-/**
- * @interface
- */
-angular.NgModelOptions = function() {};
-
-
-/**
- * @param {string} optionName
- * @return {*}
- */
-angular.NgModelOptions.prototype.getOption = function(optionName) {};
-
-/**
- * @param {!Object} options
- * @return {!angular.NgModelOptions}
- */
-angular.NgModelOptions.prototype.createChild = function(options) {};
 
 /******************************************************************************
  * FormController
@@ -2328,8 +2292,8 @@ angular.$routeProvider.Params.prototype.controllerAs;
 /** @type {string|function(!Object<string, string>): string|undefined} */
 angular.$routeProvider.Params.prototype.template;
 
-/** @type {string|!Object|function(!Object<string,string>=)|undefined} */
-angular.$routeProvider.Params.prototype.templateUrl;
+/** @type {string|!Object|function(!Object<string,string>=)} */
+angular.$routeProvider.Params.templateUrl;
 
 /** @type {undefined|
  * !Object<string,(string|!angular.Injectable|!angular.$q.Promise)>} */

@@ -18,10 +18,9 @@ package com.google.javascript.refactoring;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.collect.Streams.stream;
-import static java.lang.Math.min;
 
 import com.google.auto.value.AutoValue;
+import com.google.common.base.Ascii;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -30,13 +29,14 @@ import com.google.common.collect.SetMultimap;
 import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.CodePrinter;
 import com.google.javascript.jscomp.CompilerOptions;
+import com.google.javascript.jscomp.NodeTraversal;
+import com.google.javascript.jscomp.NodeTraversal.AbstractPreOrderCallback;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.jscomp.parsing.JsDocInfoParser;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.NonJSDocComment;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.JSType;
 import java.util.Collection;
@@ -49,6 +49,8 @@ import javax.annotation.Nullable;
  * Object representing the fixes to apply to the source code to create the
  * refactoring CL. To create a class, use the {@link Builder} class and helper
  * functions.
+ *
+ * @author mknichel@google.com (Mark Knichel)
  */
 public final class SuggestedFix {
 
@@ -124,8 +126,43 @@ public final class SuggestedFix {
     return sb.toString();
   }
 
+  // TODO(bangert): Find a non-conflicting name.
+  static String getShortNameForRequire(String namespace) {
+    int lastDot = namespace.lastIndexOf('.');
+    if (lastDot == -1) {
+      return namespace;
+    }
+
+    // A few special cases so that we don't end up with code like
+    // "const string = goog.require('goog.string');" which would shadow the built-in string type.
+    String rightmostName = namespace.substring(lastDot + 1);
+    switch (Ascii.toUpperCase(rightmostName)) {
+      case "ARRAY":
+      case "MAP":
+      case "MATH":
+      case "OBJECT":
+      case "PROMISE":
+      case "SET":
+      case "STRING":
+        int secondToLastDot = namespace.lastIndexOf('.', lastDot - 1);
+        String secondToLastName = namespace.substring(secondToLastDot + 1, lastDot);
+        boolean capitalize = Character.isUpperCase(rightmostName.charAt(0));
+        if (capitalize) {
+          secondToLastName = upperCaseFirstLetter(secondToLastName);
+        }
+        return secondToLastName + upperCaseFirstLetter(rightmostName);
+      default:
+        return rightmostName;
+    }
+  }
+
+  static String upperCaseFirstLetter(String w) {
+    return Character.toUpperCase(w.charAt(0)) + w.substring(1);
+  }
+
   /**
-   * Builder class for {@link SuggestedFix} that contains helper functions to manipulate JS nodes.
+   * Builder class for {@link SuggestedFix} that contains helper functions to
+   * manipulate JS nodes.
    */
   public static final class Builder {
     private MatchedNodeInfo matchedNodeInfo = null;
@@ -206,7 +243,12 @@ public final class SuggestedFix {
     }
 
     private Builder insertBefore(Node nodeToInsertBefore, String content, String sortKey) {
-      int startPosition = getStartPositionForNodeConsideringComments(nodeToInsertBefore);
+      int startPosition = nodeToInsertBefore.getSourceOffset();
+      JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(nodeToInsertBefore);
+      // ClosureRewriteModule adds jsDOC everywhere.
+      if (jsDoc != null && jsDoc.getOriginalCommentString() != null) {
+        startPosition = jsDoc.getOriginalCommentPosition();
+      }
       Preconditions.checkNotNull(nodeToInsertBefore.getSourceFileName(),
           "No source file name for node: %s", nodeToInsertBefore);
       replacements.put(
@@ -225,16 +267,18 @@ public final class SuggestedFix {
 
     /** Deletes a node and its contents from the source file. */
     private Builder delete(Node n, boolean deleteWhitespaceBefore) {
-      int startPosition = getStartPositionForNodeConsideringComments(n);
-      int startOffsetWithoutComments = n.getSourceOffset();
-      int length = (startOffsetWithoutComments - startPosition) + n.getLength();
-
-      if (n.getNext() != null
-          && NodeUtil.getBestJSDocInfo(n.getNext()) == null
-          && n.getNext().getNonJSDocComment() == null) {
+      int startPosition = n.getSourceOffset();
+      int length;
+      if (n.getNext() != null && NodeUtil.getBestJSDocInfo(n.getNext()) == null) {
         length = n.getNext().getSourceOffset() - startPosition;
+      } else {
+        length = n.getLength();
       }
-
+      JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(n);
+      if (jsDoc != null) {
+        length += (startPosition - jsDoc.getOriginalCommentPosition());
+        startPosition = jsDoc.getOriginalCommentPosition();
+      }
       // Variable declarations and string keys require special handling since the node doesn't
       // contain enough if it has a child. The NAME node in a var/let/const declaration doesn't
       // include its child in its length, and the code needs to know how to delete the commas.
@@ -243,7 +287,7 @@ public final class SuggestedFix {
       // so that it can be reused in other methods.
       if ((n.isName() && NodeUtil.isNameDeclaration(n.getParent())) || n.isStringKey()) {
         if (n.getNext() != null) {
-          length = getStartPositionForNodeConsideringComments(n.getNext()) - startPosition;
+          length = n.getNext().getSourceOffset() - startPosition;
         } else if (n.hasChildren()) {
           Node child = n.getFirstChild();
           length = (child.getSourceOffset() + child.getLength()) - startPosition;
@@ -327,7 +371,7 @@ public final class SuggestedFix {
             nodeToRename = nodeToRename.getParent();
           }
         }
-      } else if (n.isStringKey() || n.isName()) {
+      } else if (n.isStringKey()) {
         nodeToRename = n;
       } else if (n.isString()) {
         checkState(n.getParent().isGetProp(), n);
@@ -349,11 +393,14 @@ public final class SuggestedFix {
     public Builder replaceRange(Node first, Node last, String newContent) {
       checkState(first.getParent() == last.getParent());
 
-      int start = getStartPositionForNodeConsideringComments(first);
-      if (start == 0) {
-        // if there are file-level comments at the top of the file, we do not wish to remove them
+      int start;
+      JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(first);
+      if (jsdoc == null) {
         start = first.getSourceOffset();
+      } else {
+        start = jsdoc.getOriginalCommentPosition();
       }
+
       int end = last.getSourceOffset() + last.getLength();
       int length = end - start;
       replacements.put(
@@ -457,7 +504,7 @@ public final class SuggestedFix {
       JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(n);
       if (jsDoc != null) {
         startPosition = jsDoc.getOriginalCommentPosition();
-        length = jsDoc.getOriginalCommentString().length();
+        length = n.getSourceOffset() - jsDoc.getOriginalCommentPosition();
       }
       replacements.put(
           n.getSourceFileName(), CodeReplacement.create(startPosition, length, newJsDoc));
@@ -528,7 +575,13 @@ public final class SuggestedFix {
             position == i, "The specified position must be less than the number of arguments.");
         startPosition = n.getSourceOffset() + n.getLength() - 1;
       } else {
-        startPosition = getStartPositionForNodeConsideringComments(argument);
+        JSDocInfo jsDoc = argument.getJSDocInfo();
+        if (jsDoc != null) {
+          // Remove any cast or associated JS Doc if it exists.
+          startPosition = jsDoc.getOriginalCommentPosition();
+        } else {
+          startPosition = argument.getSourceOffset();
+        }
       }
 
       String newContent = Joiner.on(", ").join(args);
@@ -548,8 +601,7 @@ public final class SuggestedFix {
      *     considers the comment to belong to the next argument.
      */
     public Builder deleteArgument(Node n, int position) {
-      checkArgument(
-          n.isCall() || n.isNew(), "deleteArgument is only applicable to function call nodes.");
+      checkArgument(n.isCall(), "deleteArgument is only applicable to function call nodes.");
 
       // A CALL node's first child is the name of the function being called, and subsequent children
       // are the arguments being passed to that function.
@@ -578,8 +630,18 @@ public final class SuggestedFix {
           startOfArgumentToRemove = argument.getSourceOffset() + argument.getLength();
         } else if (i == position) {
           if (position == 0) {
-            startOfArgumentToRemove = getStartPositionForNodeConsideringComments(argument);
+            startOfArgumentToRemove = argument.getSourceOffset();
+
+            // If we have a prefix jsdoc, back up further and remove that too.
+            JSDocInfo jsDoc = argument.getJSDocInfo();
+            if (jsDoc != null) {
+              int jsDocPosition = jsDoc.getOriginalCommentPosition();
+              if (jsDocPosition < startOfArgumentToRemove) {
+                startOfArgumentToRemove = jsDocPosition;
+              }
+            }
           }
+
           endOfArgumentToRemove = argument.getSourceOffset() + argument.getLength();
         } else if (i > position) {
           if (position == 0) {
@@ -601,52 +663,33 @@ public final class SuggestedFix {
       return this;
     }
 
-    /** Adds a goog.require for the given namespace to the file if it does not already exist. */
-    public Builder addGoogRequire(Match m, String namespace, ScriptMetadata scriptMetadata) {
-      final String alias;
-      if (scriptMetadata.supportsRequireAliases()) {
-        String existingAlias = scriptMetadata.getAlias(namespace);
-        if (existingAlias != null) {
-          /**
-           * Each fix muct be independently valid, so go through the steps of adding a require even
-           * if one may already exist or have been added by another fix.
-           */
-          alias = existingAlias;
-        } else if (namespace.indexOf('.') == -1) {
-          /**
-           * For unqualified names, the exisiting references will still be valid so long as we keep
-           * the same name for the alias.
-           */
-          alias = namespace;
-        } else {
-          alias =
-              stream(RequireAliasGenerator.over(namespace))
-                  .filter((a) -> !scriptMetadata.usesName(a))
-                  .findFirst()
-                  .orElseThrow(AssertionError::new);
-        }
-      } else {
-        alias = null;
-      }
+    public Builder addLhsToGoogRequire(Match m, String namespace) {
+      Node existingNode = findGoogRequireNode(m.getNode(), m.getMetadata(), namespace);
+      checkState(existingNode.isExprResult(), existingNode);
+      checkState(existingNode.getFirstChild().isCall(), existingNode.getFirstChild());
 
+      String shortName = getShortNameForRequire(namespace);
+      Node newNode = IR.constNode(IR.name(shortName), existingNode.getFirstChild().cloneTree());
+      replace(existingNode, newNode, m.getMetadata().getCompiler());
+      return this;
+    }
+
+    /**
+     * Adds a goog.require for the given namespace to the file if it does not already exist.
+     */
+    public Builder addGoogRequire(Match m, String namespace) {
+      Node node = m.getNode();
       NodeMetadata metadata = m.getMetadata();
       Node existingNode = findGoogRequireNode(m.getNode(), metadata, namespace);
-
       if (existingNode != null) {
-        // TODO(b/139953612): Destructured goog.requires are not supported.
-
-        // Add an alias to a naked require if allowed in this file.
-        if (existingNode.isExprResult() && alias != null) {
-          Node newNode = IR.constNode(IR.name(alias), existingNode.getFirstChild().cloneTree());
-          replace(existingNode, newNode, m.getMetadata().getCompiler());
-          scriptMetadata.addAlias(namespace, alias);
-        }
-
         return this;
       }
 
       // Find the right goog.require node to insert this after.
-      Node script = scriptMetadata.getScript();
+      Node script = NodeUtil.getEnclosingScript(node);
+      if (script == null) {
+        return this;
+      }
       if (script.getFirstChild().isModuleBody()) {
         script = script.getFirstChild();
       }
@@ -655,9 +698,10 @@ public final class SuggestedFix {
           IR.getprop(IR.name("goog"), IR.string("require")),
           IR.string(namespace));
 
-      if (alias != null) {
-        googRequireNode = IR.constNode(IR.name(alias), googRequireNode);
-        scriptMetadata.addAlias(namespace, alias);
+      String shortName = getShortNameForRequire(namespace);
+      boolean useAliasedRequire = usesConstGoogRequires(metadata, script);
+      if (useAliasedRequire) {
+        googRequireNode = IR.constNode(IR.name(shortName), googRequireNode);
       } else {
         googRequireNode = IR.exprResult(googRequireNode);
       }
@@ -676,7 +720,7 @@ public final class SuggestedFix {
           Node grandchild = child.getFirstChild();
           if (Matchers.googModuleOrProvide().matches(grandchild, metadata)) {
             lastModuleOrProvideNode = grandchild;
-          } else if (Matchers.googRequirelike().matches(grandchild, metadata)) {
+          } else if (Matchers.googRequire().matches(grandchild, metadata)) {
             lastGoogRequireNode = grandchild;
             if (grandchild.getLastChild().isString()
                 && namespace.compareTo(grandchild.getLastChild().getString()) < 0) {
@@ -686,14 +730,14 @@ public final class SuggestedFix {
           }
         } else if (NodeUtil.isNameDeclaration(child)
             && child.getFirstFirstChild() != null
-            && Matchers.googRequirelike().matches(child.getFirstFirstChild(), metadata)) {
+            && Matchers.googRequire().matches(child.getFirstFirstChild(), metadata)) {
           lastGoogRequireNode = child.getFirstFirstChild();
           String requireName = child.getFirstChild().getString();
           String originalName = child.getFirstChild().getOriginalName();
           if (originalName != null) {
             requireName = originalName;
           }
-          if (alias.compareTo(requireName) < 0) {
+          if (shortName.compareTo(requireName) < 0) {
             nodeToInsertBefore = child;
             break;
           }
@@ -735,6 +779,68 @@ public final class SuggestedFix {
     }
 
     /**
+     * If the namespace has a short name, return it. Otherwise return the full name.
+     *
+     * <p>Assumes {@link addGoogRequire} was already called.
+     */
+    public String getRequireName(Match m, String namespace) {
+      Node existingNode = findGoogRequireNode(m.getNode(), m.getMetadata(), namespace);
+      if (existingNode != null && (existingNode.isConst() || existingNode.isVar())) {
+        Node lhsAssign = existingNode.getFirstChild();
+        String originalName = lhsAssign.getOriginalName();
+        if (originalName != null) {
+          return originalName; // The import was renamed inside a module.
+        }
+        return lhsAssign.getQualifiedName();
+      }
+      Node script = NodeUtil.getEnclosingScript(m.getNode());
+
+      if (script != null && usesConstGoogRequires(m.getMetadata(), script)) {
+        return getShortNameForRequire(namespace);
+      }
+      return namespace;
+    }
+
+    /** True if the file uses {@code const foo = goog.require('namespace.foo');} */
+    private boolean usesConstGoogRequires(final NodeMetadata metadata, Node script) {
+      if (script.isModuleBody()) {
+        return true;
+      }
+      HasAliasedRequireOrModuleCallback callback = new HasAliasedRequireOrModuleCallback(metadata);
+      NodeTraversal.traverse(metadata.getCompiler(), script, callback);
+      return callback.getUsesAliasedRequires();
+    }
+
+    /**
+     * Merge names from the lhs of |requireToMergeFrom|, which must be a destructuring require, if
+     * there is another destructuring require that its lhs can be merged into. If not, then no
+     * change is applied.
+     */
+    Builder mergeGoogRequire(
+        Node requireToMergeFrom, NodeMetadata m, String namespace, AbstractCompiler compiler) {
+      checkArgument(requireToMergeFrom.getFirstChild().isDestructuringLhs(), requireToMergeFrom);
+      checkArgument(requireToMergeFrom.getFirstFirstChild().isObjectPattern(), requireToMergeFrom);
+
+      Node googRequireNode = findGoogRequireNode(requireToMergeFrom, m, namespace);
+      if (googRequireNode == null) {
+        return this;
+      }
+      if (googRequireNode.isExprResult()) {
+        return this;
+      }
+      if (googRequireNode.getFirstChild().isDestructuringLhs()) {
+        Node objectPattern = googRequireNode.getFirstFirstChild();
+        Node newObjectPattern = objectPattern.cloneTree();
+        for (Node name : requireToMergeFrom.getFirstFirstChild().children()) {
+          newObjectPattern.addChildToBack(name.cloneTree());
+        }
+        this.replace(objectPattern, newObjectPattern, compiler);
+        this.deleteWithoutRemovingWhitespace(requireToMergeFrom);
+      }
+      return this;
+    }
+
+    /**
      * Removes a goog.require for the given namespace to the file if it
      * already exists.
      */
@@ -758,25 +864,23 @@ public final class SuggestedFix {
      */
     @Nullable
     private static Node findGoogRequireNode(Node n, NodeMetadata metadata, String namespace) {
-      Node script = metadata.getCompiler().getScriptNode(n.getSourceFileName());
+      Node script = NodeUtil.getEnclosingScript(n);
       if (script.getFirstChild().isModuleBody()) {
         script = script.getFirstChild();
       }
 
       for (Node child : script.children()) {
         if (NodeUtil.isExprCall(child)
-            && Matchers.googRequirelike(namespace).matches(child.getFirstChild(), metadata)) {
+            && Matchers.googRequire(namespace).matches(child.getFirstChild(), metadata)) {
           return child;
         }
       }
 
       for (Node child : script.children()) {
         if (NodeUtil.isNameDeclaration(child)
-            // TODO(b/139953612): respect destructured goog.requires
-            && !child.getFirstChild().isDestructuringLhs()
             && child.getFirstChild().getLastChild() != null
-            && Matchers.googRequirelike(namespace)
-                .matches(child.getFirstChild().getLastChild(), metadata)) {
+            && Matchers.googRequire(namespace).matches(
+                child.getFirstChild().getLastChild(), metadata)) {
           return child;
         }
       }
@@ -843,20 +947,33 @@ public final class SuggestedFix {
     public abstract boolean isInClosurizedFile();
   }
 
-  /**
-   * Helper function to return the source offset of this node considering that JSDoc comments,
-   * non-JDDoc comments, or both may or may not be attached.
-   */
-  private static int getStartPositionForNodeConsideringComments(Node node) {
-    JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(node);
-    NonJSDocComment associatedNonJSDocComment = node.getNonJSDocComment();
-    int start = node.getSourceOffset();
-    if (jsdoc != null) {
-      start = jsdoc.getOriginalCommentPosition();
+  /** Traverse an AST and find {@code goog.module} or {@code const X = goog.require('...');}. */
+  private static class HasAliasedRequireOrModuleCallback extends AbstractPreOrderCallback {
+    private boolean usesAliasedRequires;
+    final NodeMetadata metadata;
+
+    public HasAliasedRequireOrModuleCallback(NodeMetadata metadata) {
+      this.usesAliasedRequires = false;
+      this.metadata = metadata;
     }
-    if (associatedNonJSDocComment != null) {
-      start = min(start, associatedNonJSDocComment.getStartPosition().getOffset());
+
+    boolean getUsesAliasedRequires() {
+      return usesAliasedRequires;
     }
-    return start;
+
+    @Override
+    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
+      if (Matchers.googModule().matches(n, metadata) || isAliasedRequire(n, metadata)) {
+        usesAliasedRequires = true;
+        return false;
+      }
+      return true;
+    }
+
+    private static boolean isAliasedRequire(Node node, NodeMetadata metadata) {
+      return NodeUtil.isNameDeclaration(node)
+          && node.getFirstFirstChild() != null
+          && Matchers.googRequire().matches(node.getFirstFirstChild(), metadata);
+    }
   }
 }

@@ -98,7 +98,9 @@ public final class CheckEs6ModuleFileStructure extends AbstractPreOrderCallback
   private boolean visitExprResult(NodeTraversal t, Node exprResult, Node parent) {
     if (parent.isModuleBody() && exprResult.getFirstChild().isCall()) {
       Node call = exprResult.getFirstChild();
-      if (call.getFirstChild().matchesQualifiedName("goog.declareModuleId")) {
+      // TODO(johnplaisted): Remove declareNamespace.
+      if (call.getFirstChild().matchesQualifiedName("goog.module.declareNamespace")
+          || call.getFirstChild().matchesQualifiedName("goog.declareModuleId")) {
         checkOrder(t, call, OrderedStatement.DECLARE_MODULE_ID);
         return false;
       } else if (call.getFirstChild().matchesQualifiedName("goog.require")) {

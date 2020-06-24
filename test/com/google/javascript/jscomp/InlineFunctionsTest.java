@@ -17,7 +17,6 @@
 package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.CompilerOptions.Reach;
-import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -28,12 +27,15 @@ import org.junit.runners.JUnit4;
  *
  * @author johnlenz@google.com (john lenz)
  */
+
 @RunWith(JUnit4.class)
 public class InlineFunctionsTest extends CompilerTestCase {
-  private Reach inliningReach;
-  private boolean assumeStrictThis;
-  private boolean assumeMinimumCapture;
-  private int maxSizeAfterInlining;
+  Reach inliningReach;
+  final boolean allowExpressionDecomposition = true;
+  final boolean allowFunctionExpressionInlining = true;
+  boolean assumeStrictThis;
+  boolean assumeMinimumCapture;
+  int maxSizeAfterInlining;
 
   static final String EXTERNS = "/** @nosideeffects */ function nochg(){}\nfunction chg(){}\n";
 
@@ -2482,6 +2484,10 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "foo(window, f); f(1)",
          "function f(x) {return x} " +
          "foo(window, f); 1");
+    // a reference passed to JSCompiler_ObjectPropertyString prevents inlining
+    // as well.
+    testSame("function f(x) {return x} " +
+             "new JSCompiler_ObjectPropertyString(window, f); f(1)");
   }
 
   @Test
@@ -2536,7 +2542,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
   @Test
   public void testInlineObject() {
     disableCompareAsTree();
-    enableComputeSideEffects();
+    enableMarkNoSideEffects();
 
     this.inliningReach = Reach.LOCAL_ONLY;
     assumeStrictThis = true;
@@ -2611,9 +2617,9 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "})(jQuery)"),
         lines(
             "(function($){",
-            "  $.fn.multicheck=function(options) {",
+            "  $.fn.multicheck=function(options$jscomp$1) {",
             "    {",
-            "      options.checkboxes=$(this).siblings(':checkbox');",
+            "      options$jscomp$1.checkboxes=$(this).siblings(':checkbox');",
             "      {",
             "        $(this).data('checkboxes');",
             "      }",
@@ -2784,71 +2790,79 @@ public class InlineFunctionsTest extends CompilerTestCase {
   // Inline a single reference function into deeper modules
   @Test
   public void testCrossModuleInlining1() {
-    test(
-        JSChunkGraphBuilder.forChain()
-            // m1
-            .addChunk("function foo(){return f(1)+g(2)+h(3);}")
-            // m2
-            .addChunk("foo()")
-            .build(),
-        new String[] {
-          // m1
-          "",
-          // m2
-          "f(1)+g(2)+h(3);"
-        });
+    test(createModuleChain(
+             // m1
+             "function foo(){return f(1)+g(2)+h(3);}",
+             // m2
+             "foo()"
+             ),
+         new String[] {
+             // m1
+             "",
+             // m2
+             "f(1)+g(2)+h(3);"
+            }
+        );
   }
 
   // Inline a single reference function into shallow modules, only if it
   // is cheaper than the call itself.
   @Test
   public void testCrossModuleInlining2() {
-    testSame(
-        JSChunkGraphBuilder.forChain()
-            .addChunk("foo()")
-            .addChunk("function foo(){return f(1)+g(2)+h(3);}")
-            .build());
+    testSame(createModuleChain(
+                // m1
+                "foo()",
+                // m2
+                "function foo(){return f(1)+g(2)+h(3);}"
+                )
+            );
 
-    test(
-        JSChunkGraphBuilder.forChain()
-            // m1
-            .addChunk("foo()")
-            // m2
-            .addChunk("function foo(){return f();}")
-            .build(),
-        new String[] {
-          // m1
-          "f();",
-          // m2
-          ""
-        });
+    test(createModuleChain(
+             // m1
+             "foo()",
+             // m2
+             "function foo(){return f();}"
+             ),
+         new String[] {
+             // m1
+             "f();",
+             // m2
+             ""
+            }
+        );
   }
 
   // Inline a multi-reference functions into shallow modules, only if it
   // is cheaper than the call itself.
   @Test
   public void testCrossModuleInlining3() {
-    testSame(
-        JSChunkGraphBuilder.forChain()
-            .addChunk("foo()")
-            .addChunk("function foo(){return f(1)+g(2)+h(3);}")
-            .addChunk("foo()")
-            .build());
+    testSame(createModuleChain(
+                // m1
+                "foo()",
+                // m2
+                "function foo(){return f(1)+g(2)+h(3);}",
+                // m3
+                "foo()"
+                )
+            );
 
-    test(
-        JSChunkGraphBuilder.forChain()
-            .addChunk("foo()")
-            .addChunk("function foo(){return f();}")
-            .addChunk("foo()")
-            .build(),
-        new String[] {
-          // m1
-          "f();",
-          // m2
-          "",
-          // m3
-          "f();"
-        });
+    test(createModuleChain(
+             // m1
+             "foo()",
+             // m2
+             "function foo(){return f();}",
+             // m3
+             "foo()"
+             ),
+         new String[] {
+             // m1
+             "f();",
+             // m2
+             "",
+             // m3
+             "f();"
+            }
+         );
   }
 
   @Test
@@ -3522,7 +3536,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testSpreadCall_withKnownArray_isNotInlined_andFunctionIsPreserved() {
+  public void testSpreadCall() {
     testSame(
         lines(
             "function foo(x, y) {",
@@ -3530,10 +3544,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}",
             "var args = [0, 1];",
             "foo(...args);"));
-  }
 
-  @Test
-  public void testSpreadCall_withKnownArray_andLiteralArg_isNotInlined_andFunctionIsPreserved() {
     testSame(
         lines(
             "function foo(x, y, z) {",
@@ -3541,20 +3552,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}",
             "var args = [0, 1];",
             "foo(2, ...args);"));
-  }
 
-  @Test
-  public void testSpreadCall_withArrayLiteral_isNotInlined_andFunctionIsPreserved() {
     testSame(
         lines(
             "function foo(x, y) {",
             "  return x + y;",
             "}",
             "foo(...[0, 1]);"));
-  }
 
-  @Test
-  public void testSpreadCall_withMultipleSpreads_isNotInlined_andFunctionIsPreserved() {
     testSame(
         lines(
             "function foo(x, y) {",
@@ -3562,122 +3567,24 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}",
             "var args = [0];",
             "foo(...args, ...[1]);"));
-  }
 
-  @Test
-  public void testSpreadCall_withArrayLiteral_forRestParam_isNotInlined_andFunctionIsPreserved() {
     testSame(
         lines(
             "function foo(...args) {",
             "  return args.length;",
             "}",
             "foo(...[0,1]);"));
-  }
 
-  @Test
-  public void testSpreadCall_withKnownArray_intoIife_isNotInlined() {
-    testSame(
-        lines(
-            "var args = [0, 1];", //
-            "(function foo(x, y) { return x + y; })(...args);"));
-  }
+    testSame("var args = [0, 1]; (function foo(x, y) { return x + y; })(...args);");
 
-  @Test
-  public void testSpreadCall_withKnownArray_andLiteralArg_intoIife_isNotInlined() {
     testSame(
         lines(
             "var args = [0, 1];",
             "(function foo(x, y, z) {",
             "  return x + y + z;",
             "})(2, ...args);"));
-  }
 
-  @Test
-  public void testSpreadCall_withArrayLiteral_intoIife_isNotInlined() {
     testSame("(function (x, y) {  return x + y; })(...[0, 1]);");
-  }
-
-  @Test
-  public void testSpreadCall_withSpreadAsIndirectDescendent_call_isInlined() {
-    test(
-        lines(
-            "function foo(x) {", //
-            "  return x;",
-            "}",
-            "",
-            "foo(bar(...arg));"),
-        lines("bar(...arg);"));
-  }
-
-  @Test
-  public void testSpreadCall_withSpreadAsIndirectDescendent_arrrayLit_isInlined() {
-    test(
-        lines(
-            "function foo(x) {", //
-            "  return x;",
-            "}",
-            "",
-            "foo([...arg]);"),
-        lines("[...arg];"));
-  }
-
-  @Test
-  public void testSpreadCall_withBlockInlinableFunction_asSpreadArg_isInlined() {
-    test(
-        lines(
-            "function foo(x) {", //
-            "  qux();", // Something with a side-effect.
-            "  return x;",
-            "}",
-            "",
-            "bar(...foo(arg));"),
-        lines(
-            "var JSCompiler_temp_const$jscomp$0 = bar;",
-            "var JSCompiler_inline_result$jscomp$1;",
-            "{",
-            "  var x$jscomp$inline_2 = arg;",
-            "  qux();",
-            "  JSCompiler_inline_result$jscomp$1 = x$jscomp$inline_2;",
-            "}",
-            "",
-            "JSCompiler_temp_const$jscomp$0(...JSCompiler_inline_result$jscomp$1);"));
-  }
-
-  @Test
-  public void testSpreadCall_withBlockInlinableFunction_withPrecedingSpreadArg_isInlined() {
-    test(
-        lines(
-            "function foo(x) {", //
-            "  qux();", // Something with a side-effect.
-            "  return x;",
-            "}",
-            "",
-            "bar(...zap(), foo(arg));"),
-        lines(
-            "var JSCompiler_temp_const$jscomp$1 = bar;",
-            "var JSCompiler_temp_const$jscomp$0 = [...zap()];",
-            "var JSCompiler_inline_result$jscomp$2;",
-            "{",
-            "  var x$jscomp$inline_3 = arg;",
-            "  qux();",
-            "  JSCompiler_inline_result$jscomp$2 = x$jscomp$inline_3;",
-            "}",
-            "",
-            "JSCompiler_temp_const$jscomp$1(",
-            "  ...JSCompiler_temp_const$jscomp$0,",
-            "  JSCompiler_inline_result$jscomp$2);"));
-  }
-
-  @Test
-  public void methodCallCannotBeDecomposed() {
-    testSame(
-        lines(
-            "function foo(x) {", //
-            "  qux();", // Something with a side-effect.
-            "  return x;",
-            "}",
-            "",
-            "bar.method(foo(arg));"));
   }
 
   @Test

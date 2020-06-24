@@ -42,6 +42,7 @@ import java.util.Set;
  * the definition of {@code A} at {@code A = foo()} if at least one path from
  * the use node reaches that definition and it is the last definition before
  * the use on that path.
+ *
  */
 class MaybeReachingVariableUse extends
     DataFlowAnalysis<Node, MaybeReachingVariableUse.ReachingUses> {
@@ -55,7 +56,7 @@ class MaybeReachingVariableUse extends
       ControlFlowGraph<Node> cfg,
       Scope jsScope,
       AbstractCompiler compiler,
-      SyntacticScopeCreator scopeCreator) {
+      Es6SyntacticScopeCreator scopeCreator) {
     super(cfg, new ReachingUsesJoinOp());
     this.escaped = new HashSet<>();
     this.allVarsInFn = new HashMap<>();
@@ -166,7 +167,7 @@ class MaybeReachingVariableUse extends
   }
 
   private boolean hasExceptionHandler(Node cfgNode) {
-    List<? extends DiGraphEdge<Node, Branch>> branchEdges = getCfg().getOutEdges(cfgNode);
+    List<DiGraphEdge<Node, Branch>> branchEdges = getCfg().getOutEdges(cfgNode);
     for (DiGraphEdge<Node, Branch> edge : branchEdges) {
       if (edge.getValue() == Branch.ON_EX) {
         return true;
@@ -199,13 +200,16 @@ class MaybeReachingVariableUse extends
       case WHILE:
       case DO:
       case IF:
+        computeMayUse(
+            NodeUtil.getConditionExpression(n), cfgNode, output, conditional);
+        return;
+
       case FOR:
         computeMayUse(NodeUtil.getConditionExpression(n), cfgNode, output, conditional);
         return;
 
       case FOR_IN:
       case FOR_OF:
-      case FOR_AWAIT_OF:
         // for(x in y) {...}
         Node lhs = n.getFirstChild();
         Node rhs = lhs.getNext();
@@ -225,7 +229,6 @@ class MaybeReachingVariableUse extends
 
       case AND:
       case OR:
-      case COALESCE:
         computeMayUse(n.getLastChild(), cfgNode, output, true);
         computeMayUse(n.getFirstChild(), cfgNode, output, conditional);
         return;

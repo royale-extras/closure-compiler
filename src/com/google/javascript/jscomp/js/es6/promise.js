@@ -16,8 +16,6 @@
 
 /**
  * @fileoverview Brings in all Promise polyfills.
- * @suppress {uselessCode}
  */
 'require es6/promise/promise';
-'require es6/promise/allSettled';
 'require es6/promise/finally';

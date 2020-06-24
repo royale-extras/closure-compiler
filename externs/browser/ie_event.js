@@ -71,7 +71,7 @@ Event.prototype.propertyName;
 /** @type {string} */
 Event.prototype.qualifier;
 
-/** @type {?} */
+/** @type {number} */
 Event.prototype.reason;
 
 /** @type {Object<*>} */
@@ -135,13 +135,13 @@ MSPointerPoint.prototype.pointerType;
  */
 function MSPointerEvent() {}
 
-/** @const {number} */
+/** @type {number} */
 MSPointerEvent.MSPOINTER_TYPE_MOUSE;
 
-/** @const {number} */
+/** @type {number} */
 MSPointerEvent.MSPOINTER_TYPE_PEN;
 
-/** @const {number} */
+/** @type {number} */
 MSPointerEvent.MSPOINTER_TYPE_TOUCH;
 
 /** @type {number} */

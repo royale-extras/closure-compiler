@@ -54,13 +54,6 @@ Element.prototype.setPointerCapture = function(pointerId) {};
  */
 Element.prototype.releasePointerCapture = function(pointerId) {};
 
-/**
- * @param {number} pointerId
- * @see https://www.w3.org/TR/pointerevents/#dom-element-haspointercapture
- * @return {boolean}
- */
-Element.prototype.hasPointerCapture = function(pointerId) {};
-
 
 /**
  * @record
@@ -127,13 +120,13 @@ PointerEvent.prototype.pointerType;
 PointerEvent.prototype.isPrimary;
 
 // Microsoft pointerType values
-/** @const {string} */
+/** @type {string} */
 PointerEvent.prototype.MSPOINTER_TYPE_TOUCH;
 
-/** @const {string} */
+/** @type {string} */
 PointerEvent.prototype.MSPOINTER_TYPE_PEN;
 
-/** @const {string} */
+/** @type {string} */
 PointerEvent.prototype.MSPOINTER_TYPE_MOUSE;
 
 /**

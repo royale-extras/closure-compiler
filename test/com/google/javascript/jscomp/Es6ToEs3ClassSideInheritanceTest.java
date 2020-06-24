@@ -42,6 +42,11 @@ public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
     return new Es6ToEs3ClassSideInheritance(compiler);
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testSimple() {
     test(
@@ -240,6 +245,7 @@ public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
             "/** @constructor @extends {Example} */",
             "function Subclass() {}",
             "",
+            "/** @type {string} @suppress {visibility} */",
             "Subclass.property;",
             "$jscomp.inherits(Subclass, Example);"));
   }
@@ -274,6 +280,7 @@ public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
             "",
             "/** @constructor @extends {TestCase.A} */",
             "function Subclass() {}",
+            "/** @type {string} @suppress {visibility} */",
             "Subclass.property;",
             "$jscomp.inherits(Subclass, TestCase.A);"));
   }
@@ -350,11 +357,13 @@ public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
             "",
             "/** @constructor @extends {A} */",
             "function B() {}",
+            "/** @type {string} @suppress {visibility} */",
             "B.property;",
             "$jscomp.inherits(B, A);",
             "",
             "/** @constructor @extends {B} */",
             "function C() {}",
+            "/** @type {string} @suppress {visibility} */",
             "C.property;",
             "$jscomp.inherits(C, B);",
             ""));
@@ -439,6 +448,7 @@ public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
             "/** @constructor @extends {Example} */",
             "function Subclass() {}",
             "",
+            "/** @type {?} @suppress {visibility} */",
             "Subclass.property;",
             "$jscomp.inherits(Subclass, Example);"));
   }

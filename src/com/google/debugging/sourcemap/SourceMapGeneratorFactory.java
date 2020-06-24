@@ -15,6 +15,9 @@
  */
 package com.google.debugging.sourcemap;
 
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 public final class SourceMapGeneratorFactory {
 
   /**

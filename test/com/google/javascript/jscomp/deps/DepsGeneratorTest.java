@@ -19,7 +19,6 @@ package com.google.javascript.jscomp.deps;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.javascript.jscomp.testing.JSCompCorrespondences.DESCRIPTION_EQUALITY;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -131,6 +130,51 @@ public final class DepsGeneratorTest {
     srcs.add(
         SourceFile.fromCode(
             "/base/javascript/foo/foo.js", "goog.declareModuleId('my.namespace');\nexport {};"));
+    srcs.add(
+        SourceFile.fromCode(
+            "/base/javascript/closure/goog/googmodule.js",
+            LINE_JOINER.join(
+                "goog.module('my.goog.module');",
+                "const namespace = goog.require('my.namespace');")));
+    DepsGenerator depsGenerator =
+        new DepsGenerator(
+            ImmutableList.of(),
+            srcs,
+            DepsGenerator.InclusionStrategy.ALWAYS,
+            "/base/javascript/closure",
+            errorManager,
+            new ModuleLoader(
+                null,
+                ImmutableList.of("/base/"),
+                ImmutableList.of(),
+                BrowserModuleResolver.FACTORY,
+                ModuleLoader.PathResolver.ABSOLUTE));
+    String output = depsGenerator.computeDependencyCalls();
+
+    assertNoWarnings();
+
+    // Write the output.
+    assertWithMessage("There should be output").that(output).isNotEmpty();
+
+    // Write the expected output.
+    String expected =
+        LINE_JOINER.join(
+            "goog.addDependency('../foo/foo.js', ['my.namespace'], "
+                + "[], {'lang': 'es6', 'module': 'es6'});",
+            "goog.addDependency('goog/googmodule.js', ['my.goog.module'], ['my.namespace'], "
+                + "{'lang': 'es6', 'module': 'goog'});",
+            "");
+
+    assertThat(output).isEqualTo(expected);
+  }
+
+  @Test
+  public void testEs6ModuleDeclareNamespace() throws Exception {
+    List<SourceFile> srcs = new ArrayList<>();
+    srcs.add(
+        SourceFile.fromCode(
+            "/base/javascript/foo/foo.js",
+            "goog.module.declareNamespace('my.namespace');\nexport {};"));
     srcs.add(
         SourceFile.fromCode(
             "/base/javascript/closure/goog/googmodule.js",
@@ -383,28 +427,28 @@ public final class DepsGeneratorTest {
   @Test
   public void testMergeStrategyAlways() throws Exception {
     String result = testMergeStrategyHelper(DepsGenerator.InclusionStrategy.ALWAYS);
-    assertThat(result).contains("['a']");
-    assertThat(result).contains("['b']");
-    assertThat(result).contains("['c']");
-    assertThat(result).contains("d.js");
+    assertContains("['a']", result);
+    assertContains("['b']", result);
+    assertContains("['c']", result);
+    assertContains("d.js", result);
   }
 
   @Test
   public void testMergeStrategyWhenInSrcs() throws Exception {
     String result = testMergeStrategyHelper(DepsGenerator.InclusionStrategy.WHEN_IN_SRCS);
-    assertThat(result).doesNotContain("['a']");
-    assertThat(result).contains("['b']");
-    assertThat(result).contains("['c']");
-    assertThat(result).doesNotContain("d.js");
+    assertNotContains("['a']", result);
+    assertContains("['b']", result);
+    assertContains("['c']", result);
+    assertNotContains("d.js", result);
   }
 
   @Test
   public void testMergeStrategyDoNotDuplicate() throws Exception {
     String result = testMergeStrategyHelper(DepsGenerator.InclusionStrategy.DO_NOT_DUPLICATE);
-    assertThat(result).doesNotContain("['a']");
-    assertThat(result).doesNotContain("['b']");
-    assertThat(result).contains("['c']");
-    assertThat(result).doesNotContain("d.js");
+    assertNotContains("['a']", result);
+    assertNotContains("['b']", result);
+    assertContains("['c']", result);
+    assertNotContains("d.js", result);
   }
 
   private String testMergeStrategyHelper(DepsGenerator.InclusionStrategy mergeStrategy)
@@ -577,12 +621,8 @@ public final class DepsGeneratorTest {
     SourceFile src1 = SourceFile.fromCode("src1.js",
         "goog.require('b');\n");
 
-    doErrorMessagesRun(
-        ImmutableList.of(dep1),
-        ImmutableList.of(src1),
-        true /* fatal */,
-        "Namespace \"b\" is required but never provided.\n"
-            + "You need to pass a library that has it in srcs or exports to your target's deps.");
+    doErrorMessagesRun(ImmutableList.of(dep1), ImmutableList.of(src1), true /* fatal */,
+        "Namespace \"b\" is required but never provided.");
   }
 
   @Test
@@ -604,24 +644,46 @@ public final class DepsGeneratorTest {
         "Could not find file \"./missing.js\".");
   }
 
+  private void assertErrorWarningCount(int errorCount, int warningCount) {
+    if (errorManager.getErrorCount() != errorCount) {
+      assertWithMessage(
+              "Expected %d errors but got\n%s",
+              errorCount, Joiner.on("\n").join(errorManager.getErrors()))
+          .fail();
+    }
+    if (errorManager.getWarningCount() != warningCount) {
+      assertWithMessage(
+              "Expected %d warnings but got\n%s",
+              warningCount, Joiner.on("\n").join(errorManager.getWarnings()))
+          .fail();
+    }
+  }
+
   private void assertNoWarnings() {
-    assertThat(errorManager.getWarnings()).isEmpty();
-    assertThat(errorManager.getErrors()).isEmpty();
+    assertErrorWarningCount(0, 0);
   }
 
   private void assertWarnings(String... messages) {
-    assertThat(errorManager.getWarnings())
-        .comparingElementsUsing(DESCRIPTION_EQUALITY)
-        .containsExactly(messages)
-        .inOrder();
-    assertThat(errorManager.getErrors()).isEmpty();
+    assertErrorWarningCount(0, messages.length);
+    for (int i = 0; i < messages.length; i++) {
+      assertThat(errorManager.getWarnings()[i].description).isEqualTo(messages[i]);
+    }
   }
 
   private void assertErrors(String... messages) {
-    assertThat(errorManager.getWarnings()).isEmpty();
-    assertThat(errorManager.getErrors())
-        .comparingElementsUsing(DESCRIPTION_EQUALITY)
-        .containsExactly(messages)
-        .inOrder();
+    assertErrorWarningCount(messages.length, 0);
+    for (int i = 0; i < messages.length; i++) {
+      assertThat(errorManager.getErrors()[i].description).isEqualTo(messages[i]);
+    }
+  }
+
+  private static void assertContains(String part, String whole) {
+    assertWithMessage("Expected string to contain: " + part).that(whole.contains(part)).isTrue();
+  }
+
+  private static void assertNotContains(String part, String whole) {
+    assertWithMessage("Expected string not to contain: " + part)
+        .that(whole.contains(part))
+        .isFalse();
   }
 }

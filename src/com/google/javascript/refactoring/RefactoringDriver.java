@@ -39,6 +39,8 @@ import java.util.regex.Pattern;
 /**
  * Primary driver of a refactoring. This class collects the inputs, runs the refactoring over
  * the compiled input, and then collects the suggested fixes based on the refactoring.
+ *
+ * @author mknichel@google.com (Mark Knichel)
  */
 public final class RefactoringDriver {
 
@@ -88,11 +90,13 @@ public final class RefactoringDriver {
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
     options.setSummaryDetailLevel(0);
 
-    options.setDependencyOptions(DependencyOptions.sortOnly());
+    DependencyOptions deps = new DependencyOptions();
+    deps.setDependencySorting(true);
+    options.setDependencyOptions(deps);
 
     options.setChecksOnly(true);
     options.setContinueAfterErrors(true);
-    options.setParseJsDocDocumentation(Config.JsDocParsing.INCLUDE_ALL_COMMENTS);
+    options.setParseJsDocDocumentation(Config.JsDocParsing.INCLUDE_DESCRIPTIONS_NO_WHITESPACE);
     options.setCheckSuspiciousCode(true);
     options.setCheckSymbols(true);
     options.setCheckTypes(true);
@@ -105,6 +109,7 @@ public final class RefactoringDriver {
 
     options.setWarningLevel(DiagnosticGroups.STRICT_MISSING_REQUIRE, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.EXTRA_REQUIRE, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
 
     return options;
   }

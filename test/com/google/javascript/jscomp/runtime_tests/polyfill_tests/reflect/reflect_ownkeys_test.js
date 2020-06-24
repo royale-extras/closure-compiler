@@ -24,8 +24,6 @@ const userAgent = goog.require('goog.userAgent');
 const assertPropertyListEquals = testing.assertPropertyListEquals;
 const objectCreate = testing.objectCreate;
 
-const SYMBOL_IS_POLYFILLED = typeof Symbol() !== 'symbol';
-
 testSuite({
   shouldRunTests() {
     // Not polyfilled to ES3
@@ -55,10 +53,7 @@ testSuite({
     sub['42'] = 42;
     sub['x'] = 25;
 
-    const asKey = sym => SYMBOL_IS_POLYFILLED ? sym.toString() : sym;
-
-    assertPropertyListEquals(['12', 'b', 'a', asKey(a)], Reflect.ownKeys(obj));
-    assertPropertyListEquals(
-        ['42', 'x', asKey(c), asKey(b)], Reflect.ownKeys(sub));
+    assertPropertyListEquals(['12', 'b', 'a', a], Reflect.ownKeys(obj));
+    assertPropertyListEquals(['42', 'x', c, b], Reflect.ownKeys(sub));
   },
 });

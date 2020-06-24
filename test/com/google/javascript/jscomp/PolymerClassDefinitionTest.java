@@ -18,8 +18,6 @@ package com.google.javascript.jscomp;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
-import com.google.javascript.jscomp.modules.ModuleMap;
-import com.google.javascript.jscomp.modules.ModuleMetadataMap;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import org.junit.Before;
@@ -87,11 +85,7 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
     assertThat(def.target.getString()).isEqualTo("A");
     assertThat(def.nativeBaseElement).isNull();
     assertThat(def.behaviors).hasSize(1);
-    assertThat(def.props).hasSize(2);
-    assertThat(def.props.get(0).name.getString()).isEqualTo("pets");
-    assertThat(def.props.get(1).name.getString()).isEqualTo("name");
-    assertThat(def.behaviorProps).hasSize(1); // 'isFun'
-    assertThat(def.behaviors.get(0).props.get(0).name.getString()).isEqualTo("isFun");
+    assertThat(def.props).hasSize(3);
   }
 
   @Test
@@ -184,15 +178,7 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
         });
 
     assertThat(polymerCall).isNotNull();
-    return PolymerClassDefinition.extractFromCallNode(
-        polymerCall,
-        compiler,
-        /* moduleMetadata= */ null,
-        new PolymerBehaviorExtractor(
-            compiler,
-            globalNamespace,
-            ModuleMetadataMap.emptyForTesting(),
-            ModuleMap.emptyForTesting()));
+    return PolymerClassDefinition.extractFromCallNode(polymerCall, compiler, globalNamespace);
   }
 
   private PolymerClassDefinition parseAndExtractClassDefFromClass(String code) {

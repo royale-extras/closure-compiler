@@ -24,6 +24,8 @@ import java.util.List;
 /**
  * Control whether warnings should be restricted or suppressed for specified
  * paths.
+ *
+ * @author anatol@google.com (Anatol Pomazau)
  */
 public final class ShowByPathWarningsGuard extends WarningsGuard {
   private static final long serialVersionUID = 1L;

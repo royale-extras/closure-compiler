@@ -17,9 +17,6 @@
 'require util/polyfill';
 
 $jscomp.polyfill('Array.prototype.copyWithin', function(orig) {
-  // requires strict mode to throw for invalid `this` or params
-  'use strict';
-
   if (orig) return orig;
 
   /**
@@ -34,46 +31,32 @@ $jscomp.polyfill('Array.prototype.copyWithin', function(orig) {
    */
   var polyfill = function(target, start, opt_end) {
     var len = this.length;
-    target = toInteger(target);
-    start = toInteger(start);
-    var end = opt_end === undefined ? len : toInteger(opt_end);
-    var to = target < 0 ? Math.max(len + target, 0) : Math.min(target, len);
-    var from = start < 0 ? Math.max(len + start, 0) : Math.min(start, len);
-    var final = end < 0 ? Math.max(len + end, 0) : Math.min(end, len);
-    if (to < from) {
-      while (from < final) {
-        if (from in this) {
-          this[to++] = this[from++];
+    target = Number(target);
+    start = Number(start);
+    opt_end = Number(opt_end != null ? opt_end : len);
+    if (target < start) {
+      opt_end = Math.min(opt_end, len);
+      while (start < opt_end) {
+        if (start in this) {
+          this[target++] = this[start++];
         } else {
-          delete this[to++];
-          from++;
+          delete this[target++];
+          start++;
         }
       }
     } else {
-      final = Math.min(final, len + from - to);
-      to += final - from;
-      while (final > from) {
-        if (--final in this) {
-          this[--to] = this[final];
+      opt_end = Math.min(opt_end, len + start - target);
+      target += opt_end - start;
+      while (opt_end > start) {
+        if (--opt_end in this) {
+          this[--target] = this[opt_end];
         } else {
-          delete this[--to];
+          delete this[target];
         }
       }
     }
     return this;
   };
-
-  /**
-   * @param {number} arg
-   * @return {number}
-   */
-  function toInteger(arg) {
-    var n = Number(arg);
-    if (n === Infinity || n === -Infinity) {
-      return n;
-    }
-    return n | 0;
-  }
 
   return polyfill;
 }, 'es6', 'es3');

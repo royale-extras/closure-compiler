@@ -80,12 +80,12 @@ public final class GraphReachabilityTest {
   public void assertReachable(String s) {
     assertWithMessage(s + " should be reachable")
         .that(GraphReachability.REACHABLE)
-        .isSameInstanceAs(graph.getNode(s).getAnnotation());
+        .isSameAs(graph.getNode(s).getAnnotation());
   }
 
   public void assertNotReachable(String s) {
     assertWithMessage(s + " should not be reachable")
         .that(GraphReachability.REACHABLE)
-        .isNotSameInstanceAs(graph.getNode(s).getAnnotation());
+        .isNotSameAs(graph.getNode(s).getAnnotation());
   }
 }

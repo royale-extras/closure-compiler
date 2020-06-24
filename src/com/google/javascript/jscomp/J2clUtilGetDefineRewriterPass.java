@@ -15,16 +15,16 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import java.util.Set;
 
 /** A normalization pass to re-write Util.$getDefine calls to make them work in compiled mode. */
 public class J2clUtilGetDefineRewriterPass extends AbstractPostOrderCallback
     implements CompilerPass {
   private final AbstractCompiler compiler;
-  private ImmutableSet<String> defines;
+  private Set<String> defines;
 
   public J2clUtilGetDefineRewriterPass(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -35,7 +35,7 @@ public class J2clUtilGetDefineRewriterPass extends AbstractPostOrderCallback
     if (!J2clSourceFileChecker.shouldRunJ2clPasses(compiler)) {
       return;
     }
-    defines = new ProcessDefines.Builder(compiler).build().collectDefineNames(externs, root);
+    defines = new ProcessDefines(compiler, null, true).collectDefines(externs, root).keySet();
     NodeTraversal.traverse(compiler, root, this);
   }
 

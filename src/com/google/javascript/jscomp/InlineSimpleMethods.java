@@ -52,17 +52,15 @@ import java.util.logging.Logger;
  * If the prototype method is mutated and we don't detect that, inlining it is
  * unsafe.
  * We enable it whenever function inlining is enabled.
+ *
  */
 class InlineSimpleMethods extends MethodCompilerPass {
 
   private static final Logger logger =
       Logger.getLogger(InlineSimpleMethods.class.getName());
 
-  private final AstAnalyzer astAnalyzer;
-
   InlineSimpleMethods(AbstractCompiler compiler) {
     super(compiler);
-    astAnalyzer = compiler.getAstAnalyzer();
   }
 
   @Override
@@ -105,14 +103,14 @@ class InlineSimpleMethods extends MethodCompilerPass {
               }
               inlinePropertyReturn(parent, callNode, returned);
             } else if (NodeUtil.isLiteralValue(returned, false)
-                && !astAnalyzer.mayHaveSideEffects(callNode.getFirstChild())) {
+                && !NodeUtil.mayHaveSideEffects(callNode.getFirstChild(), compiler)) {
               if (logger.isLoggable(Level.FINE)) {
                 logger.fine("Inlining constant accessor: " + callName);
               }
               inlineConstReturn(parent, callNode, returned);
             }
           } else if (isEmptyMethod(firstDefinition)
-              && !astAnalyzer.mayHaveSideEffects(callNode.getFirstChild())) {
+              && !NodeUtil.mayHaveSideEffects(callNode.getFirstChild(), compiler)) {
             if (logger.isLoggable(Level.FINE)) {
               logger.fine("Inlining empty method: " + callName);
             }
@@ -142,8 +140,13 @@ class InlineSimpleMethods extends MethodCompilerPass {
       return false;
     }
 
-    Node getpropLhs = expectedGetprop.getFirstChild();
-    return getpropLhs.isThis() || isPropertyTree(getpropLhs);
+    Node leftChild = expectedGetprop.getFirstChild();
+    if (!leftChild.isThis() && !isPropertyTree(leftChild)) {
+      return false;
+    }
+
+    Node retVal = leftChild.getNext();
+    return NodeUtil.getStringValue(retVal) != null;
   }
 
   /**
@@ -258,7 +261,7 @@ class InlineSimpleMethods extends MethodCompilerPass {
     for (Node currentChild = call.getSecondChild();
          currentChild != null;
          currentChild = currentChild.getNext()) {
-      if (astAnalyzer.mayHaveSideEffects(currentChild)) {
+      if (NodeUtil.mayHaveSideEffects(currentChild, compiler)) {
         return true;
       }
     }

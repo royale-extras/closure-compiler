@@ -21,10 +21,7 @@ const testSuite = goog.require('goog.testing.testSuite');
 
 testSuite({
   testHypot() {
-    assertEquals(0, Math.hypot());
-    assertEquals(3, Math.hypot(3));
-    assertEquals(3, Math.hypot(-3));
-
+    assertRoughlyEquals(5, Math.hypot(3, 4), 1e-10);
     assertRoughlyEquals(5, Math.hypot(-3, 4), 1e-10);
     assertRoughlyEquals(13, Math.hypot(5, 12), 1e-10);
     assertRoughlyEquals(13, Math.hypot(5, -12), 1e-10);

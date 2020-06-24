@@ -18,12 +18,11 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.jscomp.testing.JSErrorSubject.assertError;
-import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
+import com.google.common.annotations.GwtIncompatible;
 import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
@@ -31,29 +30,27 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.truth.Correspondence;
 import com.google.errorprone.annotations.ForOverride;
-import com.google.errorprone.annotations.OverridingMethodsMustInvokeSuper;
-import com.google.javascript.jscomp.AccessorSummary.PropertyAccessKind;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.deps.ModuleLoader;
-import com.google.javascript.jscomp.deps.ModuleLoader.ResolutionMode;
-import com.google.javascript.jscomp.modules.ModuleMapCreator;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.type.ReverseAbstractInterpreter;
 import com.google.javascript.jscomp.type.SemanticReverseAbstractInterpreter;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import com.google.javascript.rhino.testing.BaseJSTypeTestCase;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
 import org.junit.Before;
 
 /**
@@ -65,7 +62,6 @@ import org.junit.Before;
  *
  */
 public abstract class CompilerTestCase {
-
   protected static final Joiner LINE_JOINER = Joiner.on('\n');
 
   /** Externs for the test */
@@ -73,24 +69,6 @@ public abstract class CompilerTestCase {
 
   /** Libraries to inject before typechecking */
   final Set<String> librariesToInject;
-
-  /**
-   * If non-null, this object will be used to convert non-optional chains to optional ones
-   * immediately after parsing test JS code. Then it will be used to convert optional chains to
-   * non-optional ones in the result JS code before comparing it to the expected result.
-   *
-   * <p>The intent of this feature is to allow a developer to temporarily run all the existing tests
-   * for a pass as if they were written with lots of optional chains in them, in order to discover
-   * parts of the code that need updating to handle optional chains. No test cases should be checked
-   * in with this set to anything other than null.
-   *
-   * <p>TODO(b/145761297): Remove this when support for optional chaining is complete.
-   */
-  private AstChainOptionalizer astChainOptionalizer;
-
-  void setAstChainOptionalizer(AstChainOptionalizer astChainOptionalizer) {
-    this.astChainOptionalizer = astChainOptionalizer;
-  }
 
   /** Whether to include synthetic code when comparing actual to expected */
   private boolean compareSyntheticCode;
@@ -137,23 +115,8 @@ public abstract class CompilerTestCase {
   private boolean gatherExternPropertiesEnabled;
 
   /**
-   * Whether to verify that the list of getter and setter properties was correctly updated by the
-   * pass.
-   */
-  private boolean verifyGetterAndSetterUpdates;
-
-  /** Whether to run {@link ModuleMapCreator} after parsing. */
-  private boolean createModuleMap = false;
-
-  /**
-   * Whether to verify that no new getters / setters were added. This is looser than
-   * verifyGetterAndSetterUpdates.
-   */
-  private boolean verifyNoNewGettersOrSetters;
-
-  /**
-   * Whether the Normalize pass runs before pass being tested and whether the expected JS strings
-   * should be normalized.
+   * Whether the Normalize pass runs before pass being tested and
+   * whether the expected JS strings should be normalized.
    */
   private boolean normalizeEnabled;
 
@@ -184,16 +147,14 @@ public abstract class CompilerTestCase {
   private DiagnosticType expectedSymbolTableError;
 
   /**
+   * Whether the MarkNoSideEffectsCalls pass runs before the pass being tested
+   */
+  private boolean markNoSideEffects;
+
+  /**
    * Whether the PureFunctionIdentifier pass runs before the pass being tested
    */
   private boolean computeSideEffects;
-
-  /**
-   * The set of accessors declared to exist "somewhere" in the test program.
-   *
-   * <p>When this field is populated, automatic getter and setter collection is disabled.
-   */
-  private LinkedHashMap<String, PropertyAccessKind> declaredAccessors;
 
   /** The most recently used Compiler instance. */
   private Compiler lastCompiler;
@@ -236,12 +197,6 @@ public abstract class CompilerTestCase {
 
   /** Whether {@link #setUp} has run. */
   private boolean setUpRan = false;
-
-  // NOTE: These externs are inserted by VarCheck and should not be input as externs for tests.
-  // It is provided here for tests that assert on output externs in cases where pulling in the
-  // extra externs is unavoidable.
-  protected static final String VAR_CHECK_EXTERNS =
-      Joiner.on("").join(Iterables.transform(VarCheck.REQUIRED_SYMBOLS, s -> "var " + s + ";\n"));
 
   protected static final String ACTIVE_X_OBJECT_DEF =
       lines(
@@ -292,7 +247,7 @@ public abstract class CompilerTestCase {
           "function Iterable() {}",
           "/**",
           " * @interface",
-          " * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T",
+          " * @template VALUE",
           " */",
           "function Iterator() {}",
           "/**",
@@ -304,7 +259,7 @@ public abstract class CompilerTestCase {
           " * @interface",
           " * @extends {Iterator<VALUE>}",
           " * @extends {Iterable<VALUE>}",
-          " * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T",
+          " * @template VALUE",
           " */",
           "function IteratorIterable() {}",
           "/**",
@@ -482,7 +437,7 @@ public abstract class CompilerTestCase {
           "/**",
           " * @interface",
           " * @extends {IteratorIterable<VALUE>}",
-          " * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T",
+          " * @template VALUE",
           " */",
           "function Generator() {}",
           "/**",
@@ -601,28 +556,6 @@ public abstract class CompilerTestCase {
           "function ITemplateArray() {}",
           ACTIVE_X_OBJECT_DEF);
 
-  protected static final String CLOSURE_DEFS_WITHOUT_GOOG =
-      lines(
-          "goog.module = function(ns) {};",
-          "goog.module.declareLegacyNamespace = function() {};",
-          "/** @return {?} */",
-          "goog.module.get = function(ns) {};",
-          "goog.provide = function(ns) {};",
-          "/** @return {?} */",
-          "goog.require = function(ns) {};",
-          "/** @return {?} */",
-          "goog.requireType = function(ns) {};",
-          "goog.loadModule = function(ns) {};",
-          "/** @return {?} */",
-          "goog.forwardDeclare = function(ns) {};",
-          "goog.setTestOnly = function() {};",
-          "goog.scope = function(fn) {};",
-          "goog.defineClass = function(superClass, clazz) {};",
-          "goog.declareModuleId = function(ns) {};");
-
-  protected static final String CLOSURE_DEFS =
-      "/** @const */ var goog = {};" + CLOSURE_DEFS_WITHOUT_GOOG;
-
   /**
    * Constructs a test.
    *
@@ -651,7 +584,7 @@ public abstract class CompilerTestCase {
 
     // TODO(sdh): Initialize *all* the options here, but first we must ensure no subclass
     // is changing them in the constructor, rather than in their own setUp method.
-    this.acceptedLanguage = LanguageMode.ECMASCRIPT_NEXT; // TODO(nickreid): Consider ES_UNSUPPORTED
+    this.acceptedLanguage = LanguageMode.ECMASCRIPT_2017;
     this.moduleResolutionMode = ModuleLoader.ResolutionMode.BROWSER;
     this.allowExternsChanges = false;
     this.allowSourcelessWarnings = false;
@@ -670,10 +603,9 @@ public abstract class CompilerTestCase {
     this.expectParseWarningsThisTest = false;
     this.expectedSymbolTableError = null;
     this.gatherExternPropertiesEnabled = false;
-    this.verifyGetterAndSetterUpdates = true;
-    this.verifyNoNewGettersOrSetters = false;
     this.inferConsts = false;
     this.languageOut = LanguageMode.ECMASCRIPT5;
+    this.markNoSideEffects = false;
     this.multistageCompilation = true;
     this.normalizeEnabled = false;
     this.parseTypeInfo = false;
@@ -700,19 +632,23 @@ public abstract class CompilerTestCase {
   protected abstract CompilerPass getProcessor(Compiler compiler);
 
   /**
-   * Gets the compiler options to use for this test. Use getProcessor to determine what passes
-   * should be run.
+   * Gets the compiler options to use for this test. Use getProcessor to
+   * determine what passes should be run.
    */
-  @OverridingMethodsMustInvokeSuper
   protected CompilerOptions getOptions() {
-    CompilerOptions options = new CompilerOptions();
+    return getOptions(new CompilerOptions());
+  }
 
+  /**
+   * Gets the compiler options to use for this test. Use getProcessor to
+   * determine what passes should be run.
+   */
+  protected CompilerOptions getOptions(CompilerOptions options) {
     options.setLanguageIn(acceptedLanguage);
     options.setEmitUseStrict(false);
     options.setLanguageOut(languageOut);
     options.setModuleResolutionMode(moduleResolutionMode);
     options.setPreserveTypeAnnotations(true);
-    options.setAssumeGettersArePure(false); // Default to the complex case.
 
     // This doesn't affect whether checkSymbols is run--it just affects
     // whether variable warnings are filtered.
@@ -727,8 +663,6 @@ public abstract class CompilerTestCase {
     }
     options.setCodingConvention(getCodingConvention());
     options.setPolymerVersion(1);
-    CompilerTestCaseUtils.setDebugLogDirectoryOn(options);
-
     return options;
   }
 
@@ -764,7 +698,9 @@ public abstract class CompilerTestCase {
    */
   @ForOverride
   protected int getNumRepetitions() {
-    return 1;
+    // Since most compiler passes should be idempotent, we run each pass twice
+    // by default.
+    return 2;
   }
 
   /** Adds the given DiagnosticTypes to the set of warnings to ignore. */
@@ -872,16 +808,11 @@ public abstract class CompilerTestCase {
     typeCheckEnabled = false;
   }
 
-  protected final void enableCreateModuleMap() {
-    checkState(this.setUpRan, "Attempted to configure before running setUp().");
-    this.createModuleMap = true;
-  }
-
   /**
    * When comparing expected to actual, ignore nodes created through compiler.ensureLibraryInjected
    *
-   * <p>This differs from using a {@link com.google.javascript.jscomp.testing.NoninjectingCompiler}
-   * in that the compiler still injects the polyfills when requested.
+   * <p>This differs from using a NonInjecting compiler in that the compiler still injects the
+   * polyfills when requested.
    */
   protected final void disableCompareSyntheticCode() {
     checkState(this.setUpRan, "Attempted to configure before running setUp().");
@@ -943,7 +874,6 @@ public abstract class CompilerTestCase {
   protected final void enableRewriteClosureCode() {
     checkState(this.setUpRan, "Attempted to configure before running setUp().");
     rewriteClosureCode = true;
-    enableCreateModuleMap();
   }
 
   /**
@@ -955,7 +885,8 @@ public abstract class CompilerTestCase {
   }
 
   /**
-   * Perform AST normalization before running the test pass
+   * Perform AST normalization before running the test pass, and anti-normalize
+   * after running it.
    *
    * @see Normalize
    */
@@ -982,31 +913,23 @@ public abstract class CompilerTestCase {
   }
 
   /**
+   * Run the MarkSideEffectCalls pass before running the test pass.
+   *
+   * @see MarkNoSideEffectCalls
+   */
+  protected final void enableMarkNoSideEffects() {
+    checkState(this.setUpRan, "Attempted to configure before running setUp().");
+    markNoSideEffects = true;
+  }
+
+  /**
    * Run the PureFunctionIdentifier pass before running the test pass.
    *
-   * @see PureFunctionIdentifier
+   * @see MarkNoSideEffectCalls
    */
   protected final void enableComputeSideEffects() {
     checkState(this.setUpRan, "Attempted to configure before running setUp().");
     computeSideEffects = true;
-  }
-
-  /**
-   * Declare an accessor as being present "somewhere" in a the test program.
-   *
-   * <p>Calling this method also disabled automatic getter / setter collection.
-   *
-   * @see GatherGetterAndSetterProperties
-   */
-  protected final void declareAccessor(String name, PropertyAccessKind kind) {
-    checkState(this.setUpRan, "Attempted to configure before running setUp().");
-    checkState(kind.hasGetterOrSetter(), "Kind should be a getter and/or setter.");
-
-    if (declaredAccessors == null) {
-      declaredAccessors = new LinkedHashMap<>();
-      disableGetterAndSetterUpdateValidation();
-    }
-    declaredAccessors.merge(name, kind, PropertyAccessKind::unionWith);
   }
 
   /**
@@ -1015,22 +938,6 @@ public abstract class CompilerTestCase {
   protected final void enableGatherExternProperties() {
     checkState(this.setUpRan, "Attempted to configure before running setUp().");
     gatherExternPropertiesEnabled = true;
-  }
-
-  /** Disables verification that getters and setters were correctly updated by the pass. */
-  protected final void disableGetterAndSetterUpdateValidation() {
-    checkState(this.setUpRan, "Attempted to configure before running setUp().");
-    verifyGetterAndSetterUpdates = false;
-    verifyNoNewGettersOrSetters = false;
-  }
-
-  /**
-   * Only validation of getters and setters ensures that there are no new ones. This means it is
-   * okay for a pass to remove getters and setters and not update them.
-   */
-  protected final void onlyValidateNoNewGettersAndSetters() {
-    verifyGetterAndSetterUpdates = false;
-    verifyNoNewGettersOrSetters = true;
   }
 
   /**
@@ -1224,6 +1131,17 @@ public abstract class CompilerTestCase {
 
   /**
    * Verifies that the compiler generates the given warning for the given input.
+   *
+   * @param js Input
+   * @param warning Expected warning
+   */
+  protected void testWarning(String externs, String js, DiagnosticType warning) {
+    assertThat(warning).isNotNull();
+    test(externs(externs), srcs(js), warning(warning));
+  }
+
+  /**
+   * Verifies that the compiler generates the given warning for the given input.
    */
   protected void testWarning(String[] js, DiagnosticType warning) {
     assertThat(warning).isNotNull();
@@ -1332,7 +1250,7 @@ public abstract class CompilerTestCase {
       options.setCheckTypes(parseTypeInfo || this.typeCheckEnabled);
       compiler.init(externs.externs, ((FlatSources) inputs).sources, options);
     } else {
-      compiler.initModules(externs.externs, ((ModuleSources) inputs).modules, getOptions());
+      compiler.initModules(externsInputs, ((ModuleSources) inputs).modules, getOptions());
     }
 
     if (this.typeCheckEnabled) {
@@ -1518,9 +1436,10 @@ public abstract class CompilerTestCase {
 
     if (root == null) {
       // Might be an expected parse error.
-      assertWithMessage("parse errors")
-          .that(compiler.getErrors())
-          .comparingElementsUsing(DIAGNOSTIC_CORRESPONDENCE)
+      assertThat(compiler.getErrors())
+          .named("parse errors")
+          .asList()
+          .comparingElementsUsing(new DiagnosticCorrespondence())
           .containsExactlyElementsIn(expectedErrors);
       for (Postcondition postcondition : postconditions) {
         postcondition.verify(compiler);
@@ -1532,34 +1451,19 @@ public abstract class CompilerTestCase {
     } else {
       assertThat(compiler.getWarningCount()).isGreaterThan(0);
     }
-    Node externsRoot = root.getFirstChild();
-    Node mainRoot = root.getLastChild();
-
-    if (createModuleMap) {
-      new GatherModuleMetadata(
-              compiler, /* processCommonJsModules= */ false, ResolutionMode.BROWSER)
-          .process(externsRoot, mainRoot);
-      new ModuleMapCreator(compiler, compiler.getModuleMetadataMap())
-          .process(externsRoot, mainRoot);
-    }
 
     if (astValidationEnabled) {
       // NOTE: We do not enable type validation here, because type information never exists
       // immediately after parsing.
       (new AstValidator(compiler, scriptFeatureValidationEnabled)).validateRoot(root);
     }
+    Node externsRoot = root.getFirstChild();
+    Node mainRoot = root.getLastChild();
 
     // Save the tree for later comparison.
     Node rootClone = root.cloneTree();
     Node externsRootClone = rootClone.getFirstChild();
     Node mainRootClone = rootClone.getLastChild();
-
-    if (astChainOptionalizer != null) {
-      // Convert all non-optional chains to optional ones in order to use existing tests
-      // as if they had lots of optional chains in them.
-      // TODO(b/145761297): Remove this when support for optional chaining is complete.
-      astChainOptionalizer.optionalize(compiler, mainRoot);
-    }
 
     int numRepetitions = getNumRepetitions();
     ErrorManager[] errorManagers = new ErrorManager[numRepetitions];
@@ -1580,19 +1484,17 @@ public abstract class CompilerTestCase {
         }
 
         if (rewriteClosureCode && i == 0) {
-          new CheckClosureImports(compiler, compiler.getModuleMetadataMap())
-              .process(externsRoot, mainRoot);
           new ClosureRewriteClass(compiler).process(externsRoot, mainRoot);
-          new ClosureRewriteModule(compiler, null, null, null).process(externsRoot, mainRoot);
-          ScopedAliases.builder(compiler).build().process(externsRoot, mainRoot);
+          new ClosureRewriteModule(compiler, null, null).process(externsRoot, mainRoot);
+          new ScopedAliases(compiler, null, CompilerOptions.NULL_ALIAS_TRANSFORMATION_HANDLER)
+              .process(externsRoot, mainRoot);
           hasCodeChanged = hasCodeChanged || recentChange.hasCodeChanged();
         }
 
         // Only run process closure primitives once, if asked.
         if (closurePassEnabled && i == 0) {
           recentChange.reset();
-          new ProcessClosurePrimitives(compiler, null).process(externsRoot, mainRoot);
-          new ProcessClosureProvidesAndRequires(compiler, null, CheckLevel.ERROR, false, null)
+          new ProcessClosurePrimitives(compiler, null, CheckLevel.ERROR, false)
               .process(externsRoot, mainRoot);
           hasCodeChanged = hasCodeChanged || recentChange.hasCodeChanged();
         }
@@ -1611,11 +1513,9 @@ public abstract class CompilerTestCase {
         }
 
         if (!librariesToInject.isEmpty() && i == 0) {
-          recentChange.reset();
           for (String resourceName : librariesToInject) {
             compiler.ensureLibraryInjected(resourceName, true);
           }
-          hasCodeChanged = hasCodeChanged || recentChange.hasCodeChanged();
         }
 
         // Only run the type checking pass once, if asked.
@@ -1655,25 +1555,17 @@ public abstract class CompilerTestCase {
           new InferConsts(compiler).process(externsRoot, mainRoot);
         }
 
-        if (i == 0) {
-          if (verifyGetterAndSetterUpdates || verifyNoNewGettersOrSetters) {
-            // These 2 options both require that we actually gather getter and setter properties
-            // from the test source code.
-            checkState(declaredAccessors == null);
-            GatherGetterAndSetterProperties.update(compiler, externsRoot, mainRoot);
-          } else if (declaredAccessors != null) {
-            // The test case explicitly specified which property names should be considered to have
-            // getters and/or setters. Use those rather than attempting to gather getters and
-            // setters from the tested source code.
-            compiler.setAccessorSummary(AccessorSummary.create(declaredAccessors));
-          }
-        }
-
         if (computeSideEffects && i == 0) {
           recentChange.reset();
-          PureFunctionIdentifier.Driver mark = new PureFunctionIdentifier.Driver(compiler);
+          PureFunctionIdentifier.Driver mark =
+              new PureFunctionIdentifier.Driver(compiler, null);
           mark.process(externsRoot, mainRoot);
           hasCodeChanged = hasCodeChanged || recentChange.hasCodeChanged();
+        }
+
+        if (markNoSideEffects && i == 0) {
+          MarkNoSideEffectCalls mark = new MarkNoSideEffectCalls(compiler);
+          mark.process(externsRoot, mainRoot);
         }
 
         if (gatherExternPropertiesEnabled && i == 0) {
@@ -1697,22 +1589,18 @@ public abstract class CompilerTestCase {
           changeVerifier.checkRecordedChanges(mainRoot);
         }
 
-        verifyGetterAndSetterCollection(compiler, mainRoot);
-
-        if (runTypeCheckAfterProcessing && typeCheckEnabled && i == 0) {
-          TypeCheck check = createTypeCheck(compiler);
-          check.processForTesting(externsRoot, mainRoot);
-        }
-
-        // Transpilation passes are allowed to leave the AST in a bad state when there is a halting
-        // error.
-        if (astValidationEnabled && !compiler.hasHaltingErrors()) {
+        if (astValidationEnabled) {
           new AstValidator(compiler, scriptFeatureValidationEnabled)
               .setTypeValidationEnabled(typeInfoValidationEnabled)
               .validateRoot(root);
         }
         if (checkLineNumbers) {
-          new SourceInfoCheck(compiler).process(externsRoot, mainRoot);
+          (new LineNumberCheck(compiler)).process(externsRoot, mainRoot);
+        }
+
+        if (runTypeCheckAfterProcessing && typeCheckEnabled && i == 0) {
+          TypeCheck check = createTypeCheck(compiler);
+          check.processForTesting(externsRoot, mainRoot);
         }
 
         if (checkAccessControls) {
@@ -1721,7 +1609,7 @@ public abstract class CompilerTestCase {
 
         hasCodeChanged = hasCodeChanged || recentChange.hasCodeChanged();
         aggregateWarningCount += errorManagers[i].getWarningCount();
-        aggregateWarnings.addAll(compiler.getWarnings());
+        Collections.addAll(aggregateWarnings, compiler.getWarnings());
 
         if (normalizeEnabled) {
           boolean verifyDeclaredConstants = true;
@@ -1729,13 +1617,6 @@ public abstract class CompilerTestCase {
               .process(externsRoot, mainRoot);
         }
       }
-    }
-
-    if (astChainOptionalizer != null) {
-      // Convert all optional chains in the resulting JS back to non-optional ones before
-      // comparing with the expected result.
-      // TODO(b/145761297): Remove this when support for optional chaining is complete.
-      astChainOptionalizer.deoptionalize(compiler, mainRoot);
     }
 
     if (expectedErrors.isEmpty()) {
@@ -1750,14 +1631,15 @@ public abstract class CompilerTestCase {
         expectedRoot.detach();
       }
 
-      ImmutableList<JSError> stErrors = symbolTableErrorManager.getErrors();
+      JSError[] stErrors = symbolTableErrorManager.getErrors();
       if (expectedSymbolTableError != null) {
-        assertError(getOnlyElement(stErrors)).hasType(expectedSymbolTableError);
+        assertWithMessage("There should be one error.").that(stErrors.length).isEqualTo(1);
+        assertError(stErrors[0]).hasType(expectedSymbolTableError);
       } else {
-        assertWithMessage("symbol table errors").that(stErrors).isEmpty();
+        assertThat(stErrors).named("symbol table errors").isEmpty();
       }
       if (expectedWarnings.isEmpty()) {
-        assertWithMessage("aggregate warnings").that(aggregateWarnings).isEmpty();
+        assertThat(aggregateWarnings).named("aggregate warnings").isEmpty();
       } else {
         assertWithMessage(
                 "There should be "
@@ -1767,11 +1649,12 @@ public abstract class CompilerTestCase {
                     + " time(s). Warnings: \n"
                     + LINE_JOINER.join(aggregateWarnings))
             .that(aggregateWarningCount)
-            .isEqualTo(numRepetitions * expectedWarnings.size());
+            .isEqualTo(numRepetitions);
         for (int i = 0; i < numRepetitions; i++) {
-          assertWithMessage("compile warnings from repetition " + (i + 1))
-              .that(errorManagers[i].getWarnings())
-              .comparingElementsUsing(DIAGNOSTIC_CORRESPONDENCE)
+          assertThat(errorManagers[i].getWarnings())
+              .named("compile warnings from repetition " + (i + 1))
+              .asList()
+              .comparingElementsUsing(new DiagnosticCorrespondence())
               .containsExactlyElementsIn(expectedWarnings);
           for (JSError warning : errorManagers[i].getWarnings()) {
             validateSourceLocation(warning);
@@ -1790,9 +1673,16 @@ public abstract class CompilerTestCase {
 
       // Generally, externs should not be changed by the compiler passes.
       if (externsChange && !allowExternsChanges) {
-        assertNode(externsRootClone)
-            .usingSerializer(createPrettyPrinter(compiler))
-            .isEqualTo(externsRoot);
+        String explanation = externsRootClone.checkTreeEquals(externsRoot);
+        assertWithMessage(
+                "Unexpected changes to externs"
+                    + "\nExpected: "
+                    + compiler.toSource(externsRootClone)
+                    + "\nResult:   "
+                    + compiler.toSource(externsRoot)
+                    + "\n"
+                    + explanation)
+            .fail();
       }
 
       if (!codeChange && !externsChange) {
@@ -1825,14 +1715,27 @@ public abstract class CompilerTestCase {
           }
         }
         if (compareAsTree) {
+          String explanation;
           if (compareJsDoc) {
-            assertNode(mainRoot)
-                .usingSerializer(createPrettyPrinter(compiler))
-                .isEqualIncludingJsDocTo(expectedRoot);
+            explanation = expectedRoot.checkTreeEqualsIncludingJsDoc(mainRoot);
           } else {
-            assertNode(mainRoot)
-                .usingSerializer(createPrettyPrinter(compiler))
-                .isEqualTo(expectedRoot);
+            explanation = expectedRoot.checkTreeEquals(mainRoot);
+          }
+          if (explanation != null) {
+            String expectedAsSource = compiler.toSource(expectedRoot);
+            String mainAsSource = compiler.toSource(mainRoot);
+            if (expectedAsSource.equals(mainAsSource)) {
+              assertWithMessage("In: " + expectedAsSource + "\n" + explanation).fail();
+            } else {
+              assertWithMessage(
+                      "\nExpected: "
+                          + expectedAsSource
+                          + "\nResult:   "
+                          + mainAsSource
+                          + "\n"
+                          + explanation)
+                  .fail();
+            }
           }
         } else {
           String[] expectedSources = new String[expected.size()];
@@ -1852,10 +1755,17 @@ public abstract class CompilerTestCase {
       Node normalizeCheckExternsRootClone = normalizeCheckRootClone.getFirstChild();
       Node normalizeCheckMainRootClone = normalizeCheckRootClone.getLastChild();
       new PrepareAst(compiler).process(normalizeCheckExternsRootClone, normalizeCheckMainRootClone);
-
-      assertNode(normalizeCheckMainRootClone)
-          .usingSerializer(createPrettyPrinter(compiler))
-          .isEqualTo(mainRoot);
+      String explanation = normalizeCheckMainRootClone.checkTreeEquals(mainRoot);
+      assertWithMessage(
+              "Node structure normalization invalidated."
+                  + "\nExpected: "
+                  + compiler.toSource(normalizeCheckMainRootClone)
+                  + "\nResult:   "
+                  + compiler.toSource(mainRoot)
+                  + "\n"
+                  + explanation)
+          .that(explanation)
+          .isNull();
 
       // TODO(johnlenz): enable this for most test cases.
       // Currently, this invalidates test for while-loops, for-loop
@@ -1865,20 +1775,28 @@ public abstract class CompilerTestCase {
       if (normalizeEnabled) {
         new Normalize(compiler, true)
             .process(normalizeCheckExternsRootClone, normalizeCheckMainRootClone);
-
-        assertNode(normalizeCheckMainRootClone)
-            .usingSerializer(createPrettyPrinter(compiler))
-            .isEqualTo(mainRoot);
+        explanation = normalizeCheckMainRootClone.checkTreeEquals(mainRoot);
+        assertWithMessage(
+                "Normalization invalidated."
+                    + "\nExpected: "
+                    + compiler.toSource(normalizeCheckMainRootClone)
+                    + "\nResult:   "
+                    + compiler.toSource(mainRoot)
+                    + "\n"
+                    + explanation)
+            .that(explanation)
+            .isNull();
       }
     } else {
-      assertWithMessage("compile errors")
-          .that(compiler.getErrors())
-          .comparingElementsUsing(DIAGNOSTIC_CORRESPONDENCE)
+      assertThat(compiler.getErrors())
+          .named("compile errors")
+          .asList()
+          .comparingElementsUsing(new DiagnosticCorrespondence())
           .containsExactlyElementsIn(expectedErrors);
       for (JSError error : compiler.getErrors()) {
         validateSourceLocation(error);
         assertWithMessage("Some placeholders in the error message were not replaced")
-            .that(error.getDescription())
+            .that(error.description)
             .doesNotContainMatch("\\{\\d\\}");
       }
     }
@@ -1893,26 +1811,22 @@ public abstract class CompilerTestCase {
     GatherModuleMetadata gatherModuleMetadata =
         new GatherModuleMetadata(
             compiler, options.processCommonJSModules, options.moduleResolutionMode);
-    factories.add(
-        PassFactory.builder()
-            .setName(PassNames.GATHER_MODULE_METADATA)
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory((x) -> gatherModuleMetadata)
-            .setFeatureSetForChecks()
-            .build());
-    factories.add(
-        PassFactory.builder()
-            .setName(PassNames.CREATE_MODULE_MAP)
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (x) -> new ModuleMapCreator(compiler, compiler.getModuleMetadataMap()))
-            .setFeatureSetForChecks()
-            .build());
+    factories.add(new PassFactory(PassNames.GATHER_MODULE_METADATA, /* isOneTimePass= */ true) {
+      @Override
+      protected CompilerPass create(AbstractCompiler compiler) {
+        return gatherModuleMetadata;
+      }
+
+      @Override
+      protected FeatureSet featureSet() {
+        return FeatureSet.ES_NEXT;
+      }
+    });
     TranspilationPasses.addEs6ModulePass(
         factories, new PreprocessorSymbolTable.CachedInstanceFactory());
     options.setLanguageIn(LanguageMode.ECMASCRIPT_NEXT);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
-    TranspilationPasses.addTranspilationRuntimeLibraries(factories, options);
+    TranspilationPasses.addPreTypecheckTranspilationPasses(factories, options, false);
     TranspilationPasses.addPostCheckTranspilationPasses(factories, options);
     TranspilationPasses.addRewritePolyfillPass(factories);
     for (PassFactory factory : factories) {
@@ -1923,16 +1837,11 @@ public abstract class CompilerTestCase {
   private void validateSourceLocation(JSError jserror) {
     // Make sure that source information is always provided.
     if (!allowSourcelessWarnings) {
-      final String sourceName = jserror.getSourceName();
       assertWithMessage("Missing source file name in warning: " + jserror)
-          .that(sourceName != null && !sourceName.isEmpty())
+          .that(jserror.sourceName != null && !jserror.sourceName.isEmpty())
           .isTrue();
-      Node scriptNode = lastCompiler.getScriptNode(sourceName);
-      assertWithMessage("No SCRIPT node found for warning: " + jserror)
-          .that(scriptNode)
-          .isNotNull();
       assertWithMessage("Missing line number in warning: " + jserror)
-          .that(-1 != jserror.getLineNumber())
+          .that(-1 != jserror.lineNumber)
           .isTrue();
       assertWithMessage("Missing char number in warning: " + jserror)
           .that(-1 != jserror.getCharno())
@@ -1943,21 +1852,6 @@ public abstract class CompilerTestCase {
   private static void normalizeActualCode(Compiler compiler, Node externsRoot, Node mainRoot) {
     Normalize normalize = new Normalize(compiler, false);
     normalize.process(externsRoot, mainRoot);
-  }
-
-  private void verifyGetterAndSetterCollection(Compiler compiler, Node mainRoot) {
-    if (verifyGetterAndSetterUpdates) {
-      assertWithMessage("Pass did not update getters / setters")
-          .that(compiler.getAccessorSummary().getAccessors())
-          .containsExactlyEntriesIn(
-              GatherGetterAndSetterProperties.gather(compiler, mainRoot.getParent()));
-    } else if (verifyNoNewGettersOrSetters) {
-      // If the above assertions hold then these two must also hold.
-      assertWithMessage("Pass did not update new getters / setters")
-          .that(compiler.getAccessorSummary().getAccessors())
-          .containsAtLeastEntriesIn(
-              GatherGetterAndSetterProperties.gather(compiler, mainRoot.getParent()));
-    }
   }
 
   protected Node parseExpectedJs(String expected) {
@@ -1986,15 +1880,15 @@ public abstract class CompilerTestCase {
     }
 
     if (closurePassEnabled && closurePassEnabledForExpected && !compiler.hasErrors()) {
-      new ProcessClosurePrimitives(compiler, null).process(externsRoot, mainRoot);
-      new ProcessClosureProvidesAndRequires(compiler, null, CheckLevel.ERROR, false, null)
+      new ProcessClosurePrimitives(compiler, null, CheckLevel.ERROR, false)
           .process(externsRoot, mainRoot);
     }
 
     if (rewriteClosureCode) {
       new ClosureRewriteClass(compiler).process(externsRoot, mainRoot);
-      new ClosureRewriteModule(compiler, null, null, null).process(externsRoot, mainRoot);
-      ScopedAliases.builder(compiler).build().process(externsRoot, mainRoot);
+      new ClosureRewriteModule(compiler, null, null).process(externsRoot, mainRoot);
+      new ScopedAliases(compiler, null, CompilerOptions.NULL_ALIAS_TRANSFORMATION_HANDLER)
+          .process(externsRoot, mainRoot);
     }
 
     if (transpileEnabled && !compiler.hasErrors()) {
@@ -2025,14 +1919,6 @@ public abstract class CompilerTestCase {
         maybeCreateSources("input", input),
         options);
     compiler.parseInputs();
-
-    if (createModuleMap) {
-      new GatherModuleMetadata(
-              compiler, /* processCommonJsModules= */ false, ResolutionMode.BROWSER)
-          .process(compiler.getExternsRoot(), compiler.getJsRoot());
-      new ModuleMapCreator(compiler, compiler.getModuleMetadataMap())
-          .process(compiler.getExternsRoot(), compiler.getJsRoot());
-    }
     assertThat(compiler.getErrors()).isEmpty();
 
     Node externsAndJs = compiler.getRoot();
@@ -2062,14 +1948,17 @@ public abstract class CompilerTestCase {
       checkState(
           externs.hasOneChild(), "Compare as tree only works when output has a single script.");
       externs = externs.getFirstChild();
-
-      Node expectedRoot = parseExpectedJs(expectedExtern);
-      expectedRoot.detach();
-      expectedRoot = expectedRoot.getFirstChild();
-
-      assertNode(externs)
-          .usingSerializer(createPrettyPrinter(compiler))
-          .isEqualIncludingJsDocTo(expectedRoot);
+      String explanation = expected.checkTreeEqualsIncludingJsDoc(externs);
+      assertWithMessage(
+              ""
+                  + "\nExpected: "
+                  + compiler.toSource(expected)
+                  + "\nResult:   "
+                  + compiler.toSource(externs)
+                  + "\n"
+                  + explanation)
+          .that(explanation)
+          .isNull();
     } else {
       String externsCode = compiler.toSource(externs);
       String expectedCode = compiler.toSource(expected);
@@ -2079,7 +1968,7 @@ public abstract class CompilerTestCase {
     if (warnings != null) {
       String warningMessage = "";
       for (JSError actualWarning : compiler.getWarnings()) {
-        warningMessage += actualWarning.getDescription() + "\n";
+        warningMessage += actualWarning.description + "\n";
       }
       assertWithMessage("There should be " + warnings.length + " warnings. " + warningMessage)
           .that(compiler.getWarningCount())
@@ -2087,10 +1976,84 @@ public abstract class CompilerTestCase {
       for (int i = 0; i < warnings.length; i++) {
         DiagnosticType warning = warnings[i];
         assertWithMessage(warningMessage)
-            .that(compiler.getWarnings().get(i).getType())
+            .that(compiler.getWarnings()[i].getType())
             .isEqualTo(warning);
       }
     }
+  }
+
+  /**
+   * Generates a list of modules from a list of inputs, such that each module
+   * depends on the module before it.
+   */
+  protected static JSModule[] createModuleChain(String... inputs) {
+    return createModuleChain(Arrays.asList(inputs), "i", ".js");
+  }
+
+  protected static JSModule[] createModuleChain(
+      List<String> inputs, String fileNamePrefix, String fileNameSuffix) {
+    JSModule[] modules = createModules(inputs, fileNamePrefix, fileNameSuffix);
+    for (int i = 1; i < modules.length; i++) {
+      modules[i].addDependency(modules[i - 1]);
+    }
+    return modules;
+  }
+
+  /**
+   * Generates a list of modules from a list of inputs, such that each module
+   * depends on the first module.
+   */
+  protected static JSModule[] createModuleStar(String... inputs) {
+    JSModule[] modules = createModules(inputs);
+    for (int i = 1; i < modules.length; i++) {
+      modules[i].addDependency(modules[0]);
+    }
+    return modules;
+  }
+
+  /**
+   * Generates a list of modules from a list of inputs, such that modules
+   * form a bush formation. In a bush formation, module 2 depends
+   * on module 1, and all other modules depend on module 2.
+   */
+  protected static JSModule[] createModuleBush(String... inputs) {
+    checkState(inputs.length > 2);
+    JSModule[] modules = createModules(inputs);
+    for (int i = 1; i < modules.length; i++) {
+      modules[i].addDependency(modules[i == 1 ? 0 : 1]);
+    }
+    return modules;
+  }
+
+  /**
+   * Generates a list of modules from a list of inputs, such that modules
+   * form a tree formation. In a tree formation, module N depends on
+   * module `floor(N/2)`, So the modules form a balanced binary tree.
+   */
+  protected static JSModule[] createModuleTree(String... inputs) {
+    JSModule[] modules = createModules(inputs);
+    for (int i = 1; i < modules.length; i++) {
+      modules[i].addDependency(modules[(i - 1) / 2]);
+    }
+    return modules;
+  }
+
+  /**
+   * Generates a list of modules from a list of inputs. Does not generate any
+   * dependencies between the modules.
+   */
+  protected static JSModule[] createModules(String... inputs) {
+    return createModules(Arrays.asList(inputs), "i", ".js");
+  }
+
+  protected static JSModule[] createModules(
+      List<String> inputs, String fileNamePrefix, String fileNameSuffix) {
+    JSModule[] modules = new JSModule[inputs.size()];
+    for (int i = 0; i < inputs.size(); i++) {
+      JSModule module = modules[i] = new JSModule("m" + i);
+      module.add(SourceFile.fromCode(fileNamePrefix + i + fileNameSuffix, inputs.get(i)));
+    }
+    return modules;
   }
 
   protected Compiler createCompiler() {
@@ -2160,6 +2123,44 @@ public abstract class CompilerTestCase {
       }
     }
     return null;
+  }
+
+  /** A Compiler that records requested runtime libraries, rather than injecting. */
+  protected static class NoninjectingCompiler extends Compiler {
+
+    NoninjectingCompiler(ErrorManager em) {
+      super(em);
+    }
+
+    NoninjectingCompiler() {
+      super();
+    }
+
+    protected final Set<String> injected = new HashSet<>();
+
+    @Override
+    Node ensureLibraryInjected(String library, boolean force) {
+      injected.add(library);
+      return null;
+    }
+
+    @Override
+    @GwtIncompatible
+    public void saveState(OutputStream outputStream) throws IOException {
+      super.saveState(outputStream);
+      ObjectOutputStream out = new ObjectOutputStream(outputStream);
+      out.writeObject(injected);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    @GwtIncompatible
+    public void restoreState(InputStream inputStream) throws IOException, ClassNotFoundException {
+      super.restoreState(inputStream);
+      ObjectInputStream in = new ObjectInputStream(inputStream);
+      injected.clear();
+      injected.addAll((Set<String>) in.readObject());
+    }
   }
 
   public static String lines(String line) {
@@ -2385,15 +2386,15 @@ public abstract class CompilerTestCase {
     }
 
     private boolean matches(JSError error) {
-      return Objects.equals(diagnostic, error.getType())
-          && (messagePredicate == null || messagePredicate.apply(error.getDescription()));
+      return diagnostic == error.getType()
+          && (messagePredicate == null || messagePredicate.apply(error.description));
     }
 
     private String formatDiff(JSError error) {
-      if (!Objects.equals(diagnostic, error.getType())) {
+      if (diagnostic != error.getType()) {
         return "diagnostic type " + error.getType().key + " did not match";
       }
-      return "message \"" + error.getDescription() + "\" was not " + messagePredicate;
+      return "message \"" + error.description + "\" was not " + messagePredicate;
     }
 
     protected Diagnostic withMessage(final String expected) {
@@ -2429,11 +2430,22 @@ public abstract class CompilerTestCase {
     }
   }
 
-  private static final Correspondence<JSError, Diagnostic> DIAGNOSTIC_CORRESPONDENCE =
-      Correspondence.from(
-              (JSError actual, Diagnostic expected) -> expected.matches(actual),
-              "is a JSError matching")
-          .formattingDiffsUsing((actual, expected) -> expected.formatDiff(actual));
+  private static class DiagnosticCorrespondence extends Correspondence<JSError, Diagnostic> {
+    @Override
+    public boolean compare(JSError actual, Diagnostic expected) {
+      return expected.matches(actual);
+    }
+
+    @Override
+    public String formatDiff(JSError actual, Diagnostic expected) {
+      return expected.formatDiff(actual);
+    }
+
+    @Override
+    public String toString() {
+      return "is a JSError matching";
+    }
+  }
 
   private static class NamedPredicate<T> implements Predicate<T> {
     final Predicate<T> delegate;
@@ -2463,12 +2475,9 @@ public abstract class CompilerTestCase {
     void verify(Compiler compiler);
   }
 
-  private static Function<Node, String> createPrettyPrinter(Compiler compiler) {
-    return (n) ->
-        new CodePrinter.Builder(n)
-            .setTypeRegistry(compiler.getTypeRegistry())
-            .setCompilerOptions(compiler.getOptions())
-            .setPrettyPrint(true)
-            .build();
+  protected static Postcondition expectRuntimeLibraries(String... expected) {
+    return (compiler) -> {
+      assertThat(((NoninjectingCompiler) compiler).injected).containsExactlyElementsIn(expected);
+    };
   }
 }

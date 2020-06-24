@@ -68,33 +68,15 @@ public final class RenameVarsTest extends CompilerTestCase {
     if (withClosurePass) {
       pass = new ClosurePassAndRenameVars(compiler);
     } else if (nameGenerator != null) {
-      pass =
-          renameVars =
-              new RenameVars(
-                  compiler,
-                  prefix,
-                  localRenamingOnly,
-                  preserveFunctionExpressionNames,
-                  generatePseudoNames,
-                  preferStableNames,
-                  previouslyUsedMap,
-                  null,
-                  null,
-                  nameGenerator);
+      pass =  renameVars = new RenameVars(compiler, prefix,
+          localRenamingOnly, preserveFunctionExpressionNames,
+          generatePseudoNames, shouldShadow, preferStableNames,
+          previouslyUsedMap, null, null, nameGenerator);
     } else {
-      pass =
-          renameVars =
-              new RenameVars(
-                  compiler,
-                  prefix,
-                  localRenamingOnly,
-                  preserveFunctionExpressionNames,
-                  generatePseudoNames,
-                  preferStableNames,
-                  previouslyUsedMap,
-                  null,
-                  null,
-                  new DefaultNameGenerator());
+      pass =  renameVars = new RenameVars(compiler, prefix,
+          localRenamingOnly, preserveFunctionExpressionNames,
+          generatePseudoNames, shouldShadow, preferStableNames,
+          previouslyUsedMap, null, null, new DefaultNameGenerator());
     }
 
     if (withNormalize) {
@@ -105,6 +87,11 @@ public final class RenameVarsTest extends CompilerTestCase {
     }
 
     return pass;
+  }
+
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
   }
 
   @Override
@@ -1068,20 +1055,14 @@ public final class RenameVarsTest extends CompilerTestCase {
 
     @Override
     public void process(Node externs, Node root) {
-      ProcessClosurePrimitives closurePass = new ProcessClosurePrimitives(compiler, null);
+      ProcessClosurePrimitives closurePass =
+          new ProcessClosurePrimitives(
+              compiler, null, CheckLevel.WARNING, false);
       closurePass.process(externs, root);
-      renameVars =
-          new RenameVars(
-              compiler,
-              prefix,
-              false,
-              false,
-              false,
-              false,
-              previouslyUsedMap,
-              null,
-              closurePass.getExportedVariableNames(),
-              new DefaultNameGenerator());
+      renameVars = new RenameVars(compiler, prefix,
+          false, false, false, false, false, previouslyUsedMap, null,
+          closurePass.getExportedVariableNames(),
+          new DefaultNameGenerator());
       renameVars.process(externs, root);
     }
   }

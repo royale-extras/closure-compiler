@@ -16,25 +16,20 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_CLOSURE_CALL_SCOPE_ERROR;
+import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_CLOSURE_CALL_ERROR;
 import static com.google.javascript.jscomp.ClosurePrimitiveErrors.MISSING_MODULE_OR_PROVIDE;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.CLOSURE_CALL_CANNOT_BE_ALIASED_ERROR;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.CLOSURE_CALL_CANNOT_BE_ALIASED_OUTSIDE_MODULE_ERROR;
 
 import com.google.common.annotations.GwtIncompatible;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.deps.ModuleLoader;
-import com.google.javascript.jscomp.ijs.IjsErrors;
 import com.google.javascript.jscomp.lint.CheckArrayWithGoogObject;
-import com.google.javascript.jscomp.lint.CheckConstantCaseNames;
 import com.google.javascript.jscomp.lint.CheckDuplicateCase;
 import com.google.javascript.jscomp.lint.CheckEmptyStatements;
 import com.google.javascript.jscomp.lint.CheckEnums;
 import com.google.javascript.jscomp.lint.CheckEs6ModuleFileStructure;
 import com.google.javascript.jscomp.lint.CheckEs6Modules;
-import com.google.javascript.jscomp.lint.CheckExtraRequires;
 import com.google.javascript.jscomp.lint.CheckInterfaces;
 import com.google.javascript.jscomp.lint.CheckJSDocStyle;
 import com.google.javascript.jscomp.lint.CheckMissingSemicolon;
@@ -43,17 +38,16 @@ import com.google.javascript.jscomp.lint.CheckNullabilityModifiers;
 import com.google.javascript.jscomp.lint.CheckNullableReturn;
 import com.google.javascript.jscomp.lint.CheckPrimitiveAsObject;
 import com.google.javascript.jscomp.lint.CheckPrototypeProperties;
-import com.google.javascript.jscomp.lint.CheckProvidesSorted;
-import com.google.javascript.jscomp.lint.CheckRequiresSorted;
+import com.google.javascript.jscomp.lint.CheckRequiresAndProvidesSorted;
 import com.google.javascript.jscomp.lint.CheckUnusedLabels;
 import com.google.javascript.jscomp.lint.CheckUselessBlocks;
-import com.google.javascript.jscomp.modules.ModuleMapCreator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * Named groups of DiagnosticTypes exposed by Compiler.
+ * @author nicksantos@google.com (Nick Santos)
  */
 public class DiagnosticGroups {
   static final DiagnosticType UNUSED =
@@ -64,11 +58,20 @@ public class DiagnosticGroups {
           "reportUnknownTypes",
           "analyzerChecks",
           "analyzerChecksInternal",
-          "missingSourcesWarnings");
+          "oldReportUnknownTypes",
+          "newCheckTypes",
+          "newCheckTypesCompatibility",
+          "newCheckTypesExtraChecks",
+          "missingSourcesWarnings",
+          // TODO(johnlenz): "strictMissingProperties" is here until it has a shake down cruise.
+          "strictMissingProperties",
+          "strictPrimitiveOperators",
+          "strictCheckTypes");
 
   public DiagnosticGroups() {}
 
-  private static final Map<String, DiagnosticGroup> groupsByName = new HashMap<>();
+  private static final Map<String, DiagnosticGroup> groupsByName =
+       new HashMap<>();
 
   static DiagnosticGroup registerDeprecatedGroup(String name) {
     return registerGroup(name, new DiagnosticGroup(name, UNUSED));
@@ -95,12 +98,12 @@ public class DiagnosticGroups {
   }
 
   /** Get the registered diagnostic groups, indexed by name. */
-  public static ImmutableMap<String, DiagnosticGroup> getRegisteredGroups() {
+  public Map<String, DiagnosticGroup> getRegisteredGroups() {
     return ImmutableMap.copyOf(groupsByName);
   }
 
   /** Find the diagnostic group registered under the given name. */
-  public static DiagnosticGroup forName(String name) {
+  public DiagnosticGroup forName(String name) {
     return groupsByName.get(name);
   }
 
@@ -112,7 +115,7 @@ public class DiagnosticGroups {
   // to parsing/ParserConfig.properties
   static final String DIAGNOSTIC_GROUP_NAMES =
       "accessControls, "
-          + "checkPrototypalTypes, "
+          + "ambiguousFunctionDecl, "
           + "checkRegExp, "
           + "checkTypes, "
           + "checkVars, "
@@ -122,10 +125,13 @@ public class DiagnosticGroups {
           + "deprecated, "
           + "deprecatedAnnotations, "
           + "duplicateMessage, "
+          + "es3, "
           + "es5Strict, "
           + "externsValidation, "
+          + "fileoverviewTags, "
           + "functionParams, "
           + "globalThis, "
+          + "internetExplorerChecks, "
           + "invalidCasts, "
           + "misplacedTypeAnnotation, "
           + "missingGetCssName, "
@@ -135,45 +141,32 @@ public class DiagnosticGroups {
           + "missingProvide, "
           + "missingRequire, "
           + "missingReturn, "
-          + "missingSourcesWarnings, "
           + "moduleLoad, "
           + "msgDescriptions, "
+          + "newCheckTypes, "
           + "nonStandardJsDocs, "
-          + "partialAlias, "
+          + "missingSourcesWarnings, "
           + "polymer, "
           + "reportUnknownTypes, "
+          + "suspiciousCode, "
           + "strictCheckTypes, "
           + "strictMissingProperties, "
           + "strictModuleDepCheck, "
           + "strictPrimitiveOperators, "
-          + "suspiciousCode, "
           + "typeInvalidation, "
           + "undefinedNames, "
           + "undefinedVars, "
-          + "underscore, "
           + "unknownDefines, "
           + "unusedLocalVariables, "
           + "unusedPrivateMembers, "
           + "uselessCode, "
-          + "untranspilableFeatures,"
+          + "useOfGoogBase, "
+          + "underscore, "
           + "visibility";
-
-  // TODO(b/123768968) remove this diagnostic group, do not allow this suppression. Instead the only
-  // work around should be to raise the output language to a high enough level. We need to suppress
-  // right now because we don't have any language output level higher than ES5.
-  public static final DiagnosticGroup UNSTRANSPILABLE_FEATURES =
-      DiagnosticGroups.registerGroup(
-          "untranspilableFeatures",
-          MarkUntranspilableFeaturesAsRemoved.UNTRANSPILABLE_FEATURE_PRESENT);
-
-  public static final DiagnosticGroup FEATURES_NOT_SUPPORTED_BY_PASS =
-      DiagnosticGroups.registerGroup(
-          "featuresNotSupportedByPass", PhaseOptimizer.FEATURES_NOT_SUPPORTED_BY_PASS);
 
   public static final DiagnosticGroup MODULE_LOAD =
       DiagnosticGroups.registerGroup("moduleLoad",
           ModuleLoader.LOAD_WARNING,
-          ModuleMapCreator.MISSING_NAMESPACE_IMPORT,
           ProcessCommonJSModules.SUSPICIOUS_EXPORTS_ASSIGNMENT,
           ProcessCommonJSModules.UNKNOWN_REQUIRE_ENSURE);
 
@@ -191,9 +184,9 @@ public class DiagnosticGroups {
           CheckAccessControls.DEPRECATED_CLASS_REASON);
 
   public static final DiagnosticGroup UNDERSCORE =
-      DiagnosticGroups.registerGroup(
-          "underscore", // undocumented
-          CheckJSDocStyle.UNDERSCORE_DIAGNOSTICS);
+      DiagnosticGroups.registerGroup("underscore",  // undocumented
+          CheckJSDocStyle.MUST_BE_PRIVATE,
+          CheckJSDocStyle.MUST_HAVE_TRAILING_UNDERSCORE);
 
   public static final DiagnosticGroup VISIBILITY =
       DiagnosticGroups.registerGroup("visibility",
@@ -211,16 +204,18 @@ public class DiagnosticGroups {
       DiagnosticGroups.registerGroup("accessControls", VISIBILITY);
 
   public static final DiagnosticGroup NON_STANDARD_JSDOC =
-      DiagnosticGroups.registerGroup(
-          "nonStandardJsDocs",
+      DiagnosticGroups.registerGroup("nonStandardJsDocs",
           RhinoErrorReporter.BAD_JSDOC_ANNOTATION,
           RhinoErrorReporter.INVALID_PARAM,
-          RhinoErrorReporter.JSDOC_IMPORT_TYPE_WARNING,
-          CheckJSDoc.JSDOC_IN_BLOCK_COMMENT);
+          RhinoErrorReporter.JSDOC_IN_BLOCK_COMMENT);
 
   public static final DiagnosticGroup INVALID_CASTS =
       DiagnosticGroups.registerGroup("invalidCasts",
           TypeValidator.INVALID_CAST);
+
+  @Deprecated
+  public static final DiagnosticGroup FILEOVERVIEW_JSDOC =
+      DiagnosticGroups.registerDeprecatedGroup("fileoverviewTags");
 
   public static final DiagnosticGroup STRICT_MODULE_DEP_CHECK =
       DiagnosticGroups.registerGroup("strictModuleDepCheck",
@@ -236,6 +231,10 @@ public class DiagnosticGroups {
           VarCheck.NAME_REFERENCE_IN_EXTERNS_ERROR,
           VarCheck.UNDEFINED_EXTERN_VAR_ERROR);
 
+  public static final DiagnosticGroup AMBIGUOUS_FUNCTION_DECL =
+      DiagnosticGroups.registerGroup("ambiguousFunctionDecl",
+          StrictModeCheck.BAD_FUNCTION_DECLARATION);
+
   public static final DiagnosticGroup UNKNOWN_DEFINES =
       DiagnosticGroups.registerGroup("unknownDefines",
           ProcessDefines.UNKNOWN_DEFINE_WARNING);
@@ -250,7 +249,6 @@ public class DiagnosticGroups {
       DiagnosticGroups.registerGroup(
           "missingOverride",
           TypeCheck.HIDDEN_INTERFACE_PROPERTY,
-          TypeCheck.HIDDEN_PROTOTYPAL_SUPERTYPE_PROPERTY,
           TypeCheck.HIDDEN_SUPERCLASS_PROPERTY);
 
   public static final DiagnosticGroup MISSING_PROPERTIES =
@@ -270,6 +268,10 @@ public class DiagnosticGroups {
   public static final DiagnosticGroup MISSING_RETURN =
       DiagnosticGroups.registerGroup("missingReturn",
           CheckMissingReturn.MISSING_RETURN_STATEMENT);
+
+  public static final DiagnosticGroup INTERNET_EXPLORER_CHECKS =
+      DiagnosticGroups.registerGroup("internetExplorerChecks",
+          RhinoErrorReporter.TRAILING_COMMA);
 
   public static final DiagnosticGroup UNDEFINED_VARIABLES =
       DiagnosticGroups.registerGroup("undefinedVars",
@@ -298,20 +300,33 @@ public class DiagnosticGroups {
           FunctionTypeBuilder.ALL_DIAGNOSTICS,
           DiagnosticGroups.GLOBAL_THIS);
 
-  public static final DiagnosticGroup CHECK_PROTOTYPAL_TYPES =
-      DiagnosticGroups.registerGroup(
-          "checkPrototypalTypes",
-          TypeCheck.UNKNOWN_PROTOTYPAL_OVERRIDE,
-          TypeCheck.HIDDEN_PROTOTYPAL_SUPERTYPE_PROPERTY,
-          TypeCheck.HIDDEN_PROTOTYPAL_SUPERTYPE_PROPERTY_MISMATCH);
+  // Run the new type inference, but omit many warnings that are not
+  // found by the old type checker. This makes migration to NTI more manageable.
+  public static final DiagnosticGroup NEW_CHECK_TYPES_COMPATIBILITY_MODE =
+      DiagnosticGroups.registerDeprecatedGroup("newCheckTypesCompatibility");
 
-  // This group exists for the J2CL team to suppress the associated diagnostics using Java code
-  // rather than `@suppress` annotations.
-  public static final DiagnosticGroup CHECK_STATIC_OVERRIDES = CHECK_PROTOTYPAL_TYPES;
+  // no op
+  public static final DiagnosticGroup NEW_CHECK_TYPES_EXTRA_CHECKS =
+      DiagnosticGroups.registerDeprecatedGroup("newCheckTypesExtraChecks");
+
+  // Part of the new type inference
+  public static final DiagnosticGroup NEW_CHECK_TYPES =
+      DiagnosticGroups.registerDeprecatedGroup("newCheckTypes");
+
+  public static final DiagnosticGroup NEW_CHECK_TYPES_ALL_CHECKS =
+      DiagnosticGroups.registerDeprecatedGroup("newCheckTypesAllChecks");
 
   public static final DiagnosticGroup TOO_MANY_TYPE_PARAMS =
       DiagnosticGroups.registerGroup("tooManyTypeParams",
           RhinoErrorReporter.TOO_MANY_TEMPLATE_PARAMS);
+
+  @Deprecated
+  public static final DiagnosticGroup CHECK_EVENTFUL_OBJECT_DISPOSAL =
+      DiagnosticGroups.registerDeprecatedGroup("checkEventfulObjectDisposal");
+
+  public static final DiagnosticGroup OLD_REPORT_UNKNOWN_TYPES =
+      DiagnosticGroups.registerGroup("oldReportUnknownTypes", // undocumented
+          TypeCheck.UNKNOWN_EXPR_TYPE);
 
   public static final DiagnosticGroup STRICT_MISSING_PROPERTIES =
       DiagnosticGroups.registerGroup("strictMissingProperties",
@@ -361,10 +376,9 @@ public class DiagnosticGroups {
           CheckAccessControls.CONST_PROPERTY_REASSIGNED_VALUE);
 
   public static final DiagnosticGroup TYPE_INVALIDATION =
-      DiagnosticGroups.registerGroup(
-          "typeInvalidation",
-          PropertyRenamingDiagnostics.INVALIDATION,
-          PropertyRenamingDiagnostics.INVALIDATION_ON_TYPE);
+      DiagnosticGroups.registerGroup("typeInvalidation",
+          DisambiguateProperties.Warnings.INVALIDATION,
+          DisambiguateProperties.Warnings.INVALIDATION_ON_TYPE);
 
   public static final DiagnosticGroup DUPLICATE_VARS =
       DiagnosticGroups.registerGroup("duplicate",
@@ -374,6 +388,11 @@ public class DiagnosticGroups {
           TypeValidator.DUP_VAR_DECLARATION_TYPE_MISMATCH,
           TypeCheck.FUNCTION_MASKS_VARIABLE,
           VariableReferenceCheck.REDECLARED_VARIABLE);
+
+  public static final DiagnosticGroup ES3 =
+      DiagnosticGroups.registerGroup("es3",
+          RhinoErrorReporter.INVALID_ES3_PROP_NAME,
+          RhinoErrorReporter.TRAILING_COMMA);
 
   // In the conversion from ES5 to ES6, we remove the strict check that asserts functions
   // must be declared at the top of a new scope or immediately within the declaration of another
@@ -405,10 +424,7 @@ public class DiagnosticGroups {
 
   public static final DiagnosticGroup MISSING_PROVIDE =
       DiagnosticGroups.registerGroup(
-          "missingProvide",
-          CheckProvides.MISSING_PROVIDE_WARNING,
-          // TODO(b/143887932): Move this into a better DiagnosticGroup
-          ClosurePrimitiveErrors.MISSING_MODULE_OR_PROVIDE_FOR_FORWARD_DECLARE);
+          "missingProvide", CheckProvides.MISSING_PROVIDE_WARNING, MISSING_MODULE_OR_PROVIDE);
 
   public static final DiagnosticGroup UNRECOGNIZED_TYPE_ERROR =
       DiagnosticGroups.registerGroup("unrecognizedTypeError", // undocumented
@@ -430,13 +446,13 @@ public class DiagnosticGroups {
           UNDEFINED_VARIABLES,
           MISSING_PROVIDE,
           DiagnosticGroup.forType(FunctionTypeBuilder.RESOLVED_TAG_EMPTY),
-          DiagnosticGroup.forType(MISSING_MODULE_OR_PROVIDE),
-          DiagnosticGroup.forType(ModuleMapCreator.MISSING_NAMESPACE_IMPORT),
+          DiagnosticGroup.forType(ProcessClosurePrimitives.MISSING_PROVIDE_ERROR),
           MISSING_PROPERTIES,
           // triggered by typedefs with missing types
           DUPLICATE_VARS,
           // caused by a define depending on another define that's missing
-          DiagnosticGroup.forType(ProcessDefines.INVALID_DEFINE_VALUE),
+          DiagnosticGroup.forType(ProcessDefines.INVALID_DEFINE_INIT_ERROR),
+          DiagnosticGroup.forType(Es6ExternsCheck.MISSING_ES6_EXTERNS),
           // ES Module imports of files not reachable from this partial program.
           DiagnosticGroup.forType(ModuleLoader.LOAD_WARNING));
 
@@ -447,32 +463,15 @@ public class DiagnosticGroups {
           CheckMissingAndExtraRequires.MISSING_REQUIRE_FOR_GOOG_SCOPE,
           CheckMissingAndExtraRequires.MISSING_REQUIRE_STRICT_WARNING);
 
-  public static final DiagnosticGroup STRICTER_MISSING_REQUIRE =
-      DiagnosticGroups.registerGroup(
-          "stricterMissingRequire", CheckMissingRequires.MISSING_REQUIRE);
-
-  public static final DiagnosticGroup STRICTER_MISSING_REQUIRE_TYPE =
-      DiagnosticGroups.registerGroup(
-          "stricterMissingRequireType", CheckMissingRequires.MISSING_REQUIRE_TYPE);
-
-  public static final DiagnosticGroup STRICTER_MISSING_REQUIRE_IN_PROVIDES_FILE =
-      DiagnosticGroups.registerGroup(
-          "stricterMissingRequireInProvidesFile", // undocumented
-          CheckMissingRequires.MISSING_REQUIRE_IN_PROVIDES_FILE);
-
-  public static final DiagnosticGroup STRICTER_MISSING_REQUIRE_TYPE_IN_PROVIDES_FILE =
-      DiagnosticGroups.registerGroup(
-          "stricterMissingRequireTypeInProvidesFile", // undocumented
-          CheckMissingRequires.MISSING_REQUIRE_TYPE_IN_PROVIDES_FILE);
-
   public static final DiagnosticGroup STRICT_REQUIRES =
       DiagnosticGroups.registerGroup(
           "legacyGoogScopeRequire",
           CheckMissingAndExtraRequires.MISSING_REQUIRE_FOR_GOOG_SCOPE,
-          CheckExtraRequires.EXTRA_REQUIRE_WARNING);
+          CheckMissingAndExtraRequires.EXTRA_REQUIRE_WARNING);
 
   public static final DiagnosticGroup EXTRA_REQUIRE =
-      DiagnosticGroups.registerGroup("extraRequire", CheckExtraRequires.EXTRA_REQUIRE_WARNING);
+      DiagnosticGroups.registerGroup(
+          "extraRequire", CheckMissingAndExtraRequires.EXTRA_REQUIRE_WARNING);
 
   @GwtIncompatible("java.util.regex")
   public static final DiagnosticGroup MISSING_GETCSSNAME =
@@ -530,7 +529,6 @@ public class DiagnosticGroups {
           CheckSuspiciousCode.SUSPICIOUS_COMPARISON_WITH_NAN,
           CheckSuspiciousCode.SUSPICIOUS_IN_OPERATOR,
           CheckSuspiciousCode.SUSPICIOUS_INSTANCEOF_LEFT_OPERAND,
-          CheckSuspiciousCode.SUSPICIOUS_LEFT_OPERAND_OF_LOGICAL_OPERATOR,
           CheckSuspiciousCode.SUSPICIOUS_NEGATED_LEFT_OPERAND_OF_IN_OPERATOR,
           TypeCheck.DETERMINISTIC_TEST,
           ProcessCommonJSModules.SUSPICIOUS_EXPORTS_ASSIGNMENT);
@@ -564,30 +562,13 @@ public class DiagnosticGroups {
   public static final DiagnosticGroup UNNECESSARY_ESCAPE =
       DiagnosticGroups.registerGroup("unnecessaryEscape", RhinoErrorReporter.UNNECESSARY_ESCAPE);
 
-  public static final DiagnosticGroup TYPE_IMPORT_CODE_REFERENCES =
-      DiagnosticGroups.registerGroup(
-          "typeImportCodeReferences", CheckTypeImportCodeReferences.TYPE_IMPORT_CODE_REFERENCE);
-
-  public static final DiagnosticGroup PARTIAL_ALIAS =
-      DiagnosticGroups.registerGroup("partialAlias", CollapseProperties.PARTIAL_NAMESPACE_WARNING);
-
-  // This lint is given its own diagnostic group because it's harder to fix than other
-  // lint errors, and we want to discourage users from doing a blanket @suppress {lintChecks}.
-  // This is intentionally not public. It should not be enabled directly; instead enable lintChecks.
-  static final DiagnosticGroup USE_OF_GOOG_PROVIDE =
-      DiagnosticGroups.registerGroup("useOfGoogProvide", ClosureCheckModule.USE_OF_GOOG_PROVIDE);
-
   // Warnings reported by the linter. If you enable these as errors in your build targets,
   // the JS Compiler team will break your build and not rollback.
   public static final DiagnosticGroup LINT_CHECKS =
       DiagnosticGroups.registerGroup(
           "lintChecks", // undocumented
-          CheckJSDocStyle.LINT_DIAGNOSTICS,
-          USE_OF_GOOG_PROVIDE,
+          CheckJSDocStyle.ALL_DIAGNOSTICS,
           new DiagnosticGroup(
-              CheckClosureImports.LET_CLOSURE_IMPORT,
-              CheckConstantCaseNames.REASSIGNED_CONSTANT_CASE_NAME,
-              CheckConstantCaseNames.MISSING_CONST_PROPERTY,
               CheckEmptyStatements.USELESS_EMPTY_STATEMENT,
               CheckEnums.COMPUTED_PROP_NAME_IN_ENUM,
               CheckEnums.DUPLICATE_ENUM_VALUE,
@@ -603,26 +584,34 @@ public class DiagnosticGroups {
               CheckInterfaces.INTERFACE_SHOULD_NOT_TAKE_ARGS,
               CheckMissingSemicolon.MISSING_SEMICOLON,
               CheckNullabilityModifiers.MISSING_NULLABILITY_MODIFIER_JSDOC,
-              CheckNullabilityModifiers.NULL_MISSING_NULLABILITY_MODIFIER_JSDOC,
               CheckNullabilityModifiers.REDUNDANT_NULLABILITY_MODIFIER_JSDOC,
               CheckPrimitiveAsObject.NEW_PRIMITIVE_OBJECT,
               CheckPrimitiveAsObject.PRIMITIVE_OBJECT_DECLARATION,
               CheckPrototypeProperties.ILLEGAL_PROTOTYPE_MEMBER,
-              CheckProvidesSorted.PROVIDES_NOT_SORTED,
-              CheckRequiresSorted.REQUIRES_NOT_SORTED,
+              CheckRequiresAndProvidesSorted.DUPLICATE_REQUIRE,
+              CheckRequiresAndProvidesSorted.REQUIRES_NOT_SORTED,
+              CheckRequiresAndProvidesSorted.PROVIDES_NOT_SORTED,
+              CheckRequiresAndProvidesSorted.PROVIDES_AFTER_REQUIRES,
               CheckUnusedLabels.UNUSED_LABEL,
               CheckUselessBlocks.USELESS_BLOCK,
               ClosureCheckModule.DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE,
               ClosureCheckModule.GOOG_MODULE_IN_NON_MODULE,
               ClosureCheckModule.INCORRECT_SHORTNAME_CAPITALIZATION,
+              ClosureCheckModule.LET_GOOG_REQUIRE,
+              ClosureCheckModule.JSDOC_REFERENCE_TO_FULLY_QUALIFIED_IMPORT_NAME,
+              ClosureCheckModule.JSDOC_REFERENCE_TO_SHORT_IMPORT_BY_LONG_NAME_INCLUDING_SHORT_NAME,
+              ClosureCheckModule.REFERENCE_TO_FULLY_QUALIFIED_IMPORT_NAME,
+              ClosureCheckModule.REFERENCE_TO_SHORT_IMPORT_BY_LONG_NAME_INCLUDING_SHORT_NAME,
               ClosureRewriteModule.USELESS_USE_STRICT_DIRECTIVE,
               RhinoErrorReporter.JSDOC_MISSING_BRACES_WARNING));
 
-  public static final DiagnosticGroup STRICT_MODULE_CHECKS =
+  static final DiagnosticGroup STRICT_MODULE_CHECKS =
       DiagnosticGroups.registerGroup(
           "strictModuleChecks",
           ClosureCheckModule.AT_EXPORT_IN_NON_LEGACY_GOOG_MODULE,
           ClosureCheckModule.LET_GOOG_REQUIRE,
+          ClosureCheckModule.JSDOC_REFERENCE_TO_FULLY_QUALIFIED_IMPORT_NAME,
+          ClosureCheckModule.JSDOC_REFERENCE_TO_SHORT_IMPORT_BY_LONG_NAME_INCLUDING_SHORT_NAME,
           ClosureCheckModule.REFERENCE_TO_FULLY_QUALIFIED_IMPORT_NAME,
           ClosureCheckModule.REFERENCE_TO_SHORT_IMPORT_BY_LONG_NAME_INCLUDING_SHORT_NAME);
 
@@ -631,12 +620,10 @@ public class DiagnosticGroups {
   // ANALYZER_CHECKS was directly enabled or only appears to be, because
   // UNUSED_PRIVATE_PROPERTY was enabled.
   static final DiagnosticGroup ANALYZER_CHECKS_INTERNAL =
-      DiagnosticGroups.registerGroup(
-          "analyzerChecksInternal", // undocumented
+      DiagnosticGroups.registerGroup("analyzerChecksInternal", // undocumented
           CheckArrayWithGoogObject.ARRAY_PASSED_TO_GOOG_OBJECT,
           CheckNullableReturn.NULLABLE_RETURN,
           CheckNullableReturn.NULLABLE_RETURN_WITH_NAME,
-          ImplicitNullabilityCheck.IMPLICITLY_NONNULL_JSDOC,
           ImplicitNullabilityCheck.IMPLICITLY_NULLABLE_JSDOC);
 
   // Similar to the lintChecks group above, but includes things that cannot be done on a single
@@ -649,18 +636,20 @@ public class DiagnosticGroups {
           UNUSED_PRIVATE_PROPERTY,
           MISSING_CONST_PROPERTY);
 
+  public static final DiagnosticGroup USE_OF_GOOG_BASE =
+      DiagnosticGroups.registerGroup("useOfGoogBase",
+          ProcessClosurePrimitives.USE_OF_GOOG_BASE);
+
   public static final DiagnosticGroup CLOSURE_DEP_METHOD_USAGE_CHECKS =
-      DiagnosticGroups.registerGroup(
-          "closureDepMethodUsageChecks",
-          INVALID_CLOSURE_CALL_SCOPE_ERROR,
-          CLOSURE_CALL_CANNOT_BE_ALIASED_ERROR,
-          CLOSURE_CALL_CANNOT_BE_ALIASED_OUTSIDE_MODULE_ERROR);
+      DiagnosticGroups.registerGroup("closureDepMethodUsageChecks", INVALID_CLOSURE_CALL_ERROR);
 
   // This group exists so that generated code can suppress these
   // warnings. Not for general use. These diagnostics will most likely
   // be moved to the suspiciousCode group.
   static {
     DiagnosticGroups.registerGroup("transitionalSuspiciousCodeWarnings",
+        PeepholeFoldConstants.INDEX_OUT_OF_BOUNDS_ERROR,
+        PeepholeFoldConstants.NEGATING_A_NON_NUMBER_ERROR,
         PeepholeFoldConstants.FRACTIONAL_BITWISE_OPERAND);
   }
 
@@ -670,7 +659,7 @@ public class DiagnosticGroups {
   // In the future, we may carve out a subset of the conformance checks that is
   // OK to suppress.
   // For now, the only way to suppress a check at a granularity smaller than
-  // the file level is by using a allowlist file.
+  // the file level is by using a whitelist file.
   @GwtIncompatible("Conformance")
   public static final DiagnosticGroup CONFORMANCE_VIOLATIONS =
       DiagnosticGroups.registerGroup(
@@ -681,7 +670,7 @@ public class DiagnosticGroups {
   public static final DiagnosticGroup LATE_PROVIDE =
       DiagnosticGroups.registerGroup(
           "lateProvide", // undocumented
-          CheckClosureImports.LATE_PROVIDE_ERROR);
+          ProcessClosurePrimitives.LATE_PROVIDE_ERROR);
 
   public static final DiagnosticGroup MISSING_POLYFILL =
       DiagnosticGroups.registerGroup(
@@ -690,17 +679,8 @@ public class DiagnosticGroups {
   public static final DiagnosticGroup POLYMER =
       DiagnosticGroups.registerGroup("polymer", PolymerPassErrors.POLYMER_DESCRIPTOR_NOT_VALID);
 
-  static final DiagnosticGroup BOUNDED_GENERICS =
-      DiagnosticGroups.registerGroup(
-          "boundedGenerics",
-          RhinoErrorReporter.UNSUPPORTED_BOUNDED_GENERIC_TYPES,
-          RhinoErrorReporter.BOUNDED_GENERIC_TYPE_ERROR);
-
   // For internal use only, so there are no constants for these groups.
   static {
-    DiagnosticGroups.registerGroup(
-        "polymerBehavior", PolymerPassErrors.POLYMER_UNQUALIFIED_BEHAVIOR);
-
     DiagnosticGroups.registerGroup(
         "invalidProvide", ProcessClosurePrimitives.INVALID_PROVIDE_ERROR);
 
@@ -708,7 +688,9 @@ public class DiagnosticGroups {
 
     DiagnosticGroups.registerDeprecatedGroup("duplicateZipContents");
 
-    DiagnosticGroups.registerGroup("conflictingIjsFile", IjsErrors.CONFLICTING_IJS_FILE);
+    // Only exposed for tsickle-generated code.
+    DiagnosticGroups.registerGroup(
+        "googModuleExportNotAStatement", ClosureCheckModule.EXPORT_NOT_A_STATEMENT);
   }
 
   /** Adds warning levels by name. */

@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableSet;
 /**
  * Abstract message formatter providing default behavior for implementations
  * of {@link MessageFormatter} needing a {@link SourceExcerptProvider}.
+ *
  */
 public abstract class AbstractMessageFormatter implements MessageFormatter {
   private final SourceExcerptProvider source;

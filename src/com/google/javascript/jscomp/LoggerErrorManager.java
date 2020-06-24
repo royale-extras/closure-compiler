@@ -25,6 +25,7 @@ import java.util.logging.Logger;
  * An error manager that logs errors and warnings using a logger in addition to
  * collecting them in memory. Errors are logged at the SEVERE level and warnings
  * are logged at the WARNING level.
+ *
  */
 public final class LoggerErrorManager extends BasicErrorManager {
   private final MessageFormatter formatter;

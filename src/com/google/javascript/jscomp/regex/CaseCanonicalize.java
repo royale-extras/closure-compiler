@@ -40,6 +40,8 @@ import com.google.common.collect.ImmutableList;
  *   <li>Return cu.
  * </ul>
  * </blockquote>
+ *
+ * @author Mike Samuel &lt;mikesamuel@gmail.com&gt;
  */
 public final class CaseCanonicalize {
 

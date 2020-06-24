@@ -40,6 +40,7 @@ import javax.annotation.Nullable;
 /**
  * RenameVars renames all the variables names into short names, to reduce code
  * size and also to obfuscate the code.
+ *
  */
 final class RenameVars implements CompilerPass {
 
@@ -131,6 +132,8 @@ final class RenameVars implements CompilerPass {
    */
   private final boolean preserveFunctionExpressionNames;
 
+  private final boolean shouldShadow;
+
   private final boolean preferStableNames;
 
   /** Characters that shouldn't be used in variable names. */
@@ -147,14 +150,10 @@ final class RenameVars implements CompilerPass {
    * the instance may reset or reconfigure it, so the caller should
    * not expect any state to be preserved.
    */
-  RenameVars(
-      AbstractCompiler compiler,
-      String prefix,
-      boolean localRenamingOnly,
-      boolean preserveFunctionExpressionNames,
-      boolean generatePseudoNames,
-      boolean preferStableNames,
-      VariableMap prevUsedRenameMap,
+  RenameVars(AbstractCompiler compiler, String prefix,
+      boolean localRenamingOnly, boolean preserveFunctionExpressionNames,
+      boolean generatePseudoNames, boolean shouldShadow,
+      boolean preferStableNames, VariableMap prevUsedRenameMap,
       @Nullable char[] reservedCharacters,
       @Nullable Set<String> reservedNames,
       NameGenerator nameGenerator) {
@@ -169,6 +168,7 @@ final class RenameVars implements CompilerPass {
     }
     this.prevUsedRenameMap = prevUsedRenameMap;
     this.reservedCharacters = reservedCharacters;
+    this.shouldShadow = shouldShadow;
     this.preferStableNames = preferStableNames;
     if (reservedNames == null) {
       this.reservedNames = new HashSet<>();
@@ -245,7 +245,7 @@ final class RenameVars implements CompilerPass {
       boolean local =
           var != null
               && var.isLocal()
-              && (var.getScope().getParent().isLocal() || !var.isBleedingFunction());
+              && (var.scope.getParent().isLocal() || !var.isBleedingFunction());
 
       // Never rename references to the arguments array
       if (var != null && var.isArguments()) {
@@ -355,6 +355,12 @@ final class RenameVars implements CompilerPass {
     // Rename vars, sorted by frequency of occurrence to minimize code size.
     SortedSet<Assignment> varsByFrequency = new TreeSet<>(FREQUENCY_COMPARATOR);
     varsByFrequency.addAll(assignments.values());
+
+    if (shouldShadow) {
+      new ShadowVariables(
+          compiler, assignments, varsByFrequency, pseudoNameMap).process(
+              externs, root);
+    }
 
     // First try to reuse names from an earlier compilation.
     if (prevUsedRenameMap != null) {
@@ -565,8 +571,8 @@ final class RenameVars implements CompilerPass {
    * a = 0, b = 1, c = 2, d = 3
    */
   private int getLocalVarIndex(Var v) {
-    int num = v.getIndex();
-    Scope s = v.getScope().getParent();
+    int num = v.index;
+    Scope s = v.scope.getParent();
     if (s == null) {
       throw new IllegalArgumentException("Var is not local");
     }

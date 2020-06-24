@@ -41,6 +41,8 @@ import org.kohsuke.args4j.spi.BooleanOptionHandler;
 
 /**
  * Main binary that drives a RefasterJS refactoring.
+ *
+ * @author mknichel@google.com (Mark Knichel)
  */
 final class RefasterJs {
 

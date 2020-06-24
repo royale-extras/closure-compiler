@@ -17,15 +17,16 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.annotations.GwtIncompatible;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.CharStreams;
+import com.google.common.io.Resources;
 import com.google.javascript.rhino.StaticSourceFile;
+import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -34,21 +35,27 @@ import java.io.Serializable;
 import java.io.StringReader;
 import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URL;
+import java.net.URLConnection;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Enumeration;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.Objects;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 
 /**
  * An abstract representation of a source file that provides access to language-neutral features.
  * The source file can be loaded from various locations, such as from disk or from a preloaded
  * string.
+ *
+ * @author nicksantos@google.com (Nick Santos)
  */
 public class SourceFile implements StaticSourceFile, Serializable {
 
@@ -59,7 +66,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * be cached so that the source text stays consistent throughout a single
    * compile. */
   public interface Generator {
-    String getCode();
+    public String getCode();
   }
 
   /**
@@ -159,11 +166,21 @@ public class SourceFile implements StaticSourceFile, Serializable {
     return new StringReader(getCode());
   }
 
+  @VisibleForTesting
+  String getCodeNoCache() {
+    return code;
+  }
+
   void setCode(String sourceCode) {
-    code =
-        sourceCode != null && sourceCode.startsWith(UTF8_BOM)
-            ? sourceCode.substring(UTF8_BOM.length())
-            : sourceCode;
+    this.setCode(sourceCode, false);
+  }
+
+  void setCode(String sourceCode, boolean removeUtf8Bom) {
+    if (removeUtf8Bom && sourceCode != null && sourceCode.startsWith(UTF8_BOM)) {
+      code = sourceCode.substring(UTF8_BOM.length());
+    } else {
+      code = sourceCode;
+    }
     resetLineOffsets();
   }
 
@@ -200,8 +217,14 @@ public class SourceFile implements StaticSourceFile, Serializable {
     return kind;
   }
 
-  /** Sets the source kind. */
-  public void setKind(SourceKind kind) {
+  /**
+   * Sets the source kind.
+   *
+   * <p>TODO(tjgq): Move the extern bit into the AST, so we can make the kind immutable. This is
+   * currently not possible because for some files the extern bit is not determined by the contents
+   * (e.g. files passed under the --externs flag and missing an externs annotation).
+   */
+  void setKind(SourceKind kind) {
     this.kind = kind;
   }
 
@@ -267,61 +290,13 @@ public class SourceFile implements StaticSourceFile, Serializable {
   }
 
   /**
-   * Gets the source lines starting at `lineNumber` and continuing until `length`. Omits any
-   * trailing newlines.
+   * Get a region around the indicated line number. The exact definition of a
+   * region is implementation specific, but it must contain the line indicated
+   * by the line number. A region must not start or end by a carriage return.
    *
    * @param lineNumber the line number, 1 being the first line of the file.
-   * @param length the number of characters desired, starting at the 0th character of the specified
-   *     line. If negative or 0, returns a single line.
-   * @return The line(s) indicated. Returns {@code null} if it does not exist or if there was an IO
-   *     exception.
-   */
-  public Region getLines(int lineNumber, int length) {
-    findLineOffsets();
-    if (lineNumber > lineOffsets.length) {
-      return null;
-    }
-
-    if (lineNumber < 1) {
-      lineNumber = 1;
-    }
-    if (length <= 0) {
-      length = 1;
-    }
-
-    String js = "";
-    try {
-      js = getCode();
-    } catch (IOException e) {
-      return null;
-    }
-
-    int pos = lineOffsets[lineNumber - 1];
-    if (pos == js.length()) {
-      return new SimpleRegion(
-          lineNumber, lineNumber, ""); // Happens when asking for the last empty line in a file.
-    }
-    int endChar = pos;
-    int endLine = lineNumber;
-    // go through lines until we've reached the end of the file or met the specified length.
-    for (; endChar < pos + length && endLine <= lineOffsets.length; endLine++) {
-      endChar = (endLine < lineOffsets.length) ? lineOffsets[endLine] : js.length();
-    }
-
-    if (js.charAt(endChar - 1) == '\n') {
-      return new SimpleRegion(lineNumber, endLine, js.substring(pos, endChar - 1));
-    }
-    return new SimpleRegion(lineNumber, endLine, js.substring(pos, endChar));
-  }
-
-  /**
-   * Get a region around the indicated line number. The exact definition of a region is
-   * implementation specific, but it must contain the line indicated by the line number. A region
-   * must not start or end by a carriage return.
-   *
-   * @param lineNumber the line number, 1 being the first line of the file.
-   * @return The line indicated. Returns {@code null} if it does not exist, or if there was an IO
-   *     exception.
+   * @return The line indicated. Returns {@code null} if it does not exist,
+   *     or if there was an IO exception.
    */
   public Region getRegion(int lineNumber) {
     String js = "";
@@ -370,23 +345,17 @@ public class SourceFile implements StaticSourceFile, Serializable {
     return fileName;
   }
 
-  @GwtIncompatible("fromZipInput")
+  @GwtIncompatible("java.util.zip.ZipFile")
   public static List<SourceFile> fromZipFile(String zipName, Charset inputCharset)
       throws IOException {
-    try (InputStream input = new FileInputStream(zipName)) {
-      return fromZipInput(zipName, input, inputCharset);
-    }
-  }
-
-  @GwtIncompatible("java.util.zip.ZipInputStream")
-  public static List<SourceFile> fromZipInput(
-      String zipName, InputStream input, Charset inputCharset) throws IOException {
     final String absoluteZipPath = new File(zipName).getAbsolutePath();
     List<SourceFile> sourceFiles = new ArrayList<>();
 
-    try (ZipInputStream in = new ZipInputStream(input, inputCharset)) {
-      ZipEntry zipEntry;
-      while ((zipEntry = in.getNextEntry()) != null) {
+    try (ZipFile zipFile = new ZipFile(absoluteZipPath)) {
+      Enumeration<? extends ZipEntry> zipEntries = zipFile.entries();
+
+      while (zipEntries.hasMoreElements()) {
+        ZipEntry zipEntry = zipEntries.nextElement();
         String entryName = zipEntry.getName();
         if (!entryName.endsWith(".js")) { // Only accept js files
           continue;
@@ -398,48 +367,36 @@ public class SourceFile implements StaticSourceFile, Serializable {
   }
 
   private static final String BANG_SLASH = "!/";
+  private static final String JAR_URL_PREFIX = "jar:file:";
 
   private static boolean isZipEntry(String path) {
-    return path.contains(".zip!" + File.separator)
-        && (path.endsWith(".js") || path.endsWith(".js.map"));
+    return path.contains(".zip!/") && (path.endsWith(".js") || path.endsWith(".js.map"));
   }
 
   @GwtIncompatible("java.io.File")
-  private static SourceFile fromZipEntry(String zipURL, Charset inputCharset, SourceKind kind) {
+  private static SourceFile fromZipEntry(String zipURL, Charset inputCharset) {
     checkArgument(isZipEntry(zipURL));
-    String[] components = zipURL.split(Pattern.quote(BANG_SLASH.replace("/", File.separator)));
+    String[] components = zipURL.split(BANG_SLASH);
     try {
       String zipPath = components[0];
       String relativePath = components[1];
-      return fromZipEntry(zipPath, zipPath, relativePath, inputCharset, kind);
+      return fromZipEntry(zipPath, zipPath, relativePath, inputCharset);
     } catch (MalformedURLException e) {
       throw new RuntimeException(e);
     }
   }
 
-  @GwtIncompatible("java.io.File")
+  @GwtIncompatible("java.net.URL")
   public static SourceFile fromZipEntry(
       String originalZipPath, String absoluteZipPath, String entryPath, Charset inputCharset)
       throws MalformedURLException {
-    return fromZipEntry(
-        originalZipPath, absoluteZipPath, entryPath, inputCharset, SourceKind.STRONG);
-  }
+    String zipEntryPath = JAR_URL_PREFIX + absoluteZipPath + BANG_SLASH + entryPath;
+    URL zipEntryUrl = new URL(zipEntryPath);
 
-  @GwtIncompatible("java.io.File")
-  public static SourceFile fromZipEntry(
-      String originalZipPath,
-      String absoluteZipPath,
-      String entryPath,
-      Charset inputCharset,
-      SourceKind kind)
-      throws MalformedURLException {
-    // No longer throws MalformedURLException but we are keeping it for backward compatibility.
     return builder()
-        .withKind(kind)
         .withCharset(inputCharset)
         .withOriginalPath(originalZipPath + BANG_SLASH + entryPath)
-        .buildFromZipEntry(
-            new ZipEntryReader(absoluteZipPath, entryPath.replace(File.separator, "/")));
+        .buildFromUrl(zipEntryUrl);
   }
 
   @GwtIncompatible("java.io.File")
@@ -544,19 +501,15 @@ public class SourceFile implements StaticSourceFile, Serializable {
 
     @GwtIncompatible("java.io.File")
     public SourceFile buildFromPath(Path path) {
-      checkNotNull(path);
-      checkNotNull(charset);
       if (isZipEntry(path.toString())) {
-        return fromZipEntry(path.toString(), charset, kind);
+        return fromZipEntry(path.toString(), charset);
       }
       return new OnDisk(path, originalPath, charset, kind);
     }
 
-    @GwtIncompatible("java.io.File")
-    public SourceFile buildFromZipEntry(ZipEntryReader zipEntryReader) {
-      checkNotNull(zipEntryReader);
-      checkNotNull(charset);
-      return new SourceFile.AtZip(zipEntryReader, originalPath, charset, kind);
+    @GwtIncompatible("java.net.URL")
+    public SourceFile buildFromUrl(URL url) {
+      return new AtUrl(url, originalPath, charset, kind);
     }
 
     public SourceFile buildFromCode(String fileName, String code) {
@@ -578,34 +531,28 @@ public class SourceFile implements StaticSourceFile, Serializable {
     }
   }
 
+
   //////////////////////////////////////////////////////////////////////////////
   // Implementations
 
-  /** A source file where the code has been preloaded. */
-  private static class Preloaded extends SourceFile {
-    private static final long serialVersionUID = 2L;
+  /**
+   * A source file where the code has been preloaded.
+   */
+  static class Preloaded extends SourceFile {
+    private static final long serialVersionUID = 1L;
 
     Preloaded(String fileName, String originalPath, String code, SourceKind kind) {
       super(fileName, kind);
       super.setOriginalPath(originalPath);
       super.setCode(code);
     }
-
-    @GwtIncompatible("ObjectOutputStream")
-    private void writeObject(java.io.ObjectOutputStream os) throws Exception {
-      os.defaultWriteObject();
-      os.writeObject(getCode());
-    }
-
-    @GwtIncompatible("ObjectInputStream")
-    private void readObject(java.io.ObjectInputStream in) throws Exception {
-      in.defaultReadObject();
-      super.setCode((String) in.readObject());
-    }
   }
 
-  /** A source file where the code will be dynamically generated from the injected interface. */
-  private static class Generated extends SourceFile {
+  /**
+   * A source file where the code will be dynamically generated
+   * from the injected interface.
+   */
+  static class Generated extends SourceFile {
     // Avoid serializing generator and remove the burden to make classes that implement
     // Generator serializable. There should be no need to obtain generated source in the
     // second stage of compilation. Making the generator transient relies on not clearing the
@@ -649,16 +596,18 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * delay loading the code into memory as long as possible.
    */
   @GwtIncompatible("com.google.common.io.CharStreams")
-  private static class OnDisk extends SourceFile {
+  static class OnDisk extends SourceFile {
     private static final long serialVersionUID = 1L;
     private transient Path path;
-    private transient Charset inputCharset;
+    private transient Charset inputCharset = UTF_8;
 
     OnDisk(Path path, String originalPath, Charset c, SourceKind kind) {
       super(path.toString(), kind);
       this.path = path;
-      this.inputCharset = c;
       setOriginalPath(originalPath);
+      if (c != null) {
+        this.setCharset(c);
+      }
     }
 
     @Override
@@ -672,7 +621,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
           throw new IOException("Failed to read: " + path + ", is this input UTF-8 encoded?", e);
         }
 
-        super.setCode(cachedCode);
+        super.setCode(cachedCode, Objects.equals(this.getCharset(), inputCharset));
         // Byte Order Mark can be removed by setCode
         cachedCode = super.getCode();
       }
@@ -699,18 +648,41 @@ public class SourceFile implements StaticSourceFile, Serializable {
       super.setCode(null);
     }
 
+    /**
+     * Store the Charset specification as the string version of the name,
+     * rather than the Charset itself.  This allows us to serialize the
+     * SourceFile class.
+     * @param c charset to use when reading the input.
+     */
+    public void setCharset(Charset c) {
+      inputCharset = c;
+    }
+
+    /**
+     * Get the Charset specifying how we're supposed to read the file
+     * in off disk and into UTF-16.  This is stored as a strong to allow
+     * SourceFile to be serialized.
+     * @return Charset object representing charset to use.
+     */
+    public Charset getCharset() {
+      return inputCharset;
+    }
+
     @GwtIncompatible("ObjectOutputStream")
     private void writeObject(java.io.ObjectOutputStream out) throws Exception {
+      // Clear the cached source.
       out.defaultWriteObject();
-      out.writeObject(inputCharset.name());
-      out.writeObject(path.toUri());
+      out.writeObject(inputCharset != null ? inputCharset.name() : null);
+      out.writeObject(path != null ? path.toUri() : null);
     }
 
     @GwtIncompatible("ObjectInputStream")
     private void readObject(java.io.ObjectInputStream in) throws Exception {
       in.defaultReadObject();
-      inputCharset = Charset.forName((String) in.readObject());
-      path = Paths.get((URI) in.readObject());
+      String inputCharsetName = (String) in.readObject();
+      inputCharset = inputCharsetName != null ? Charset.forName(inputCharsetName) : null;
+      URI uri = (URI) in.readObject();
+      path = uri != null ? Paths.get(uri) : null;
 
       // Code will be reread or restored.
       super.setCode(null);
@@ -718,20 +690,29 @@ public class SourceFile implements StaticSourceFile, Serializable {
   }
 
   /**
-   * A source file at a zip where the code is only read into memory if absolutely necessary. We will
-   * try to delay loading the code into memory as long as possible.
+   * A source file at a URL where the code is only read into memory if absolutely
+   * necessary. We will try to delay loading the code into memory as long as
+   * possible.
+   * <p>
+   * In practice this is used to load code in entries inside of zip files.
    */
-  @GwtIncompatible("java.io.File")
-  private static class AtZip extends SourceFile {
+  @GwtIncompatible("java.net.URL")
+  static class AtUrl extends SourceFile {
     private static final long serialVersionUID = 1L;
-    private final ZipEntryReader zipEntryReader;
-    private transient Charset inputCharset;
+    private final URL url;
 
-    AtZip(ZipEntryReader zipEntryReader, String originalPath, Charset c, SourceKind kind) {
-      super(originalPath, kind);
-      this.inputCharset = c;
-      this.zipEntryReader = zipEntryReader;
-      setOriginalPath(originalPath);
+    // This is stored as a String, but passed in and out as a Charset so that
+    // we can serialize the class.
+    // Default input file format for the compiler has always been UTF_8.
+    private String inputCharset = UTF_8.name();
+
+    AtUrl(URL url, String originalPath, Charset c, SourceKind kind) {
+      super(originalPath, SourceKind.STRONG);
+      super.setOriginalPath(originalPath);
+      this.url = url;
+      if (c != null) {
+        this.setCharset(c);
+      }
     }
 
     @Override
@@ -739,8 +720,16 @@ public class SourceFile implements StaticSourceFile, Serializable {
       String cachedCode = super.getCode();
 
       if (cachedCode == null) {
-        cachedCode = zipEntryReader.read(inputCharset);
-        super.setCode(cachedCode);
+        URLConnection urlConnection = url.openConnection();
+        // Perform the read through the URL connection while making sure that it does not internally
+        // cache, because its default internal caching would defeat our own cache management.
+        urlConnection.setUseCaches(false);
+        InputStream inputStream = urlConnection.getInputStream();
+        cachedCode = CharStreams.toString(new InputStreamReader(inputStream, this.getCharset()));
+        // Must close the stream or else the cache won't be cleared.
+        inputStream.close();
+
+        super.setCode(cachedCode, Objects.equals(this.getCharset(), StandardCharsets.UTF_8));
         // Byte Order Mark can be removed by setCode
         cachedCode = super.getCode();
       }
@@ -756,7 +745,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
         return super.getCodeReader();
       } else {
         // If we haven't pulled the code into memory yet, don't.
-        return zipEntryReader.getReader(inputCharset);
+        return Resources.asCharSource(url, StandardCharsets.UTF_8).openStream();
       }
     }
 
@@ -767,17 +756,29 @@ public class SourceFile implements StaticSourceFile, Serializable {
       super.setCode(null);
     }
 
-    @GwtIncompatible("ObjectOutputStream")
-    private void writeObject(java.io.ObjectOutputStream os) throws Exception {
-      os.defaultWriteObject();
-      os.writeObject(inputCharset.name());
+    /**
+     * Store the Charset specification as the string version of the name,
+     * rather than the Charset itself.  This allows us to serialize the
+     * SourceFile class.
+     * @param c charset to use when reading the input.
+     */
+    public void setCharset(Charset c) {
+      inputCharset = c.name();
+    }
+
+    /**
+     * Get the Charset specifying how we're supposed to read the URL
+     * into UTF-16.  This is stored as a string to allow SourceFile to be
+     * serialized.
+     * @return Charset object representing charset to use.
+     */
+    public Charset getCharset() {
+      return Charset.forName(inputCharset);
     }
 
     @GwtIncompatible("ObjectInputStream")
     private void readObject(java.io.ObjectInputStream in) throws Exception {
       in.defaultReadObject();
-      inputCharset = Charset.forName((String) in.readObject());
-
       // Code will be reread or restored.
       super.setCode(null);
     }

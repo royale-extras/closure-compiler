@@ -35,6 +35,11 @@ public final class CheckSideEffectsTest extends CompilerTestCase {
   }
 
   @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
+  @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new CheckSideEffects(compiler, true, true);
   }
@@ -143,13 +148,6 @@ public final class CheckSideEffectsTest extends CompilerTestCase {
     testWarning("var f = s => {key:s}", e);
     testWarning("var f = s => {key:s + 1}", e);
     testWarning("var f = s => {s}", e);
-  }
-
-  // just here to make sure import.meta doesn't break anything
-  @Test
-  public void testImportMeta() {
-    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
-    testSame("var x = import.meta");
   }
 
   @Test

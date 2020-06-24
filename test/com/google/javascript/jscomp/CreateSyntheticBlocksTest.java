@@ -61,6 +61,11 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
     };
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   // TODO(johnlenz): Add tests to the IntegrationTest.
 
   @Test

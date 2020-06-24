@@ -17,7 +17,6 @@
 package com.google.javascript.jscomp;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -37,8 +36,6 @@ public final class UnreachableCodeEliminationTest extends CompilerTestCase {
   @Override
   public void setUp() throws Exception {
     super.setUp();
-
-    enableNormalize();
     enableComputeSideEffects();
   }
 
@@ -483,35 +480,18 @@ public final class UnreachableCodeEliminationTest extends CompilerTestCase {
 
   @Test
   public void testGenerators() {
-    // TODO(b/129557644): Make this test more broad.
     test(
         lines(
-            "function* f() {", //
-            "  for (;;) {",
-            "    yield 1;",
-            "  }",
-            "  x = 1;",
-            "}"),
-        lines(
-            "function* f() {", //
-            "  for (;;) {",
-            "    yield 1;",
-            "  }",
-            "}"));
+            "function* f() {", "  while(true) {", "    yield 1;", "  }", "  x = 1;", "}"),
+        lines("function* f() {", "  while(true) {", "    yield 1;", "  }", "}"));
 
-    testSame(
-        lines(
-            "function* f() {", //
-            "  for (;;) {",
-            "    yield 1;",
-            "  }",
-            "}"));
+    testSame(lines("function* f() {", "  while(true) {", "    yield 1;", "  }", "}"));
 
     testSame(
         lines(
             "function* f() {",
             "  let i = 0;",
-            "  for (;;) {",
+            "  while (true) {",
             "    if (i < 10) {",
             "      yield i;",
             "    } else {",
@@ -537,9 +517,7 @@ public final class UnreachableCodeEliminationTest extends CompilerTestCase {
   }
 
   // TODO (simranarora) Make the pass handle ES6 Modules correctly.
-  @Test
-  @Ignore
-  public void testRemoveFromImportStatement_ES6Modules() {
+  public void disabled_testRemoveFromImportStatement_ES6Modules() {
     // Error: Invalid attempt to remove: STRING ./foo 1 [length: 7] [source_file: testcode] from
     // IMPORT 1 [length: 24] [source_file: testcode]
     testSame("import foo from './foo'; foo('hello');");
@@ -558,10 +536,10 @@ public final class UnreachableCodeEliminationTest extends CompilerTestCase {
   }
 
   @Test
-  public void testLetConstBlocks_inFunction_exportedFromEs6Module() {
+  public void testLetConstBlocks_withES6Modules() {
     test(
-        "export function f() {return 1; let a; }", //
-        "export function f() {return 1;};");
+        "export function f() {return 1; let a; } f();",
+        "export function f() {return 1;}");
 
     test(
         "export function f() {return 1; const a = 1; }",
@@ -576,9 +554,7 @@ public final class UnreachableCodeEliminationTest extends CompilerTestCase {
   // SCRIPT
   //   MODULE_BODY
   // TODO(tbreisacher): Fix and enable.
-  @Test
-  @Ignore
-  public void testLetConstBlocks_asEs6ModuleExport() {
+  public void disabled_testLetConstBlocks_withES6Modules2() {
     test("export let x = 2;", "");
   }
 

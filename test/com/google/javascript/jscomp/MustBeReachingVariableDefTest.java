@@ -52,7 +52,10 @@ public final class MustBeReachingVariableDefTest {
     assertNotMatch("D:var x; U:x; x=1; x");
     assertMatch("D: var x = 1; var y = 2; y; U:x");
 
+    assertMatch("D:let x=1; U: x");
     assertMatch("let x; D:x=1; U: x");
+
+    assertMatch("D: const x = 1; U: x");
   }
 
   @Test
@@ -76,14 +79,6 @@ public final class MustBeReachingVariableDefTest {
   public void testConditional() {
     assertMatch("var x=0,y; D:(x=1)&&y; U:x");
     assertNotMatch("var x=0,y; D:y&&(x=1); U:x");
-  }
-
-  @Test
-  public void nullishCoalesce() {
-    // LHS is always executed so the definition of  x = 1 must be reached
-    assertMatch("var x=0,y; D:(x=1)??y; U:x");
-    // definitions in RHS are not always executed
-    assertNotMatch("var x=0,y; D:y??(x=1); U:x");
   }
 
   @Test
@@ -160,25 +155,25 @@ public final class MustBeReachingVariableDefTest {
   @Test
   public void testFunctionParams1() {
     computeDefUse("if (param2) { D: param1 = 1; U: param1 }");
-    assertThat(defUse.getDefNode("param1", use)).isSameInstanceAs(def);
+    assertThat(defUse.getDefNode("param1", use)).isSameAs(def);
   }
 
   @Test
   public void testFunctionParams2() {
     computeDefUse("if (param2) { D: param1 = 1} U: param1");
-    assertThat(defUse.getDefNode("param1", use)).isNotSameInstanceAs(def);
+    assertThat(defUse.getDefNode("param1", use)).isNotSameAs(def);
   }
 
   @Test
   public void testArgumentsObjectModifications() {
     computeDefUse("D: param1 = 1; arguments[0] = 2; U: param1");
-    assertThat(defUse.getDefNode("param1", use)).isNotSameInstanceAs(def);
+    assertThat(defUse.getDefNode("param1", use)).isNotSameAs(def);
   }
 
   @Test
   public void testArgumentsObjectEscaped() {
     computeDefUse("D: param1 = 1; var x = arguments; x[0] = 2; U: param1");
-    assertThat(defUse.getDefNode("param1", use)).isNotSameInstanceAs(def);
+    assertThat(defUse.getDefNode("param1", use)).isNotSameAs(def);
   }
 
   @Test
@@ -222,7 +217,7 @@ public final class MustBeReachingVariableDefTest {
    */
   private void assertMatch(String src) {
     computeDefUse(src);
-    assertThat(defUse.getDefNode("x", use)).isSameInstanceAs(def);
+    assertThat(defUse.getDefNode("x", use)).isSameAs(def);
   }
 
   /**
@@ -230,7 +225,7 @@ public final class MustBeReachingVariableDefTest {
    */
   private void assertNotMatch(String src) {
     computeDefUse(src);
-    assertThat(defUse.getDefNode("x", use)).isNotSameInstanceAs(def);
+    assertThat(defUse.getDefNode("x", use)).isNotSameAs(def);
   }
 
   /**
@@ -242,9 +237,9 @@ public final class MustBeReachingVariableDefTest {
     CompilerOptions options = new CompilerOptions();
     options.setCodingConvention(new GoogleCodingConvention());
     compiler.init(ImmutableList.<SourceFile>of(), ImmutableList.<SourceFile>of(), options);
-    compiler.getOptions().setLanguageIn(LanguageMode.ECMASCRIPT_NEXT_IN);
-    compiler.getOptions().setLanguageOut(LanguageMode.ECMASCRIPT_NEXT_IN);
-    SyntacticScopeCreator scopeCreator = new SyntacticScopeCreator(compiler);
+    compiler.getOptions().setLanguageIn(LanguageMode.ECMASCRIPT_2017);
+    compiler.getOptions().setLanguageOut(LanguageMode.ECMASCRIPT_2017);
+    Es6SyntacticScopeCreator scopeCreator = new Es6SyntacticScopeCreator(compiler);
     src = "function _FUNCTION(param1, param2){" + src + "}";
     Node script = compiler.parseTestCode(src);
     Node root = script.getFirstChild();

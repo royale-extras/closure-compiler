@@ -18,7 +18,6 @@ package com.google.javascript.jscomp;
 
 import static com.google.javascript.jscomp.DeadPropertyAssignmentElimination.ASSUME_CONSTRUCTORS_HAVENT_ESCAPED;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -32,13 +31,6 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
   public void setUp() throws Exception {
     super.setUp();
     enableGatherExternProperties();
-  }
-
-  @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_NEXT_IN);
-    return options;
   }
 
   @Test
@@ -406,15 +398,6 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
         lines(
             "function f(x) {",
             "  return (x.p = 0) && (x.p = 3);", // Second assignment will never execute.
-            "}"));
-  }
-
-  @Test
-  public void nullishCoalesce() {
-    testSame(
-        lines(
-            "function f(x) {",
-            "  return (x.p = 2) ?? (x.p = 3);", // Second assignment will never execute.
             "}"));
   }
 
@@ -995,37 +978,6 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
   }
 
   @Test
-  public void testEs5Getter_computed() {
-    test(
-        lines(
-            "var bar = {",
-            "  enabled: false,",
-            "  get ['baz']() {",
-            "    return this.enabled ? 'enabled' : 'disabled';",
-            "  }",
-            "};",
-            "function f() {",
-            "  bar.enabled = true;",
-            "  var ret = bar.baz;",
-            "  bar.enabled = false;",
-            "  return ret;",
-            "};"),
-        lines(
-            "var bar = {",
-            "  enabled: false,",
-            "  get ['baz']() {",
-            "    return this.enabled ? 'enabled' : 'disabled';",
-            "  }",
-            "};",
-            "function f() {",
-            "  true;",
-            "  var ret = bar.baz;",
-            "  bar.enabled = false;",
-            "  return ret;",
-            "};"));
-  }
-
-  @Test
   public void testEs5Setter() {
     testSame(
         lines(
@@ -1044,37 +996,8 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
   }
 
   @Test
-  public void testEs5Setter_computed() {
-    test(
-        lines(
-            "var bar = {",
-            "  enabled: false,",
-            "  set ['baz'](x) {",
-            "    this.x = this.enabled ? x * 2 : x;",
-            "  }",
-            "};",
-            "function f() {",
-            "  bar.enabled = true;",
-            "  bar.baz = 10;",
-            "  bar.enabled = false;",
-            "};"),
-        lines(
-            "var bar = {",
-            "  enabled: false,",
-            "  set ['baz'](x) {",
-            "    this.x = this.enabled ? x * 2 : x;",
-            "  }",
-            "};",
-            "function f() {",
-            "  true;",
-            "  bar.baz = 10;",
-            "  bar.enabled = false;",
-            "};"));
-  }
-
-  @Test
   public void testObjectDefineProperty_aliasedParams() {
-    test(
+    testSame(
         lines(
             "function addGetter(obj, propName) {",
             "  Object.defineProperty(obj, propName, {",
@@ -1092,29 +1015,10 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
             "function z() {",
             "  var x = {};",
             "  x.bar = 10;",
-            "  x.bar = 20;",
-            "}"),
-        lines(
-            "function addGetter(obj, propName) {",
-            "  Object.defineProperty(obj, propName, {",
-            "    get: function() { return this[propName]; }",
-            "  });",
-            "};",
-            "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
-            "addGetter(Foo.prototype, 'x');",
-            "function f() {",
-            "  var foo = new Foo()",
-            "  true;",
-            "  foo.bar = 10;",
-            "  foo.enabled = false;",
-            "}",
-            "function z() {",
-            "  var x = {};",
-            "  10;",
             "  x.bar = 20;",
             "}"));
 
-    test(
+    testSame(
         lines(
             "function f() {",
             "  var foo = new Foo()",
@@ -1132,25 +1036,6 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
             "function z() {",
             "  var x = {};",
             "  x.bar = 10;",
-            "  x.bar = 20;",
-            "}"),
-        lines(
-            "function f() {",
-            "  var foo = new Foo()",
-            "  true;",
-            "  foo.bar = 10;",
-            "  foo.enabled = false;",
-            "}",
-            "function addGetter(obj, propName) {",
-            "  Object.defineProperty(obj, propName, {",
-            "    get: function() { return this[propName]; }",
-            "  });",
-            "};",
-            "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
-            "addGetter(Foo.prototype, 'x');",
-            "function z() {",
-            "  var x = {};",
-            "  10;",
             "  x.bar = 20;",
             "}"));
   }
@@ -1179,7 +1064,7 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
 
   @Test
   public void testObjectDefineProperty_aliasedPropName() {
-    test(
+    testSame(
         lines(
             "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
             "var x = 'bar';",
@@ -1195,23 +1080,6 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
             "function z() {",
             "  var x = {};",
             "  x.bar = 10;",
-            "  x.bar = 20;",
-            "}"),
-        lines(
-            "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
-            "var x = 'bar';",
-            "Object.defineProperty(Foo.prototype, x, {",
-            "  set: function (x) { this.x = this.enabled ? x * 2 : x; }",
-            "});",
-            "function f() {",
-            "  var foo = new Foo()",
-            "  true;",
-            "  foo.bar = 10;",
-            "  foo.enabled = false;",
-            "}",
-            "function z() {",
-            "  var x = {};",
-            "  10;",
             "  x.bar = 20;",
             "}"));
 
@@ -1254,7 +1122,7 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
 
   @Test
   public void testObjectDefineProperty_aliasedPropSet() {
-    test(
+    testSame(
         lines(
             "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
             "var x = {",
@@ -1270,30 +1138,13 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
             "function z() {",
             "  var x = {};",
             "  x.bar = 10;",
-            "  x.bar = 20;",
-            "}"),
-        lines(
-            "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
-            "var x = {",
-            "  set: function (x) { this.x = this.enabled ? x * 2 : x; }",
-            "};",
-            "Object.defineProperty(Foo.prototype, 'bar', x);",
-            "function f() {",
-            "  var foo = new Foo()",
-            "  true;",
-            "  foo.bar = 10;",
-            "  foo.enabled = false;",
-            "}",
-            "function z() {",
-            "  var x = {};",
-            "  10;",
             "  x.bar = 20;",
             "}"));
   }
 
   @Test
   public void testObjectDefineProperties_aliasedPropertyMap() {
-    test(
+    testSame(
         lines(
             "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
             "var properties = {bar: {",
@@ -1309,27 +1160,10 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
             "function z() {",
             "  var x = {};",
             "  x.bar = 10;",
-            "  x.bar = 20;",
-            "}"),
-        lines(
-            "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
-            "var properties = {bar: {",
-            "  set: function (x) { this.x = this.enabled ? x * 2 : x; }",
-            "}};",
-            "Object.defineProperties(Foo.prototype, properties);",
-            "function f() {",
-            "  var foo = new Foo()",
-            "  true;",
-            "  foo.bar = 10;",
-            "  foo.enabled = false;",
-            "}",
-            "function z() {",
-            "  var x = {};",
-            "  10;",
             "  x.bar = 20;",
             "}"));
 
-    test(
+    testSame(
         lines(
             "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
             "var properties = {",
@@ -1345,23 +1179,6 @@ public class DeadPropertyAssignmentEliminationTest extends CompilerTestCase {
             "function z() {",
             "  var x = {};",
             "  x.bar = 10;",
-            "  x.bar = 20;",
-            "}"),
-        lines(
-            "/** @constructor */ function Foo() { this.enabled = false; this.x = null; };",
-            "var properties = {",
-            "  set: function (x) { this.x = this.enabled ? x * 2 : x; }",
-            "};",
-            "Object.defineProperties(Foo.prototype, {bar: properties});",
-            "function f() {",
-            "  var foo = new Foo()",
-            "  true;",
-            "  foo.bar = 10;",
-            "  foo.enabled = false;",
-            "}",
-            "function z() {",
-            "  var x = {};",
-            "  10;",
             "  x.bar = 20;",
             "}"));
   }

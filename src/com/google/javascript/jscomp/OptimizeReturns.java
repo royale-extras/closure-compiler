@@ -34,6 +34,7 @@ import java.util.Map.Entry;
  * Future work: expanded this to look for use context to avoid unneeded type coercion:
  *   - "return x.toString()" --> "return x"
  *   - "return !!x" --> "return x"
+ * @author johnlenz@google.com (John Lenz)
  */
 class OptimizeReturns implements OptimizeCalls.CallGraphCompilerPass, CompilerPass {
 
@@ -46,12 +47,9 @@ class OptimizeReturns implements OptimizeCalls.CallGraphCompilerPass, CompilerPa
   @Override
   @VisibleForTesting
   public void process(Node externs, Node root) {
-    OptimizeCalls.builder()
-        .setCompiler(compiler)
-        .setConsiderExterns(false)
-        .addPass(this)
-        .build()
-        .process(externs, root);
+    ReferenceMap refMap = OptimizeCalls.buildPropAndGlobalNameReferenceMap(
+        compiler, externs, root);
+    process(externs, root, refMap);
   }
 
   @Override
@@ -78,7 +76,7 @@ class OptimizeReturns implements OptimizeCalls.CallGraphCompilerPass, CompilerPa
 
     // Now modify the AST
     for (ArrayList<Node> refs : toOptimize) {
-      for (Node fn : ReferenceMap.getFunctionNodes(refs).values()) {
+      for (Node fn : ReferenceMap.getFunctionNodes(refs)) {
         rewriteReturns(fn);
       }
     }
@@ -163,7 +161,6 @@ class OptimizeReturns implements OptimizeCalls.CallGraphCompilerPass, CompilerPa
         return isCandidateFunction(n.getSecondChild()) && isCandidateFunction(n.getLastChild());
       case OR:
       case AND:
-      case COALESCE:
         return isCandidateFunction(n.getFirstChild()) && isCandidateFunction(n.getLastChild());
       default:
         return false;

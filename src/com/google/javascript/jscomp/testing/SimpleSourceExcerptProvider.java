@@ -23,6 +23,7 @@ import com.google.javascript.jscomp.SourceFile;
 
 /**
  * A simple source excerpt provider for testing.
+ * @author nicksantos@google.com (Nick Santos)
  */
 public final class SimpleSourceExcerptProvider implements SourceExcerptProvider {
 
@@ -35,11 +36,6 @@ public final class SimpleSourceExcerptProvider implements SourceExcerptProvider 
   @Override
   public String getSourceLine(String sourceName, int lineNumber) {
     return sourceFile.getLine(lineNumber);
-  }
-
-  @Override
-  public Region getSourceLines(String sourceName, int lineNumber, int length) {
-    return sourceFile.getLines(lineNumber, length);
   }
 
   @Override

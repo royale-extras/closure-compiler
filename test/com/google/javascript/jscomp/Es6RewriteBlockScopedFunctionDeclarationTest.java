@@ -47,6 +47,11 @@ public final class Es6RewriteBlockScopedFunctionDeclarationTest extends Compiler
     return new Es6RewriteBlockScopedFunctionDeclaration(compiler);
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testRewritesBlockScopedFunctionDeclaration() {
     test("{ function f(){} }", "{ let f = function(){}; }");

@@ -19,13 +19,10 @@ package com.google.javascript.jscomp;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.jscomp.testing.JSErrorSubject.assertError;
-import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
-import com.google.javascript.jscomp.testing.NoninjectingCompiler;
-import com.google.javascript.jscomp.testing.TestExternsBuilder;
+import com.google.javascript.jscomp.CompilerTestCase.NoninjectingCompiler;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,97 +48,273 @@ abstract class IntegrationTestCase {
   /** Externs for the test */
   protected static final ImmutableList<SourceFile> DEFAULT_EXTERNS =
       ImmutableList.of(
-          new TestExternsBuilder()
-              .addArguments()
-              .addString()
-              .addObject()
-              .addReflect()
-              .addFunction()
-              .addIterable()
-              .addPromise()
-              .addArray()
-              .addAlert()
-              .addExtra(
-                  lines(
-                      "/**",
-                      " * @const",
-                      " */",
-                      "var Math = {};",
-                      "/**",
-                      " * @param {?} n1",
-                      " * @param {?} n2",
-                      " * @return {number}",
-                      " * @nosideeffects",
-                      " */",
-                      "Math.pow = function(n1, n2) {};",
-                      "var isNaN;",
-                      "var Infinity;",
-                      "/**",
-                      " * @constructor",
-                      " * @extends {Array<string>}",
-                      " */",
-                      "var ITemplateArray = function() {};",
-                      "/** @constructor */",
-                      "var Map;",
-                      "/** @constructor */",
-                      "var Set;",
-                      "/** @constructor */ function Window() {}",
-                      "/** @type {string} */ Window.prototype.name;",
-                      "/** @type {string} */ Window.prototype.offsetWidth;",
-                      "/** @type {Window} */ var window;",
-                      "",
-                      "/** @nosideeffects */ function noSideEffects() {}",
-                      "",
-                      "/**",
-                      " * @constructor",
-                      " * @nosideeffects",
-                      " */",
-                      "function Widget() {}",
-                      "/** @modifies {this} */ Widget.prototype.go = function() {};",
-                      "/** @return {string} */ var widgetToken = function() {};",
-                      "",
-                      "/**",
-                      " * @constructor",
-                      " * @return {number}",
-                      " * @param {*=} opt_n",
-                      " */",
-                      "function Number(opt_n) {}",
-                      "",
-                      "/**",
-                      " * @constructor",
-                      " * @return {boolean}",
-                      " * @param {*=} opt_b",
-                      " */",
-                      "function Boolean(opt_b) {}",
-                      "",
-                      "/**",
-                      " * @constructor",
-                      " * @return {!TypeError}",
-                      " * @param {*=} opt_message",
-                      " * @param {*=} opt_file",
-                      " * @param {*=} opt_line",
-                      " */",
-                      "function TypeError(opt_message, opt_file, opt_line) {}",
-                      "/**",
-                      " * @constructor",
-                      " * @param {*=} opt_message",
-                      " * @param {*=} opt_file",
-                      " * @param {*=} opt_line",
-                      " * @return {!Error}",
-                      " * @nosideeffects",
-                      " */",
-                      "function Error(opt_message, opt_file, opt_line) {}",
-                      "",
-                      "/** @constructor */",
-                      "var HTMLElement = function() {};",
-                      ""))
-              .buildExternsFile("externs"));
+          SourceFile.fromCode(
+              "externs",
+              lines(
+                  "var arguments;",
+                  "var undefined;",
+                  "/**",
+                  " * @const",
+                  " */",
+                  "var Math = {};",
+                  "/**",
+                  " * @param {?} n1",
+                  " * @param {?} n2",
+                  " * @return {number}",
+                  " * @nosideeffects",
+                  " */",
+                  "Math.pow = function(n1, n2) {};",
+                  "var isNaN;",
+                  "var Infinity;",
+                  "/**",
+                  " * @interface",
+                  " * @template VALUE",
+                  " */",
+                  "function Iterable() {}",
+                  "/**",
+                  " * @interface",
+                  " * @template VALUE",
+                  " */",
+                  "function Iterator() {}",
+                  "/**",
+                  " * @param {VALUE=} value",
+                  " * @return {!IIterableResult<VALUE>}",
+                  " */",
+                  "Iterator.prototype.next;",
+                  "/** @interface @extends {Iterator<T>} @extends {Iterable<T>} @template T*/",
+                  "var IteratorIterable = function() {};",
+                  "/** @interface */",
+                  "function IArrayLike() {};",
+                  // TODO(sdh): See if we can remove IIterableResult and Set once polyfills are
+                  // split
+                  "/**",
+                  " * @record",
+                  " * @template VALUE",
+                  " */",
+                  "function IIterableResult() {};",
+                  "/** @type {boolean} */",
+                  "IIterableResult.prototype.done;",
+                  "/** @type {VALUE} */",
+                  "IIterableResult.prototype.value;",
+                  "/**",
+                  " * @constructor",
+                  " * @extends {Array<string>}",
+                  " */",
+                  "var ITemplateArray = function() {};",
+                  "/** @constructor */",
+                  "var Map;",
+                  "/** @constructor */",
+                  "var Set;",
+                  "/** @constructor */",
+                  "function ObjectPropertyDescriptor() {};",
+                  "",
+                  "ObjectPropertyDescriptor.prototype.value;",
+                  "",
+                  "/** @type {(function():?)|undefined} */",
+                  "ObjectPropertyDescriptor.prototype.get;",
+                  "",
+                  "/** @type {(function(?):void)|undefined} */",
+                  "ObjectPropertyDescriptor.prototype.set;",
+                  "",
+                  "/** @type {boolean|undefined} */",
+                  "ObjectPropertyDescriptor.prototype.enumerable;",
+                  "",
+                  "/** @type {boolean|undefined} */",
+                  "ObjectPropertyDescriptor.prototype.configurable;",
+                  "",
+                  "/** @constructor */ function Window() {}",
+                  "/** @type {string} */ Window.prototype.name;",
+                  "/** @type {string} */ Window.prototype.offsetWidth;",
+                  "/** @type {Window} */ var window;",
+                  "",
+                  "/** @nosideeffects */ function noSideEffects() {}",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @nosideeffects",
+                  " */",
+                  "function Widget() {}",
+                  "/** @modifies {this} */ Widget.prototype.go = function() {};",
+                  "/** @return {string} */ var widgetToken = function() {};",
+                  "",
+                  "function alert(message) {}",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @implements {IArrayLike}",
+                  " * @implements {Iterable<T>}",
+                  " * @return {!Array<?>}",
+                  " * @param {...*} var_args",
+                  " * @template T",
+                  " */",
+                  "function Array(var_args) {}",
+                  "",
+                  "/** @type {number} */",
+                  "Array.prototype.length;",
+                  "",
+                  "/** @return {!IteratorIterable<T>} */",
+                  "Array.prototype.values;",
+                  "",
+                  "Array.prototype.splice;",
+                  "Array.prototype.push;",
+                  "Array.prototype.reverse;",
+                  "Array.prototype.pop;",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @return {number}",
+                  " * @param {*=} opt_n",
+                  " */",
+                  "function Number(opt_n) {}",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @implements {Iterable<string>}",
+                  " * @param {*=} opt_str",
+                  " * @return {string}",
+                  " */",
+                  "function String(opt_str) {}",
+                  "",
+                  "String.prototype.split = function(delimiter) {};",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @return {boolean}",
+                  " * @param {*=} opt_b",
+                  " */",
+                  "function Boolean(opt_b) {}",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @return {!TypeError}",
+                  " * @param {*=} opt_message",
+                  " * @param {*=} opt_file",
+                  " * @param {*=} opt_line",
+                  " */",
+                  "function TypeError(opt_message, opt_file, opt_line) {}",
+                  "/**",
+                  " * @constructor",
+                  " * @param {*=} opt_message",
+                  " * @param {*=} opt_file",
+                  " * @param {*=} opt_line",
+                  " * @return {!Error}",
+                  " * @nosideeffects",
+                  " */",
+                  "function Error(opt_message, opt_file, opt_line) {}",
+                  "/**",
+                  " * @constructor",
+                  " * @param {*=} opt_value",
+                  " * @return {!Object}",
+                  " */",
+                  "function Object(opt_value) {}",
+                  "Object.seal;",
+                  "Object.defineProperties;",
+                  "Object.defineProperty;",
+                  "Object.getOwnPropertyDescriptor;",
+                  "",
+                  "Object.prototype;",
+                  "",
+                  "/** @type {!Function} */",
+                  "Object.prototype.constructor;",
+                  "Object.create = function(obj) {};",
+                  "/** @type {function(!Object, ?Object)} */",
+                  "Object.setPrototypeOf;",
+                  "",
+                  "/**",
+                  " * @param {string} s",
+                  " * @return {symbol}",
+                  " */",
+                  "function Symbol(s) {}",
+                  "",
+                  "/**",
+                  " * @param {...*} var_args",
+                  " * @constructor",
+                  " */",
+                  "function Function(var_args) {}",
+                  "/**",
+                  " * @param {*} context",
+                  " * @param {!IArrayLike} args",
+                  " */",
+                  "Function.prototype.apply = function (context, args) {};",
+                  "/** @param {...*} var_args */",
+                  "Function.prototype.call = function (var_args) {};",
+                  "",
+                  "/**",
+                  " * @constructor",
+                  " * @template T",
+                  " */",
+                  "function Arguments() {}",
+                  "",
+                  "/**",
+                  " * @interface",
+                  " * @extends {IteratorIterable<VALUE>}",
+                  " * @template VALUE",
+                  " */",
+                  "function Generator() {}",
+                  "/**",
+                  " * @param {?=} opt_value",
+                  " * @return {!IIterableResult<VALUE>}",
+                  " * @override",
+                  " */",
+                  "Generator.prototype.next = function(opt_value) {};",
+                  "/**",
+                  " * @param {VALUE} value",
+                  " * @return {!IIterableResult<VALUE>}",
+                  " */",
+                  "Generator.prototype.return = function(value) {};",
+                  "/**",
+                  " * @param {?} exception",
+                  " * @return {!IIterableResult<VALUE>}",
+                  " */",
+                  "Generator.prototype.throw = function(exception) {};",
+                  "",
+                  "/** @interface */",
+                  "function IThenable() {}",
+                  "",
+                  "IThenable.prototype.then = function(callback) {};",
+                  "",
+                  "/**",
+                  " * @param {function(",
+                  " *             function((TYPE|IThenable<TYPE>|Thenable|null)=),",
+                  " *             function(*=))} resolver",
+                  " * @constructor",
+                  " * @implements {IThenable<TYPE>}",
+                  " * @template TYPE",
+                  " */",
+                  "function Promise(resolver) {}",
+                  "",
+                  "Promise.resolve = function(value) {};",
+                  "",
+                  "/**",
+                  " * @param {?(function(this:void, TYPE):VALUE)=} opt_onFulfilled",
+                  " * @param {?(function(this:void, *): *)=} opt_onRejected",
+                  " * @template VALUE",
+                  " * @override",
+                  " */",
+                  "Promise.prototype.then = function(opt_onFulfilled, opt_onRejected) {};",
+                  "",
+                  "/**",
+                  " * @param {function(*): RESULT} opt_errorCallback",
+                  " * @return {!Promise<RESULT>}",
+                  " * @template RESULT",
+                  " */",
+                  "Promise.prototype.catch = function(opt_errorCallback) {};",
+                  "",
+                  "/**",
+                  " * @typedef {{then: ?}}",
+                  " */",
+                  "var Thenable;",
+                  "",
+                  "/** @constructor */",
+                  "var HTMLElement = function() {};",
+                  "")));
 
   protected List<SourceFile> externs = DEFAULT_EXTERNS;
 
   // The most recently used compiler.
   protected Compiler lastCompiler;
 
+  protected boolean normalizeResults = false;
   protected boolean useNoninjectingCompiler = false;
 
   protected String inputFileNamePrefix;
@@ -151,6 +324,7 @@ abstract class IntegrationTestCase {
   public void setUp() {
     externs = DEFAULT_EXTERNS;
     lastCompiler = null;
+    normalizeResults = false;
     useNoninjectingCompiler = false;
     inputFileNamePrefix = "i";
     inputFileNameSuffix = ".js";
@@ -180,10 +354,6 @@ abstract class IntegrationTestCase {
   protected void test(CompilerOptions options,
       String[] original, String[] compiled) {
     Compiler compiler = compile(options, original);
-
-    Node root = compiler.getJsRoot();
-
-    // Verify that there are no unexpected errors before checking the compiled output
     assertWithMessage(
             "Expected no warnings or errors\n"
                 + "Errors: \n"
@@ -191,12 +361,24 @@ abstract class IntegrationTestCase {
                 + "\n"
                 + "Warnings: \n"
                 + Joiner.on("\n").join(compiler.getWarnings()))
-        .that(compiler.getErrors().size() + compiler.getWarnings().size())
+        .that(compiler.getErrors().length + compiler.getWarnings().length)
         .isEqualTo(0);
 
+    Node root = compiler.getJsRoot();
     if (compiled != null) {
-      Node expectedRoot = parseExpectedCode(compiled, options);
-      assertNode(root).usingSerializer(compiler::toSource).isEqualTo(expectedRoot);
+      Node expectedRoot = parseExpectedCode(compiled, options, normalizeResults);
+      String explanation = expectedRoot.checkTreeEquals(root);
+      assertWithMessage(
+              "\n"
+                  + "Expected: "
+                  + compiler.toSource(expectedRoot)
+                  + "\n"
+                  + "Result:   "
+                  + compiler.toSource(root)
+                  + "\n"
+                  + explanation)
+          .that(explanation)
+          .isNull();
     }
   }
 
@@ -229,18 +411,27 @@ abstract class IntegrationTestCase {
     Compiler compiler = compile(options, original);
     checkUnexpectedErrorsOrWarnings(compiler, 1);
     assertWithMessage("Expected exactly one warning or error")
-        .that(compiler.getErrors().size() + compiler.getWarnings().size())
+        .that(compiler.getErrors().length + compiler.getWarnings().length)
         .isEqualTo(1);
-    if (!compiler.getErrors().isEmpty()) {
-      assertError(compiler.getErrors().get(0)).hasType(warning);
+    if (compiler.getErrors().length > 0) {
+      assertError(compiler.getErrors()[0]).hasType(warning);
     } else {
-      assertError(compiler.getWarnings().get(0)).hasType(warning);
+      assertError(compiler.getWarnings()[0]).hasType(warning);
     }
 
     if (compiled != null) {
       Node root = compiler.getRoot().getLastChild();
-      Node expectedRoot = parseExpectedCode(compiled, options);
-      assertNode(root).usingSerializer(compiler::toSource).isEqualTo(expectedRoot);
+      Node expectedRoot = parseExpectedCode(compiled, options, normalizeResults);
+      String explanation = expectedRoot.checkTreeEquals(root);
+      assertWithMessage(
+              "\nExpected: "
+                  + compiler.toSource(expectedRoot)
+                  + "\nResult: "
+                  + compiler.toSource(root)
+                  + "\n"
+                  + explanation)
+          .that(explanation)
+          .isNull();
     }
   }
 
@@ -252,8 +443,17 @@ abstract class IntegrationTestCase {
 
     if (compiled != null) {
       Node root = compiler.getRoot().getLastChild();
-      Node expectedRoot = parseExpectedCode(compiled, options);
-      assertNode(root).usingSerializer(compiler::toSource).isEqualTo(expectedRoot);
+      Node expectedRoot = parseExpectedCode(compiled, options, normalizeResults);
+      String explanation = expectedRoot.checkTreeEquals(root);
+      assertWithMessage(
+              "\nExpected: "
+                  + compiler.toSource(expectedRoot)
+                  + "\nResult:   "
+                  + compiler.toSource(root)
+                  + "\n"
+                  + explanation)
+          .that(explanation)
+          .isNull();
     }
   }
 
@@ -276,19 +476,29 @@ abstract class IntegrationTestCase {
       }
     }
     assertWithMessage("Unexpected warnings: " + Joiner.on("\n").join(compiler.getWarnings()))
-        .that(compiler.getWarnings().size())
+        .that(compiler.getWarnings().length)
         .isEqualTo(0);
 
     if (compiled != null) {
       Node root = compiler.getRoot().getLastChild();
-      Node expectedRoot = parseExpectedCode(new String[] {compiled}, options);
-      assertNode(root).usingSerializer(compiler::toSource).isEqualTo(expectedRoot);
+      Node expectedRoot = parseExpectedCode(
+          new String[] {compiled}, options, normalizeResults);
+      String explanation = expectedRoot.checkTreeEquals(root);
+      assertWithMessage(
+              "\nExpected: "
+                  + compiler.toSource(expectedRoot)
+                  + "\nResult: "
+                  + compiler.toSource(root)
+                  + "\n"
+                  + explanation)
+          .that(explanation)
+          .isNull();
     }
   }
 
   protected void checkUnexpectedErrorsOrWarnings(
       Compiler compiler, int expected) {
-    int actual = compiler.getErrors().size() + compiler.getWarnings().size();
+    int actual = compiler.getErrors().length + compiler.getWarnings().length;
     if (actual != expected) {
       String msg = "";
       for (JSError err : compiler.getErrors()) {
@@ -315,10 +525,8 @@ abstract class IntegrationTestCase {
     compiler.compileModules(
         externs,
         ImmutableList.copyOf(
-            JSChunkGraphBuilder.forChain()
-                .addChunks(ImmutableList.copyOf(original))
-                .setFilenameFormat(inputFileNamePrefix + "%s" + inputFileNameSuffix)
-                .build()),
+            CompilerTestCase.createModuleChain(
+                ImmutableList.copyOf(original), inputFileNamePrefix, inputFileNameSuffix)),
         options);
     return compiler;
   }
@@ -334,19 +542,22 @@ abstract class IntegrationTestCase {
   }
 
   /**
-   * Parse the expected code to compare against. We want to run this with similar parsing options,
-   * but don't want to run the commonjs preprocessing passes (so that we can use this to test the
-   * commonjs code).
+   * Parse the expected code to compare against.
+   * We want to run this with similar parsing options, but don't
+   * want to run the commonjs preprocessing passes (so that we can use this
+   * to test the commonjs code).
    */
-  protected Node parseExpectedCode(String[] original, CompilerOptions options) {
+  protected Node parseExpectedCode(
+      String[] original, CompilerOptions options, boolean normalize) {
     boolean oldProcessCommonJsModules = options.processCommonJSModules;
     options.processCommonJSModules = false;
-    Node expectedRoot = parse(original, options);
+    Node expectedRoot = parse(original, options, normalize);
     options.processCommonJSModules = oldProcessCommonJsModules;
     return expectedRoot;
   }
 
-  protected Node parse(String[] original, CompilerOptions options) {
+  protected Node parse(
+      String[] original, CompilerOptions options, boolean normalize) {
     Compiler compiler = new Compiler();
     List<SourceFile> inputs = new ArrayList<>();
     for (int i = 0; i < original.length; i++) {
@@ -356,8 +567,18 @@ abstract class IntegrationTestCase {
     checkUnexpectedErrorsOrWarnings(compiler, 0);
     Node all = compiler.parseInputs();
     checkUnexpectedErrorsOrWarnings(compiler, 0);
+    Node n = all.getLastChild();
+    Node externs = all.getFirstChild();
 
-    return all.getLastChild();
+    (new CreateSyntheticBlocks(
+        compiler, "synStart", "synEnd")).process(externs, n);
+
+    if (normalize) {
+      new Normalize(compiler, false)
+          .process(compiler.getExternsRoot(), compiler.getJsRoot());
+    }
+
+    return n;
   }
 
   /** Creates a CompilerOptions object with google coding conventions. */

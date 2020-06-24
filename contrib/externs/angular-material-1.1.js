@@ -685,15 +685,6 @@ md.$mdTheming.prototype.defaultTheme = function() {};
 /** @param {string} name */
 md.$mdTheming.prototype.generateTheme = function(name) {};
 
-/** @type {boolean} */
-md.$mdTheming.prototype.ALWAYS_WATCH;
-
-/** @type {!Object<string, !Object<string,string>>} */
-md.$mdTheming.prototype.PALETTES;
-
-/** @type {!Object<string, !md.$mdThemingProvider.Theme>} */
-md.$mdTheming.prototype.THEMES;
-
 /******************************************************************************/
 
 
@@ -708,9 +699,6 @@ md.$mdThemingProvider.Theme.prototype.name;
 
 /** @type {!Object<string,string>} */
 md.$mdThemingProvider.Theme.prototype.colors;
-
-/** @type {boolean} */
-md.$mdThemingProvider.Theme.prototype.isDark;
 
 /**
  * @param {string} primaryPalette
@@ -1310,12 +1298,6 @@ md.$panel.MdPanelAnimation.prototype.openFrom = function(openFrom) {};
  * @return {!md.$panel.MdPanelAnimation}
  */
 md.$panel.MdPanelAnimation.prototype.closeTo = function(closeTo) {};
-
-/**
- * @param {number|{open: number, close: number}} duration
- * @returns {!md.$panel.MdPanelAnimation}
- */
-md.$panel.MdPanelAnimation.prototype.duration = function(duration) {};
 
 /**
  * @param {string|{open: string, close: string}} cssClass

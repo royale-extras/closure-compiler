@@ -36,6 +36,7 @@ import java.util.Map;
  * Class for parsing version 3 of the SourceMap format, as produced by the
  * Closure Compiler, etc.
  * http://code.google.com/p/closure-compiler/wiki/SourceMaps
+ * @author johnlenz@google.com (John Lenz)
  */
 public final class SourceMapConsumerV3 implements SourceMapConsumer,
     SourceMappingReversable {
@@ -124,8 +125,6 @@ public final class SourceMapConsumerV3 implements SourceMapConsumer,
         throw new SourceMapParseException("Invalid map format");
       }
 
-      // Build up a new source map in a new generator using the mappings of this metamap. The new
-      // map will be rendered to JSON and then parsed using this consumer.
       SourceMapGeneratorV3 generator = new SourceMapGeneratorV3();
       for (SourceMapSection section : sourceMapObject.getSections()) {
         String mapSectionContents = section.getSectionValue();
@@ -139,9 +138,14 @@ public final class SourceMapConsumerV3 implements SourceMapConsumer,
       }
 
       StringBuilder sb = new StringBuilder();
-      generator.appendTo(sb, sourceMapObject.getFile());
-      parse(sb.toString());
+      try {
+        generator.appendTo(sb, sourceMapObject.getFile());
+      } catch (IOException e) {
+        // Can't happen.
+        throw new RuntimeException(e);
+      }
 
+      parse(sb.toString());
     } catch (IOException ex) {
       throw new SourceMapParseException("IO exception: " + ex);
     }
@@ -678,14 +682,6 @@ public final class SourceMapConsumerV3 implements SourceMapConsumer,
           }
         }
       }
-    }
-    // Complete pending entry if any.
-    if (pending) {
-      // Given that this is the last entry and we don't know how much of the generated file left
-      // after that entry - make it of length 1.
-      FilePosition endPosition =
-          new FilePosition(startPosition.getLine(), startPosition.getColumn() + 1);
-      visitor.visit(sourceName, symbolName, sourceStartPosition, startPosition, endPosition);
     }
   }
 }

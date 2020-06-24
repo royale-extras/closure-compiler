@@ -25,35 +25,29 @@ import com.google.common.base.Predicates;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.ExpressionDecomposer.DecompositionType;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.JSType;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
 
 /**
  * A set of utility functions that replaces CALL with a specified
  * FUNCTION body, replacing and aliasing function parameters as
  * necessary.
+ *
+ * @author johnlenz@google.com (John Lenz)
  */
 class FunctionInjector {
-
-  /** Sentinel value indicating that the key contains no functions. */
-  private static final Node NO_FUNCTIONS = new Node(Token.FUNCTION);
-  /** Sentinel value indicating that the key contains multiple distinct functions. */
-  private static final Node MULTIPLE_FUNCTIONS = new Node(Token.FUNCTION);
 
   private final AbstractCompiler compiler;
   private final boolean allowDecomposition;
   private Set<String> knownConstants = new HashSet<>();
   private final boolean assumeStrictThis;
   private final boolean assumeMinimumCapture;
-  private final boolean allowMethodCallDecomposing;
   private final Supplier<String> safeNameIdSupplier;
   private final Supplier<String> throwawayNameSupplier =
       new Supplier<String>() {
@@ -63,102 +57,25 @@ class FunctionInjector {
       return String.valueOf(nextId++);
     }
   };
-  private final FunctionArgumentInjector functionArgumentInjector;
 
-  /** Cache of function node to whether it deeply contains an {@code eval} call. */
-  private final LinkedHashMap<Node, Boolean> referencesEvalCache = new LinkedHashMap<>();
-
-  /** Cache of function node to any inner function. */
-  private final LinkedHashMap<Node, Node> innerFunctionCache = new LinkedHashMap<>();
-
-  private FunctionInjector(Builder builder) {
-    this.compiler = checkNotNull(builder.compiler);
-    this.safeNameIdSupplier = checkNotNull(builder.safeNameIdSupplier);
-    this.assumeStrictThis = builder.assumeStrictThis;
-    this.assumeMinimumCapture = builder.assumeMinimumCapture;
-    this.allowDecomposition = builder.allowDecomposition;
-    this.allowMethodCallDecomposing = builder.allowMethodCallDecomposing;
-    this.functionArgumentInjector = checkNotNull(builder.functionArgumentInjector);
-    checkState(
-        !this.allowMethodCallDecomposing || this.allowDecomposition,
-        "Cannot allow method call decomposition when decomposition in general is not allowed.");
-  }
-
-  static class Builder {
-
-    private final AbstractCompiler compiler;
-    private Supplier<String> safeNameIdSupplier = null;
-    private boolean assumeStrictThis = true;
-    private boolean assumeMinimumCapture = true;
-    private boolean allowDecomposition = true;
-    private boolean allowMethodCallDecomposing = true;
-    private FunctionArgumentInjector functionArgumentInjector = null;
-
-    Builder(AbstractCompiler compiler) {
-      this.compiler = checkNotNull(compiler);
-    }
-
-    /**
-     * Provide the name supplier to use for injection.
-     *
-     * <p>If this method is not called, {@code compiler.getUniqueNameIdSupplier()} will be used.
-     */
-    Builder safeNameIdSupplier(Supplier<String> safeNameIdSupplier) {
-      this.safeNameIdSupplier = checkNotNull(safeNameIdSupplier);
-      return this;
-    }
-
-    /**
-     * Allow decomposition of expressions.
-     *
-     * <p>Default is {@code true}.
-     */
-    Builder allowDecomposition(boolean allowDecomposition) {
-      this.allowDecomposition = allowDecomposition;
-      return this;
-    }
-
-    /**
-     * Allow decomposition of method calls.
-     *
-     * <p>Default is {@code true}. May be disabled independently of decomposition in general. It's
-     * invalid to enable this when allowDecomposition is disabled.
-     */
-    Builder allowMethodCallDecomposing(boolean allowMethodCallDecomposing) {
-      this.allowMethodCallDecomposing = allowMethodCallDecomposing;
-      return this;
-    }
-
-    Builder assumeStrictThis(boolean assumeStrictThis) {
-      this.assumeStrictThis = assumeStrictThis;
-      return this;
-    }
-
-    Builder assumeMinimumCapture(boolean assumeMinimumCapture) {
-      this.assumeMinimumCapture = assumeMinimumCapture;
-      return this;
-    }
-
-    /**
-     * Specify the {@code FunctionArgumentInjector} to be used.
-     *
-     * <p>Default is for the builder to create this. This method exists for testing purposes.
-     */
-    public Builder functionArgumentInjector(FunctionArgumentInjector functionArgumentInjector) {
-      this.functionArgumentInjector = checkNotNull(functionArgumentInjector);
-      return this;
-    }
-
-    public FunctionInjector build() {
-      if (safeNameIdSupplier == null) {
-        safeNameIdSupplier = compiler.getUniqueNameIdSupplier();
-      }
-      if (functionArgumentInjector == null) {
-        functionArgumentInjector =
-            new FunctionArgumentInjector(checkNotNull(compiler.getAstAnalyzer()));
-      }
-      return new FunctionInjector(this);
-    }
+  /**
+   * @param allowDecomposition Whether an effort should be made to break down
+   * expressions into simpler expressions to allow functions to be injected
+   * where they would otherwise be disallowed.
+   */
+  public FunctionInjector(
+      AbstractCompiler compiler,
+      Supplier<String> safeNameIdSupplier,
+      boolean allowDecomposition,
+      boolean assumeStrictThis,
+      boolean assumeMinimumCapture) {
+    checkNotNull(compiler);
+    checkNotNull(safeNameIdSupplier);
+    this.compiler = compiler;
+    this.safeNameIdSupplier = safeNameIdSupplier;
+    this.allowDecomposition = allowDecomposition;
+    this.assumeStrictThis = assumeStrictThis;
+    this.assumeMinimumCapture = assumeMinimumCapture;
   }
 
   /** The type of inlining to perform. */
@@ -240,8 +157,7 @@ class FunctionInjector {
 
     // If the function references "arguments" directly in the function or in an arrow function
     boolean referencesArguments =
-        NodeUtil.isNameReferenced(
-            block, "arguments", NodeUtil.MATCH_ANYTHING_BUT_NON_ARROW_FUNCTION);
+        NodeUtil.isNameReferenced(block, "arguments", NodeUtil.MATCH_NOT_VANILLA_FUNCTION);
 
     Predicate<Node> blocksInjection =
         new Predicate<Node>() {
@@ -340,13 +256,15 @@ class FunctionInjector {
   }
 
   private static boolean hasSpreadCallArgument(Node callNode) {
-    checkArgument(callNode.isCall(), callNode);
-    for (Node arg = callNode.getSecondChild(); arg != null; arg = arg.getNext()) {
-      if (arg.isSpread()) {
-        return true;
-      }
-    }
-    return false;
+    Predicate<Node> hasSpreadCallArgumentPredicate =
+        new Predicate<Node>() {
+          @Override
+          public boolean apply(Node input) {
+            return input.isSpread();
+          }
+        };
+
+    return NodeUtil.has(callNode, hasSpreadCallArgumentPredicate, Predicates.alwaysTrue());
   }
 
   /**
@@ -354,19 +272,6 @@ class FunctionInjector {
    */
   Node inline(Reference ref, String fnName, Node fnNode) {
     checkState(compiler.getLifeCycleStage().isNormalized());
-    return internalInline(ref, fnName, fnNode);
-  }
-
-  /**
-   * Inline a function into the call site. Note that this unsafe version doesn't verify if the AST
-   * is normalized. You should use {@link inline} instead, unless you are 100% certain that the bit
-   * of code you're inlining is safe without being normalized first.
-   */
-  Node unsafeInline(Reference ref, String fnName, Node fnNode) {
-    return internalInline(ref, fnName, fnNode);
-  }
-
-  private Node internalInline(Reference ref, String fnName, Node fnNode) {
     Node result;
     if (ref.mode == InliningMode.DIRECT) {
       result = inlineReturnValue(ref, fnNode);
@@ -393,7 +298,7 @@ class FunctionInjector {
 
     // Create an argName -> expression map, checking for side effects.
     Map<String, Node> argMap =
-        functionArgumentInjector.getFunctionCallParameterMap(
+        FunctionArgumentInjector.getFunctionCallParameterMap(
             fnNode, callNode, this.safeNameIdSupplier);
 
     Node newExpression;
@@ -406,7 +311,8 @@ class FunctionInjector {
 
       // Clone the return node first.
       Node safeReturnNode = returnNode.cloneTree();
-      Node inlineResult = functionArgumentInjector.inject(null, safeReturnNode, null, argMap);
+      Node inlineResult = FunctionArgumentInjector.inject(
+          null, safeReturnNode, null, argMap);
       checkArgument(safeReturnNode == inlineResult);
       newExpression = safeReturnNode.removeFirstChild();
       NodeUtil.markNewScopesChanged(newExpression, compiler);
@@ -465,7 +371,6 @@ class FunctionInjector {
         // Nothing to do.
       }
     },
-
     /**
      * An var declaration and initialization, where the result of the call is
      * assigned to the declared name
@@ -481,7 +386,6 @@ class FunctionInjector {
         // Nothing to do.
       }
     },
-
     /**
      * An arbitrary expression, the root of which is a EXPR_RESULT, IF,
      * RETURN, SWITCH or VAR.  The call must be the first side-effect in
@@ -565,14 +469,17 @@ class FunctionInjector {
       // left-hand-side of the assignments and handling them as EXPRESSION?
       return CallSiteType.VAR_DECL_SIMPLE_ASSIGNMENT;
     } else {
-      ExpressionDecomposer decomposer = getDecomposer(ref.scope);
-      switch (decomposer.canExposeExpression(callNode)) {
-        case MOVABLE:
+      Node expressionRoot = ExpressionDecomposer.findExpressionRoot(callNode);
+      if (expressionRoot != null) {
+        ExpressionDecomposer decomposer = getDecomposer(ref.scope);
+        DecompositionType type = decomposer.canExposeExpression(callNode);
+        if (type == DecompositionType.MOVABLE) {
           return CallSiteType.EXPRESSION;
-        case DECOMPOSABLE:
+        } else if (type == DecompositionType.DECOMPOSABLE) {
           return CallSiteType.DECOMPOSABLE_EXPRESSION;
-        case UNDECOMPOSABLE:
-          break;
+        } else {
+          checkState(type == DecompositionType.UNDECOMPOSABLE);
+        }
       }
     }
 
@@ -581,7 +488,11 @@ class FunctionInjector {
 
   private ExpressionDecomposer getDecomposer(Scope scope) {
     return new ExpressionDecomposer(
-        compiler, safeNameIdSupplier, knownConstants, scope, allowMethodCallDecomposing);
+        compiler,
+        safeNameIdSupplier,
+        knownConstants,
+        scope,
+        compiler.getOptions().allowMethodCallDecomposing());
   }
 
   /**
@@ -658,7 +569,7 @@ class FunctionInjector {
         // Remove the call from the name node.
         Node firstChild = parent.removeFirstChild();
         NodeUtil.markFunctionsDeleted(firstChild, compiler);
-        Preconditions.checkState(!parent.hasChildren());
+        Preconditions.checkState(parent.getFirstChild() == null);
         // Add the call, after the VAR.
         greatGrandParent.addChildAfter(newBlock, grandParent);
         break;
@@ -692,8 +603,8 @@ class FunctionInjector {
       return;
     }
 
-    if (nameNode.isDeclaredConstantVar()) {
-      nameNode.setDeclaredConstantVar(false);
+    if (nameNode.getBooleanProp(Node.IS_CONSTANT_VAR)) {
+      nameNode.removeProp(Node.IS_CONSTANT_VAR);
     }
   }
 
@@ -764,111 +675,48 @@ class FunctionInjector {
   }
 
   /**
-   * Returns whether or not {@code fn} includes a call to `eval` in its scope.
-   *
-   * <p>Results are cached to make subsequent calls faster.
-   */
-  private boolean referencesEval(Node fn) {
-    checkState(fn.isFunction());
-
-    @Nullable Boolean cached = this.referencesEvalCache.get(fn);
-    if (cached != null) {
-      return cached;
-    }
-
-    boolean result =
-        NodeUtil.has(
-            fn, //
-            (n) -> n.isName() && n.getString().equals("eval"), // Match predicate
-            (n) -> !n.isFunction() || n.equals(fn)); // Explore node predicate
-    this.referencesEvalCache.put(fn, result);
-    return result;
-  }
-
-  /**
-   * Returns any inner function of {@code containerFn}.
-   *
-   * <p>If there are no inner functions, or multilple inner functions, the sentinel values {@link
-   * #NO_FUNCTIONS}, {@link #MULTIPLE_FUNCTIONS} are returned respectively.
-   */
-  private Node innerFunctionOf(Node containerFn) {
-    checkState(containerFn.isFunction());
-
-    @Nullable Node cached = this.innerFunctionCache.get(containerFn);
-    if (cached != null) {
-      return cached;
-    }
-
-    ArrayList<Node> innerFns = new ArrayList<>();
-    NodeUtil.visitPreOrder(
-        containerFn,
-        (n) -> {
-          if (n.equals(containerFn)) {
-            return;
-          }
-
-          if (n.isFunction()) {
-            innerFns.add(n);
-          }
-        });
-
-    switch (innerFns.size()) {
-      case 0:
-        cached = NO_FUNCTIONS;
-        break;
-      case 1:
-        cached = innerFns.get(0);
-        break;
-      default:
-        cached = MULTIPLE_FUNCTIONS;
-        break;
-    }
-
-    this.innerFunctionCache.put(containerFn, cached);
-    return cached;
-  }
-
-  /**
-   * Determines whether a function can be inlined at a particular call site. - Don't inline if the
-   * calling function contains an inner function and inlining would introduce new globals.
+   * Determines whether a function can be inlined at a particular call site.
+   * - Don't inline if the calling function contains an inner function and
+   * inlining would introduce new globals.
    */
   private boolean callMeetsBlockInliningRequirements(
-      Reference callRef, final Node calleeFn, ImmutableSet<String> namesToAlias) {
+      Reference ref, final Node fnNode, ImmutableSet<String> namesToAlias) {
     // Note: functions that contain function definitions are filtered out
     // in isCandidateFunction.
 
     // TODO(johnlenz): Determining if the called function contains VARs
     // or if the caller contains inner functions accounts for 20% of the
     // run-time cost of this pass.
-    //
-    // Note that as of 2019-10-11, "eval" and function checking are cached so this may be less
-    // of an issue.
 
     // Don't inline functions with var declarations into a scope with inner
     // functions as the new vars would leak into the inner function and
     // cause memory leaks.
-    boolean calleeContainsVars =
-        NodeUtil.has(
-            NodeUtil.getFunctionBody(calleeFn),
-            new NodeUtil.MatchDeclaration(),
-            new NodeUtil.MatchShallowStatement());
-
+    boolean fnContainsVars = NodeUtil.has(
+        NodeUtil.getFunctionBody(fnNode),
+        new NodeUtil.MatchDeclaration(),
+        new NodeUtil.MatchShallowStatement());
     boolean forbidTemps = false;
-    if (!callRef.scope.getClosestHoistScope().isGlobal()) {
-      Node callerFn = callRef.scope.getClosestHoistScope().getRootNode().getParent();
+    if (!ref.scope.getClosestHoistScope().isGlobal()) {
+      Node fnCallerBody = ref.scope.getClosestHoistScope().getRootNode();
 
       // Don't allow any new vars into a scope that contains eval or one
       // that contains functions (excluding the function being inlined).
-      if (this.referencesEval(callerFn)) {
-        forbidTemps = true;
-      } else if (!this.assumeMinimumCapture) {
-        Node innerFn = this.innerFunctionOf(callerFn);
-        boolean calleeIsOnlyInnerFn = innerFn.equals(NO_FUNCTIONS) || innerFn.equals(calleeFn);
-        forbidTemps = !calleeIsOnlyInnerFn;
-      }
+      Predicate<Node> match = new Predicate<Node>(){
+        @Override
+        public boolean apply(Node n) {
+          if (n.isName()) {
+            return n.getString().equals("eval");
+          }
+          if (!assumeMinimumCapture && n.isFunction()) {
+            return n != fnNode;
+          }
+          return false;
+        }
+      };
+      forbidTemps = NodeUtil.has(fnCallerBody, match, NodeUtil.MATCH_NOT_FUNCTION);
     }
 
-    if (calleeContainsVars && forbidTemps) {
+    if (fnContainsVars && forbidTemps) {
       return false;
     }
 
@@ -876,14 +724,14 @@ class FunctionInjector {
     // additional VAR declarations because aliasing is needed.
     if (forbidTemps) {
       ImmutableMap<String, Node> args =
-          functionArgumentInjector.getFunctionCallParameterMap(
-              calleeFn, callRef.callNode, this.safeNameIdSupplier);
+          FunctionArgumentInjector.getFunctionCallParameterMap(
+              fnNode, ref.callNode, this.safeNameIdSupplier);
       boolean hasArgs = !args.isEmpty();
       if (hasArgs) {
         // Limit the inlining
         Set<String> allNamesToAlias = new HashSet<>(namesToAlias);
-        functionArgumentInjector.maybeAddTempsForCallArguments(
-            compiler, calleeFn, args, allNamesToAlias, compiler.getCodingConvention());
+        FunctionArgumentInjector.maybeAddTempsForCallArguments(
+            fnNode, args, allNamesToAlias, compiler.getCodingConvention());
         if (!allNamesToAlias.isEmpty()) {
           return false;
         }
@@ -932,14 +780,14 @@ class FunctionInjector {
     }
 
     ImmutableMap<String, Node> args =
-        functionArgumentInjector.getFunctionCallParameterMap(
+        FunctionArgumentInjector.getFunctionCallParameterMap(
             fnNode, callNode, this.throwawayNameSupplier);
     boolean hasArgs = !args.isEmpty();
     if (hasArgs) {
       // Limit the inlining
       Set<String> allNamesToAlias = new HashSet<>(namesToAlias);
-      functionArgumentInjector.maybeAddTempsForCallArguments(
-          compiler, fnNode, args, allNamesToAlias, compiler.getCodingConvention());
+      FunctionArgumentInjector.maybeAddTempsForCallArguments(
+          fnNode, args, allNamesToAlias, compiler.getCodingConvention());
       if (!allNamesToAlias.isEmpty()) {
         return CanInlineResult.NO;
       }
@@ -950,6 +798,7 @@ class FunctionInjector {
 
   /**
    * Determine if inlining the function is likely to reduce the code size.
+   * @param namesToAlias
    */
   boolean inliningLowersCost(
       JSModule fnModule, Node fnNode, Collection<? extends Reference> refs,

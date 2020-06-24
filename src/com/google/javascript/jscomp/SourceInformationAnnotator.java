@@ -37,6 +37,7 @@ import com.google.javascript.rhino.Node;
  *
  * - Annotates all FUNCTION nodes with an ORIGINALNAME_PROP indicating its
  *   nearest original name.
+ *
  */
 class SourceInformationAnnotator extends
   NodeTraversal.AbstractPostOrderCallback {

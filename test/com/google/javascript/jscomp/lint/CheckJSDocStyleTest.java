@@ -17,7 +17,6 @@ package com.google.javascript.jscomp.lint;
 
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.CLASS_DISALLOWED_JSDOC;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.EXTERNS_FILES_SHOULD_BE_ANNOTATED;
-import static com.google.javascript.jscomp.lint.CheckJSDocStyle.INCORRECT_ANNOTATION_ON_GETTER_SETTER;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.INCORRECT_PARAM_NAME;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MISSING_JSDOC;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MISSING_PARAMETER_JSDOC;
@@ -67,8 +66,8 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
+  protected CompilerOptions getOptions(CompilerOptions options) {
+    super.getOptions(options);
     options.setParseJsDocDocumentation(Config.JsDocParsing.INCLUDE_DESCRIPTIONS_NO_WHITESPACE);
     options.setWarningLevel(CheckJSDocStyle.ALL_DIAGNOSTICS, CheckLevel.WARNING);
     return options;
@@ -204,17 +203,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   }
 
   @Test
-  public void testTypeAnnotationOnGetterSetter() {
-    testWarning(
-        "class Foo { /** @type {number} */ get twentyone() { return 21; } }",
-        INCORRECT_ANNOTATION_ON_GETTER_SETTER);
-    testWarning(
-        "class Foo { /** @type {string} s */ set someString(s) { this.someString_ = s; } }",
-        INCORRECT_ANNOTATION_ON_GETTER_SETTER);
-    testNoWarning("class Foo { set someString( /** string */ s) { this.someString_ = s; } }");
-  }
-
-  @Test
   public void testGetterSetter_withES6Modules() {
     testSame("export class Foo { /** @return {number} */ get twentyone() { return 21; } }");
   }
@@ -331,21 +319,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   }
 
   @Test
-  public void testMissingJsDoc_noWarning_wizConstructorAndDeps() {
-    // Exempt Wiz controller constructor and deps() method because Wiz automatically adds JSDoc
-    // NOTE(lharker@): right now this does not warn because of b/124061048: the behavior is correct
-    // but for the wrong reason.
-    testSame(
-        lines(
-            "goog.module('a.b.MyController');",
-            "class MyController extends SomeParentController {",
-            "  static deps() { return {model: 0}; }",
-            "  constructor({model}) {}",
-            "}",
-            "registerController(MY_CONTROLLER, MyController);"));
-  }
-
-  @Test
   public void testMissingJsDoc_noWarningOnTestFunctions() {
     testSame("function testSomeFunctionality() {}");
     testSame("var testSomeFunctionality = function() {};");
@@ -357,15 +330,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("function tearDown() {}");
     testSame("var setUp = function() {};");
     testSame("var tearDown = function() {};");
-  }
-
-  @Test
-  public void testMissingJsDoc_noWarningOnTestMethods() {
-    testSame("class MyClass { testSomeFunctionality() {} }");
-    testSame("goog.module('mod'); class MyClass { testSomeFunctionality() {} }");
-    testSame("a.b.c = class { testSomeFunctionality() {} }");
-    testSame("class MyClass { setUp() {} }");
-    testSame("class MyClass { tearDown() {} }");
   }
 
   @Test
@@ -387,9 +351,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   public void testMissingJsDoc_googModule() {
     testWarning("goog.module('a.b.c'); function f() {}", MISSING_JSDOC);
     testWarning("goog.module('a.b.c'); var f = function() {};", MISSING_JSDOC);
-    // TODO(b/124061048): these should also warn for missing JSDoc
-    testSame("goog.module('a.b.c'); class Foo { constructor(x) {} }");
-    testSame("goog.module('a.b.c'); class Foo { someMethod() {} }");
   }
 
   @Test
@@ -421,8 +382,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   public void testMissingJsDoc_googModule_noWarning() {
     testSame("goog.module('a.b.c'); /** @type {function()} */ function f() {}");
     testSame("goog.module('a.b.c'); /** @type {function()} */ var f = function() {};");
-    // No param constructors do not require JSDoc
-    testSame("goog.module('a.b.c'); class Foo { constructor() {} }");
   }
 
   @Test
@@ -626,63 +585,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             " * }=} obj",
             " */",
             "function create({a = 'hello', b = 8, c = false} = {}) {}"));
-  }
-
-  @Test
-  public void testMissingParam_defaultValue() {
-    testWarning(
-        lines(
-            "/**",
-            " * @param {string} x",
-            // No @param for y.
-            " */",
-            "function f(x, y = 0) {}"),
-        WRONG_NUMBER_OF_PARAMS);
-
-    testWarning(
-        lines(
-            "/**",
-            " * @param {string} x",
-            " * @param {number} y",
-            " */",
-            "function f(x, y = 0) {}"),
-        OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
-
-    testNoWarning(
-        lines(
-            "/**",
-            " * @param {string} x",
-            " * @param {number=} y",
-            " */",
-            "function f(x, y = 0) {}"));
-
-    testWarning("function f(/** string */ x, y = 0) {}", MISSING_PARAMETER_JSDOC);
-    testWarning(
-        "function f(/** string */ x, /** number */ y = 0) {}", OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
-    testNoWarning("function f(/** string */ x, /** number= */ y = 0) {}");
-  }
-
-  @Test
-  public void testMissingParam_rest() {
-    testWarning(
-        lines(
-            "/**",
-            " * @param {string} x",
-            // No @param for y.
-            " */",
-            "function f(x, ...y) {}"),
-        WRONG_NUMBER_OF_PARAMS);
-
-    testNoWarning(
-        lines(
-            "/**",
-            " * @param {string} x",
-            " * @param {...number} y",
-            " */",
-            "function f(x, ...y) {}"));
-
-    testWarning("function f(/** string */ x, ...y) {}", MISSING_PARAMETER_JSDOC);
-    testNoWarning("function f(/** string */ x, /** ...number */ ...y) {}");
   }
 
   @Test
@@ -912,46 +814,6 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "  set foo(val) { }",
             "}"),
         MUST_HAVE_TRAILING_UNDERSCORE);
-  }
-
-  @Test
-  public void testNoPrivateWarningsWithSuppressions() {
-    testNoWarning(
-        lines(
-            "goog.module('mod');",
-            "class Foo {",
-            "  constructor() {",
-            "    /** @private {number} */",
-            "    this.n_;",
-            "    /** @private {number} */",
-            "    this.m_;",
-            "  }",
-            "  setUp() {",
-            "    /** @suppress {checkTypes} */",
-            "    this.n_ = ' not a number ';",
-            "    this.m_ = 1;",
-            "  }",
-            "  testSomething() {",
-            "    alert(this.n_ + this.m_);",
-            "  }",
-            "}"));
-  }
-
-  @Test
-  public void testPrivateWarningAtPropertyDeclaration() {
-    testWarning(
-        lines(
-            "class Foo {",
-            "/** @constructor */",
-            "  constructor(foo) {",
-            "   /**",
-            "   * @const {number}",
-            "   * @suppress {missingProperties} suppress a warning for `bar` access on `foo`.",
-            "   */",
-            "   this.n_ = foo.bar;",
-            "  }",
-            "}"),
-        MUST_BE_PRIVATE);
   }
 
   @Test

@@ -113,10 +113,7 @@ final class ClassUtil {
 
   static boolean isConstructor(Node functionNode) {
     if (isClassMethod(functionNode)) {
-      return NodeUtil.isEs6Constructor(functionNode)
-          ||
-          // TODO(b/124020008): Delete this case when `goog.defineClass` is dropped.
-          "constructor".equals(functionNode.getParent().getString());
+      return "constructor".equals(functionNode.getParent().getString());
     }
     JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(functionNode);
     return jsdoc != null && jsdoc.isConstructor();

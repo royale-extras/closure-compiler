@@ -15,15 +15,12 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.parsing.Config.JsDocParsing.INCLUDE_ALL_COMMENTS;
+import static com.google.javascript.jscomp.parsing.Config.JsDocParsing.INCLUDE_DESCRIPTIONS_WITH_WHITESPACE;
 
 import com.google.common.annotations.GwtIncompatible;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.deps.ModuleLoader.ResolutionMode;
-import com.google.javascript.jscomp.parsing.Config.JsDocParsing;
 import com.google.javascript.refactoring.ApplySuggestedFixes;
 import com.google.javascript.refactoring.FixingErrorManager;
 import com.google.javascript.refactoring.SuggestedFix;
@@ -39,88 +36,45 @@ import java.util.Collection;
  */
 @GwtIncompatible("Unnecessary")
 public final class Linter {
-
-  /**
-   * Builder for a Linter that allows some customization.
-   *
-   * <p>Note: A builder is not designed to generate multiple Linters, just a single one. The
-   * underlying CompilerOptions it builds is never copied defensively, so futher edits to this
-   * builder will affect previously built Linters.
-   */
-  public static final class Builder {
-    private final CompilerOptions options;
-
-    private Builder() {
-      options = new CompilerOptions();
-      options.setLanguage(LanguageMode.ECMASCRIPT_NEXT);
-      options.setParseJsDocDocumentation(JsDocParsing.INCLUDE_ALL_COMMENTS);
-      options.setPreserveDetailedSourceInfo(true);
-
-      // These are necessary to make sure that suggested fixes are printed correctly.
-      options.setPrettyPrint(true);
-      options.setPreserveTypeAnnotations(true);
-      options.setPreferSingleQuotes(true);
-      options.setEmitUseStrict(false);
-
-      options.setParseJsDocDocumentation(INCLUDE_ALL_COMMENTS);
-      options.setCodingConvention(new GoogleCodingConvention());
-
-      // Even though we're not running the typechecker, enable the checkTypes DiagnosticGroup, since
-      // it contains some warnings we do want to report, such as JSDoc parse warnings.
-      options.setWarningLevel(DiagnosticGroups.CHECK_TYPES, CheckLevel.WARNING);
-
-      options.setWarningLevel(DiagnosticGroups.JSDOC_MISSING_TYPE, CheckLevel.ERROR);
-      options.setWarningLevel(DiagnosticGroups.MISPLACED_MSG_ANNOTATION, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.UNNECESSARY_ESCAPE, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.UNUSED_LOCAL_VARIABLE, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.UNUSED_PRIVATE_PROPERTY, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.STRICT_MISSING_REQUIRE, CheckLevel.ERROR);
-      options.setWarningLevel(DiagnosticGroups.EXTRA_REQUIRE, CheckLevel.ERROR);
-      options.setWarningLevel(DiagnosticGroups.MISPLACED_SUPPRESS, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.TYPE_IMPORT_CODE_REFERENCES, CheckLevel.ERROR);
-      options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
-      options.setWarningLevel(DiagnosticGroups.STRICT_MODULE_CHECKS, CheckLevel.WARNING);
-      options.setWarningLevel(DiagnosticGroups.UNDERSCORE, CheckLevel.WARNING);
-      options.setSummaryDetailLevel(0);
-    }
-
-    public Builder withModuleResolutionMode(ResolutionMode moduleResolutionMode) {
-      options.setModuleResolutionMode(moduleResolutionMode);
-      return this;
-    }
-
-    public Builder withBrowserResolverPrefixReplacements(
-        ImmutableMap<String, String> replacements) {
-      options.setBrowserResolverPrefixReplacements(replacements);
-      return this;
-    }
-
-    public Linter build() {
-      return new Linter(options);
-    }
-  }
-
   // Don't try to apply fixes anymore, after trying this many times.
   // This is to avoid the unlikely event of an infinite loop of fixes.
   static final int MAX_FIXES = 5;
 
-  private final CompilerOptions options;
+  private Linter() {}
 
-  private Linter(CompilerOptions options) {
-    this.options = options;
-  }
-
-  static Builder builder() {
-    return new Builder();
-  }
-
-  void lint(String filename) throws IOException {
+  static void lint(String filename) throws IOException {
     lint(Paths.get(filename), new Compiler(System.out));
   }
 
-  void lint(Path path, Compiler compiler) throws IOException {
+  static void lint(Path path, Compiler compiler) throws IOException {
     SourceFile file = SourceFile.fromFile(path.toString());
+    CompilerOptions options = new CompilerOptions();
+    options.setLanguage(LanguageMode.ECMASCRIPT_NEXT);
+
+    // These are necessary to make sure that suggested fixes are printed correctly.
+    options.setPrettyPrint(true);
+    options.setPreserveTypeAnnotations(true);
+    options.setPreferSingleQuotes(true);
+    options.setEmitUseStrict(false);
+
+    options.setParseJsDocDocumentation(INCLUDE_DESCRIPTIONS_WITH_WHITESPACE);
+    options.setCodingConvention(new GoogleCodingConvention());
+
+    // Even though we're not running the typechecker, enable the checkTypes DiagnosticGroup, since
+    // it contains some warnings we do want to report, such as JSDoc parse warnings.
+    options.setWarningLevel(DiagnosticGroups.CHECK_TYPES, CheckLevel.WARNING);
+
+    options.setWarningLevel(DiagnosticGroups.JSDOC_MISSING_TYPE, CheckLevel.ERROR);
+    options.setWarningLevel(DiagnosticGroups.MISPLACED_MSG_ANNOTATION, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.UNNECESSARY_ESCAPE, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.UNUSED_LOCAL_VARIABLE, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.UNUSED_PRIVATE_PROPERTY, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.STRICT_MISSING_REQUIRE, CheckLevel.ERROR);
+    options.setWarningLevel(DiagnosticGroups.EXTRA_REQUIRE, CheckLevel.ERROR);
+    options.setWarningLevel(DiagnosticGroups.USE_OF_GOOG_BASE, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.MISPLACED_SUPPRESS, CheckLevel.WARNING);
+    options.setSummaryDetailLevel(0);
     compiler.setPassConfig(new LintPassConfig(options));
     compiler.disableThreads();
     SourceFile externs = SourceFile.fromCode("<Linter externs>", "");
@@ -131,7 +85,7 @@ public final class Linter {
    * Keep applying fixes to the given file until no more fixes can be found, or until fixes have
    * been applied {@code MAX_FIXES} times.
    */
-  void fixRepeatedly(String filename) throws IOException {
+  static void fixRepeatedly(String filename) throws IOException {
     fixRepeatedly(filename, ImmutableSet.of());
   }
 
@@ -139,7 +93,7 @@ public final class Linter {
    * Keep applying fixes to the given file until no more fixes can be found, or until fixes have
    * been applied {@code MAX_FIXES} times.
    */
-  void fixRepeatedly(String filename, ImmutableSet<DiagnosticType> unfixableErrors)
+  static void fixRepeatedly(String filename, ImmutableSet<DiagnosticType> unfixableErrors)
       throws IOException {
     for (int i = 0; i < MAX_FIXES; i++) {
       if (!fix(filename, unfixableErrors)) {
@@ -148,8 +102,9 @@ public final class Linter {
     }
   }
 
+
   /** @return Whether any fixes were applied. */
-  private boolean fix(String filename, ImmutableSet<DiagnosticType> unfixableErrors)
+  private static boolean fix(String filename, ImmutableSet<DiagnosticType> unfixableErrors)
       throws IOException {
     Compiler compiler = new Compiler(System.out);
     FixingErrorManager errorManager = new FixingErrorManager(unfixableErrors);
@@ -158,7 +113,7 @@ public final class Linter {
 
     lint(Paths.get(filename), compiler);
 
-    Collection<SuggestedFix> fixes = errorManager.getSureFixes();
+    Collection<SuggestedFix> fixes = errorManager.getAllFixes();
     if (!fixes.isEmpty()) {
       ApplySuggestedFixes.applySuggestedFixesToFiles(fixes);
       return true;

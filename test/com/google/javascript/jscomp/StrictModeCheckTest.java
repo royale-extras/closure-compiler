@@ -43,6 +43,11 @@ public final class StrictModeCheckTest extends CompilerTestCase {
     return new StrictModeCheck(compiler);
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   private void testSameEs6Strict(String js) {
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     testSame(js);

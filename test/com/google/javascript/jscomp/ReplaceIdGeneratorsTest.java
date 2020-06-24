@@ -20,7 +20,6 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.jscomp.ReplaceIdGenerators.INVALID_GENERATOR_PARAMETER;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -72,6 +71,11 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
     previousMappings = null;
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testBackwardCompat() {
     testWithPseudo("foo.bar = goog.events.getUniqueId('foo_bar')",
@@ -103,12 +107,21 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
   public void testSerialization2() {
     testMap(
         lines(
-            "/** @idGenerator {consistent} */",
+            "/** @consistentIdGenerator */",
             "id = function() {};",
             "f1 = id('f1');",
             "f1 = id('f1')"),
-        lines("/** @idGenerator {consistent} */", "id = function() {};", "f1 = 'a';", "f1 = 'a'"),
-        lines("[id]", "", "a:f1", "", ""));
+        lines(
+            "/** @consistentIdGenerator */",
+            "id = function() {};",
+            "f1 = 'a';",
+            "f1 = 'a'"),
+        lines(
+            "[id]",
+            "",
+            "a:f1",
+            "",
+            ""));
   }
 
   @Test
@@ -170,24 +183,14 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
         "\n";
     testMap(
         lines(
-            "/** @idGenerator {consistent} */ id = function() {};",
+            "/** @consistentIdGenerator */ id = function() {};",
             "f1 = id('f1');",
             "f1 = id('f1')"),
-        lines("/** @idGenerator {consistent} */ id = function() {};", "f1 = 'a';", "f1 = 'a'"),
+        lines(
+            "/** @consistentIdGenerator */ id = function() {};",
+            "f1 = 'a';",
+            "f1 = 'a'"),
         "[id]\n" + "\n" + "a:f1\n" + "\n");
-  }
-
-  @Test
-  public void testNullishCoalesce() {
-    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
-    testWithPseudo(
-        lines(
-            "/** @idGenerator */ foo.getUniqueId = function() {x ?? y;};",
-            "foo.bar = foo.getUniqueId('foo_bar')"),
-        lines("/** @idGenerator */ foo.getUniqueId = function() {x ?? y;};", "foo.bar = 'a'"),
-        lines(
-            "/** @idGenerator */ foo.getUniqueId = function() {x ?? y;};",
-            "foo.bar = 'foo_bar$0'"));
   }
 
   @Test
@@ -317,28 +320,28 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
   @Test
   public void testSimpleConsistent() {
     testWithPseudo(
-        "/** @idGenerator {consistent} */ id = function() {}; foo.bar = id('foo_bar')",
-        "/** @idGenerator {consistent} */ id = function() {}; foo.bar = 'a'",
-        "/** @idGenerator {consistent} */ id = function() {}; foo.bar = 'foo_bar$0'");
+        "/** @consistentIdGenerator */ id = function() {}; foo.bar = id('foo_bar')",
+        "/** @consistentIdGenerator */ id = function() {}; foo.bar = 'a'",
+        "/** @consistentIdGenerator */ id = function() {}; foo.bar = 'foo_bar$0'");
 
     testWithPseudo(
-        "/** @idGenerator {consistent} */ id = function() {}; f1 = id('f1'); f1 = id('f1')",
-        "/** @idGenerator {consistent} */ id = function() {}; f1 = 'a'; f1 = 'a'",
-        "/** @idGenerator {consistent} */ id = function() {}; f1 = 'f1$0'; f1 = 'f1$0'");
+        "/** @consistentIdGenerator */ id = function() {}; f1 = id('f1'); f1 = id('f1')",
+        "/** @consistentIdGenerator */ id = function() {}; f1 = 'a'; f1 = 'a'",
+        "/** @consistentIdGenerator */ id = function() {}; f1 = 'f1$0'; f1 = 'f1$0'");
 
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ id = function() {};",
+            "/** @consistentIdGenerator */ id = function() {};",
             "f1 = id('f1');",
             "f1 = id('f1');",
             "f1 = id('f1')"),
         lines(
-            "/** @idGenerator {consistent} */ id = function() {};",
+            "/** @consistentIdGenerator */ id = function() {};",
             "f1 = 'a';",
             "f1 = 'a';",
             "f1 = 'a'"),
         lines(
-            "/** @idGenerator {consistent} */ id = function() {};",
+            "/** @consistentIdGenerator */ id = function() {};",
             "f1 = 'f1$0';",
             "f1 = 'f1$0';",
             "f1 = 'f1$0'"));
@@ -347,12 +350,12 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
   @Test
   public void testSimpleStable() {
     testNonPseudoSupportingGenerator(
-        "/** @idGenerator {stable} */ id = function() {};" + "foo.bar = id('foo_bar')",
-        "/** @idGenerator {stable} */ id = function() {};" + "foo.bar = '125lGg'");
+        "/** @stableIdGenerator */ id = function() {};" + "foo.bar = id('foo_bar')",
+        "/** @stableIdGenerator */ id = function() {};" + "foo.bar = '125lGg'");
 
     testNonPseudoSupportingGenerator(
-        "/** @idGenerator {stable} */ id = function() {};" + "f1 = id('f1');" + "f1 = id('f1')",
-        "/** @idGenerator {stable} */ id = function() {};" + "f1 = 'AAAMiw';" + "f1 = 'AAAMiw'");
+        "/** @stableIdGenerator */ id = function() {};" + "f1 = id('f1');" + "f1 = id('f1')",
+        "/** @stableIdGenerator */ id = function() {};" + "f1 = 'AAAMiw';" + "f1 = 'AAAMiw'");
   }
 
   @Test
@@ -372,59 +375,66 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
   public void testVar() {
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ var id = function() {};", "foo.bar = id('foo_bar')"),
-        lines("/** @idGenerator {consistent} */ var id = function() {};", "foo.bar = 'a'"),
-        lines("/** @idGenerator {consistent} */ var id = function() {};", "foo.bar = 'foo_bar$0'"));
+            "/** @consistentIdGenerator */ var id = function() {};", "foo.bar = id('foo_bar')"),
+        lines("/** @consistentIdGenerator */ var id = function() {};", "foo.bar = 'a'"),
+        lines(
+            "/** @consistentIdGenerator */ var id = function() {};", "foo.bar = 'foo_bar$0'"));
 
     testNonPseudoSupportingGenerator(
-        lines("/** @idGenerator {stable} */ var id = function() {};", "foo.bar = id('foo_bar')"),
-        lines("/** @idGenerator {stable} */ var id = function() {};", "foo.bar = '125lGg'"));
+        lines(
+            "/** @stableIdGenerator */ var id = function() {};", "foo.bar = id('foo_bar')"),
+        lines(
+            "/** @stableIdGenerator */ var id = function() {};", "foo.bar = '125lGg'"));
   }
 
   @Test
   public void testLet() {
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ let id = function() {};", "foo.bar = id('foo_bar')"),
-        lines("/** @idGenerator {consistent} */ let id = function() {};", "foo.bar = 'a'"),
-        lines("/** @idGenerator {consistent} */ let id = function() {};", "foo.bar = 'foo_bar$0'"));
+            "/** @consistentIdGenerator */ let id = function() {};", "foo.bar = id('foo_bar')"),
+        lines("/** @consistentIdGenerator */ let id = function() {};", "foo.bar = 'a'"),
+        lines(
+            "/** @consistentIdGenerator */ let id = function() {};", "foo.bar = 'foo_bar$0'"));
 
     testNonPseudoSupportingGenerator(
-        "/** @idGenerator {stable} */ let id = function() {};" + "foo.bar = id('foo_bar')",
-        "/** @idGenerator {stable} */ let id = function() {};" + "foo.bar = '125lGg'");
+        "/** @stableIdGenerator */ let id = function() {};" + "foo.bar = id('foo_bar')",
+        "/** @stableIdGenerator */ let id = function() {};" + "foo.bar = '125lGg'");
   }
 
   @Test
   public void testConst() {
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ const id = function() {};",
-            "foo.bar = id('foo_bar')"),
-        lines("/** @idGenerator {consistent} */ const id = function() {};", "foo.bar = 'a'"),
+            "/** @consistentIdGenerator */ const id = function() {};", "foo.bar = id('foo_bar')"),
         lines(
-            "/** @idGenerator {consistent} */ const id = function() {};", "foo.bar = 'foo_bar$0'"));
+            "/** @consistentIdGenerator */ const id = function() {};", "foo.bar = 'a'"),
+        lines(
+            "/** @consistentIdGenerator */ const id = function() {};", "foo.bar = 'foo_bar$0'"));
 
     testNonPseudoSupportingGenerator(
-        lines("/** @idGenerator {stable} */ const id = function() {};", "foo.bar = id('foo_bar')"),
-        lines("/** @idGenerator {stable} */ const id = function() {};", "foo.bar = '125lGg'"));
+        lines(
+            "/** @stableIdGenerator */ const id = function() {};", "foo.bar = id('foo_bar')"),
+        lines(
+            "/** @stableIdGenerator */ const id = function() {};", "foo.bar = '125lGg'"));
   }
 
   @Test
   public void testInObjLit() {
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ get.id = function() {};",
+            "/** @consistentIdGenerator */ get.id = function() {};",
             "foo.bar = {a: get.id('foo_bar')}"),
-        lines("/** @idGenerator {consistent} */ get.id = function() {};", "foo.bar = {a: 'a'}"),
         lines(
-            "/** @idGenerator {consistent} */ get.id = function() {};",
-            "foo.bar = {a: 'foo_bar$0'}"));
+            "/** @consistentIdGenerator */ get.id = function() {};", "foo.bar = {a: 'a'}"),
+        lines(
+            "/** @consistentIdGenerator */ get.id = function() {};", "foo.bar = {a: 'foo_bar$0'}"));
 
     testNonPseudoSupportingGenerator(
         lines(
-            "/** @idGenerator {stable} */ get.id = function() {};",
+            "/** @stableIdGenerator */ get.id = function() {};",
             "foo.bar = {a: get.id('foo_bar')}"),
-        lines("/** @idGenerator {stable} */ get.id = function() {};", "foo.bar = {a: '125lGg'}"));
+        lines(
+            "/** @stableIdGenerator */ get.id = function() {};", "foo.bar = {a: '125lGg'}"));
 
     testNonPseudoSupportingGenerator(
         lines(
@@ -511,8 +521,8 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
     testWithPseudo(
         lines(
             "/** @idGenerator */ var id1 = function() {};",
-            "/** @idGenerator {consistent} */ var id2 = function() {};",
-            "/** @idGenerator {stable} */ var id3 = function() {};",
+            "/** @consistentIdGenerator */ var id2 = function() {};",
+            "/** @stableIdGenerator */ var id3 = function() {};",
             "f1 = id1('1');",
             "f2 = id1('1');",
             "f3 = id2('1');",
@@ -521,8 +531,8 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
             "f6 = id3('1');"),
         lines(
             "/** @idGenerator */ var id1 = function() {};",
-            "/** @idGenerator {consistent} */ var id2 = function() {};",
-            "/** @idGenerator {stable} */ var id3 = function() {};",
+            "/** @consistentIdGenerator */ var id2 = function() {};",
+            "/** @stableIdGenerator */ var id3 = function() {};",
             "f1 = 'a';",
             "f2 = 'b';",
             "f3 = 'a';",
@@ -531,8 +541,8 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
             "f6 = 'AAAAMQ';"),
         lines(
             "/** @idGenerator */ var id1 = function() {};",
-            "/** @idGenerator {consistent} */ var id2 = function() {};",
-            "/** @idGenerator {stable} */ var id3 = function() {};",
+            "/** @consistentIdGenerator */ var id2 = function() {};",
+            "/** @stableIdGenerator */ var id3 = function() {};",
             "f1 = '1$0';",
             "f2 = '1$1';",
             "f3 = '1$0';",
@@ -580,21 +590,21 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
 
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ var id = function() {};",
+            "/** @consistentIdGenerator */ var id = function() {};",
             "function fb() {foo.bar = id('foo_bar')}"),
         lines(
-            "/** @idGenerator {consistent} */ var id = function() {};",
+            "/** @consistentIdGenerator */ var id = function() {};",
             "function fb() {foo.bar = 'a'}"),
         lines(
-            "/** @idGenerator {consistent} */ var id = function() {};",
+            "/** @consistentIdGenerator */ var id = function() {};",
             "function fb() {foo.bar = 'foo_bar$0'}"));
 
     testNonPseudoSupportingGenerator(
         lines(
-            "/** @idGenerator {stable} */ var id = function() {};",
+            "/** @stableIdGenerator */ var id = function() {};",
             "function fb() {foo.bar = id('foo_bar')}"),
         lines(
-            "/** @idGenerator {stable} */ var id = function() {};",
+            "/** @stableIdGenerator */ var id = function() {};",
             "function fb() {foo.bar = '125lGg'}"));
 
     testError(
@@ -607,27 +617,27 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
 
   @Test
   public void testConflictingIdGenerator() {
-    testError(
-        "/** @idGenerator \n @idGenerator {consistent} \n*/" + "var id = function() {}; ",
+    testError("/** @idGenerator \n @consistentIdGenerator \n*/"
+            + "var id = function() {}; ",
         ReplaceIdGenerators.CONFLICTING_GENERATOR_TYPE);
 
-    testError(
-        "/** @idGenerator {stable} \n @idGenerator \n*/" + "var id = function() {}; ",
+    testError("/** @stableIdGenerator \n @idGenerator \n*/"
+            + "var id = function() {}; ",
         ReplaceIdGenerators.CONFLICTING_GENERATOR_TYPE);
 
-    testError(
-        "/** @idGenerator {stable} \n "
-            + "@idGenerator {consistent} \n*/"
+    testError("/** @stableIdGenerator \n "
+            + "@consistentIdGenerator \n*/"
             + "var id = function() {}; ",
         ReplaceIdGenerators.CONFLICTING_GENERATOR_TYPE);
 
     testWithPseudo(
         lines(
-            "/** @idGenerator {consistent} */ var id = function() {};",
+            "/** @consistentIdGenerator */ var id = function() {};",
             "if (x) {foo.bar = id('foo_bar')}"),
-        lines("/** @idGenerator {consistent} */ var id = function() {};", "if (x) {foo.bar = 'a'}"),
         lines(
-            "/** @idGenerator {consistent} */ var id = function() {};",
+            "/** @consistentIdGenerator */ var id = function() {};", "if (x) {foo.bar = 'a'}"),
+        lines(
+            "/** @consistentIdGenerator */ var id = function() {};",
             "if (x) {foo.bar = 'foo_bar$0'}"));
   }
 
@@ -649,9 +659,9 @@ public final class ReplaceIdGeneratorsTest extends CompilerTestCase {
 
   @Test
   public void testBadGenerator2() {
-    testSame(
-        "/** @idGenerator {consistent} */ id = function() {};" + "foo.bar = id()",
-        INVALID_GENERATOR_PARAMETER);
+    testSame("/** @consistentIdGenerator */ id = function() {};" +
+         "foo.bar = id()",
+         INVALID_GENERATOR_PARAMETER);
   }
 
   private void testMap(String code, String expected, String expectedMap) {

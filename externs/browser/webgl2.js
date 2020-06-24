@@ -35,1590 +35,1590 @@ function WebGL2RenderingContext() {}
 
 
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNPACK_ROW_LENGTH;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNPACK_SKIP_ROWS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNPACK_SKIP_PIXELS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PACK_ROW_LENGTH;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PACK_SKIP_ROWS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PACK_SKIP_PIXELS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.STENCIL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB10_A2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_BINDING_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNPACK_SKIP_IMAGES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNPACK_IMAGE_HEIGHT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_WRAP_R;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_3D_TEXTURE_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_2_10_10_10_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_ELEMENTS_VERTICES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_ELEMENTS_INDICES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_MIN_LOD;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_MAX_LOD;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_BASE_LEVEL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_MAX_LEVEL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MIN;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH_COMPONENT24;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_TEXTURE_LOD_BIAS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_COMPARE_MODE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_COMPARE_FUNC;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.CURRENT_QUERY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.QUERY_RESULT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.QUERY_RESULT_AVAILABLE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.STREAM_READ;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.STREAM_COPY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.STATIC_READ;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.STATIC_COPY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DYNAMIC_READ;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DYNAMIC_COPY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_DRAW_BUFFERS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER0;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER1;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER5;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER6;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER7;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER9;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER10;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER11;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER12;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER13;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER14;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_BUFFER15;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_FRAGMENT_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_VERTEX_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SAMPLER_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SAMPLER_2D_SHADOW;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAGMENT_SHADER_DERIVATIVE_HINT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PIXEL_PACK_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PIXEL_UNPACK_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PIXEL_PACK_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.PIXEL_UNPACK_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_MAT2x3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_MAT2x4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_MAT3x2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_MAT3x4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_MAT4x2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_MAT4x3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SRGB;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SRGB8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SRGB8_ALPHA8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COMPARE_REF_TO_TEXTURE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.VERTEX_ATTRIB_ARRAY_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_ARRAY_TEXTURE_LAYERS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MIN_PROGRAM_TEXEL_OFFSET;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_PROGRAM_TEXEL_OFFSET;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_VARYING_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_BINDING_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R11F_G11F_B10F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_10F_11F_11F_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB9_E5;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_5_9_9_9_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_BUFFER_MODE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_VARYINGS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_BUFFER_START;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_BUFFER_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RASTERIZER_DISCARD;
 
-/** @const {number} */
-WebGL2RenderingContext.MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS;
+/** @type {number} */
+WebGL2RenderingContext.MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS = 0x8C8A;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INTERLEAVED_ATTRIBS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SEPARATE_ATTRIBS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RED_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SAMPLER_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SAMPLER_2D_ARRAY_SHADOW;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SAMPLER_CUBE_SHADOW;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_VEC2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_VEC3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_VEC4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INT_SAMPLER_2D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INT_SAMPLER_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INT_SAMPLER_CUBE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INT_SAMPLER_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_SAMPLER_2D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_SAMPLER_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_SAMPLER_CUBE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_SAMPLER_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH_COMPONENT32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH32F_STENCIL8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FLOAT_32_UNSIGNED_INT_24_8_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_RED_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_GREEN_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_BLUE_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_DEFAULT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH_STENCIL_ATTACHMENT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH_STENCIL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_INT_24_8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DEPTH24_STENCIL8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNED_NORMALIZED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_FRAMEBUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.READ_FRAMEBUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.DRAW_FRAMEBUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.READ_FRAMEBUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RENDERBUFFER_SAMPLES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_ATTACHMENT_TEXTURE_LAYER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_COLOR_ATTACHMENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT1;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT5;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT6;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT7;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT9;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT10;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT11;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT12;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT13;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT14;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COLOR_ATTACHMENT15;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_SAMPLES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.HALF_FLOAT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.VERTEX_ARRAY_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.R8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RG8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGBA8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SIGNED_NORMALIZED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COPY_READ_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COPY_WRITE_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COPY_READ_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.COPY_WRITE_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BUFFER_START;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BUFFER_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_VERTEX_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_FRAGMENT_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_COMBINED_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_UNIFORM_BUFFER_BINDINGS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_UNIFORM_BLOCK_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BUFFER_OFFSET_ALIGNMENT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.ACTIVE_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_TYPE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_INDEX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_OFFSET;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_ARRAY_STRIDE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_MATRIX_STRIDE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_IS_ROW_MAJOR;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_DATA_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_ACTIVE_UNIFORMS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INVALID_INDEX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_VERTEX_OUTPUT_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_FRAGMENT_INPUT_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_SERVER_WAIT_TIMEOUT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.OBJECT_TYPE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SYNC_CONDITION;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SYNC_STATUS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SYNC_FLAGS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SYNC_FENCE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SYNC_GPU_COMMANDS_COMPLETE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.UNSIGNALED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SIGNALED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.ALREADY_SIGNALED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TIMEOUT_EXPIRED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.CONDITION_SATISFIED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.WAIT_FAILED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SYNC_FLUSH_COMMANDS_BIT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.VERTEX_ATTRIB_ARRAY_DIVISOR;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.ANY_SAMPLES_PASSED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.ANY_SAMPLES_PASSED_CONSERVATIVE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.SAMPLER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.RGB10_A2UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.INT_2_10_10_10_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_PAUSED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_ACTIVE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TRANSFORM_FEEDBACK_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_IMMUTABLE_FORMAT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_ELEMENT_INDEX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TEXTURE_IMMUTABLE_LEVELS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.TIMEOUT_IGNORED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.MAX_CLIENT_WAIT_TIMEOUT_WEBGL;
 
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNPACK_ROW_LENGTH;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNPACK_SKIP_ROWS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNPACK_SKIP_PIXELS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PACK_ROW_LENGTH;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PACK_SKIP_ROWS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PACK_SKIP_PIXELS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.STENCIL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB10_A2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_BINDING_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNPACK_SKIP_IMAGES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNPACK_IMAGE_HEIGHT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_WRAP_R;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_3D_TEXTURE_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_2_10_10_10_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_ELEMENTS_VERTICES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_ELEMENTS_INDICES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_MIN_LOD;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_MAX_LOD;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_BASE_LEVEL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_MAX_LEVEL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MIN;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH_COMPONENT24;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_TEXTURE_LOD_BIAS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_COMPARE_MODE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_COMPARE_FUNC;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.CURRENT_QUERY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.QUERY_RESULT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.QUERY_RESULT_AVAILABLE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.STREAM_READ;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.STREAM_COPY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.STATIC_READ;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.STATIC_COPY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DYNAMIC_READ;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DYNAMIC_COPY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_DRAW_BUFFERS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER0;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER1;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER5;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER6;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER7;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER9;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER10;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER11;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER12;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER13;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER14;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_BUFFER15;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_FRAGMENT_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_VERTEX_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SAMPLER_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SAMPLER_2D_SHADOW;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAGMENT_SHADER_DERIVATIVE_HINT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PIXEL_PACK_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PIXEL_UNPACK_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PIXEL_PACK_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.PIXEL_UNPACK_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_MAT2x3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_MAT2x4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_MAT3x2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_MAT3x4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_MAT4x2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_MAT4x3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SRGB;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SRGB8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SRGB8_ALPHA8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COMPARE_REF_TO_TEXTURE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.VERTEX_ATTRIB_ARRAY_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_ARRAY_TEXTURE_LAYERS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MIN_PROGRAM_TEXEL_OFFSET;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_PROGRAM_TEXEL_OFFSET;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_VARYING_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_BINDING_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R11F_G11F_B10F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_10F_11F_11F_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB9_E5;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_5_9_9_9_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_BUFFER_MODE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_VARYINGS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_BUFFER_START;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_BUFFER_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RASTERIZER_DISCARD;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS =
     0x8C8A;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INTERLEAVED_ATTRIBS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SEPARATE_ATTRIBS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RED_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SAMPLER_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SAMPLER_2D_ARRAY_SHADOW;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SAMPLER_CUBE_SHADOW;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_VEC2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_VEC3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_VEC4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INT_SAMPLER_2D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INT_SAMPLER_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INT_SAMPLER_CUBE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INT_SAMPLER_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_SAMPLER_2D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_SAMPLER_3D;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_SAMPLER_CUBE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_SAMPLER_2D_ARRAY;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH_COMPONENT32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH32F_STENCIL8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FLOAT_32_UNSIGNED_INT_24_8_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_RED_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_GREEN_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_BLUE_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_DEFAULT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH_STENCIL_ATTACHMENT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH_STENCIL;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_INT_24_8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DEPTH24_STENCIL8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNED_NORMALIZED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_FRAMEBUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.READ_FRAMEBUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.DRAW_FRAMEBUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.READ_FRAMEBUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RENDERBUFFER_SAMPLES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_ATTACHMENT_TEXTURE_LAYER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_COLOR_ATTACHMENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT1;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT2;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT3;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT4;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT5;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT6;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT7;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT9;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT10;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT11;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT12;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT13;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT14;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COLOR_ATTACHMENT15;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_SAMPLES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.HALF_FLOAT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG_INTEGER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG8;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG16F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG32F;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG8I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG8UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG16I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG16UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG32I;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG32UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.VERTEX_ARRAY_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.R8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RG8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGBA8_SNORM;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SIGNED_NORMALIZED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COPY_READ_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COPY_WRITE_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COPY_READ_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.COPY_WRITE_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BUFFER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BUFFER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BUFFER_START;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BUFFER_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_VERTEX_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_FRAGMENT_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_COMBINED_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_UNIFORM_BUFFER_BINDINGS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_UNIFORM_BLOCK_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BUFFER_OFFSET_ALIGNMENT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.ACTIVE_UNIFORM_BLOCKS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_TYPE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_INDEX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_OFFSET;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_ARRAY_STRIDE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_MATRIX_STRIDE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_IS_ROW_MAJOR;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_DATA_SIZE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_ACTIVE_UNIFORMS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INVALID_INDEX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_VERTEX_OUTPUT_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_FRAGMENT_INPUT_COMPONENTS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_SERVER_WAIT_TIMEOUT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.OBJECT_TYPE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SYNC_CONDITION;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SYNC_STATUS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SYNC_FLAGS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SYNC_FENCE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SYNC_GPU_COMMANDS_COMPLETE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.UNSIGNALED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SIGNALED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.ALREADY_SIGNALED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TIMEOUT_EXPIRED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.CONDITION_SATISFIED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.WAIT_FAILED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SYNC_FLUSH_COMMANDS_BIT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.VERTEX_ATTRIB_ARRAY_DIVISOR;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.ANY_SAMPLES_PASSED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.ANY_SAMPLES_PASSED_CONSERVATIVE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.SAMPLER_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.RGB10_A2UI;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.INT_2_10_10_10_REV;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_PAUSED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_ACTIVE;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TRANSFORM_FEEDBACK_BINDING;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_IMMUTABLE_FORMAT;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_ELEMENT_INDEX;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TEXTURE_IMMUTABLE_LEVELS;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.TIMEOUT_IGNORED;
 
-/** @const {number} */
+/** @type {number} */
 WebGL2RenderingContext.prototype.MAX_CLIENT_WAIT_TIMEOUT_WEBGL;
 
 /* Buffer objects */
@@ -1778,10 +1778,10 @@ WebGL2RenderingContext.prototype.texStorage3D = function(
  * @param {number} internalformat
  * @param {number} formatOrWidth
  * @param {number} typeOrHeight
- * @param {?TexImageSource|number} imgOrBorder
+ * @param {?ImageData|?HTMLImageElement|?HTMLCanvasElement|?HTMLVideoElement|number} imgOrBorder
  * @param {number=} opt_format
  * @param {number=} opt_type
- * @param {?ArrayBufferView|?TexImageSource|number=} opt_imgOrOffset
+ * @param {?ArrayBufferView|?ImageData|?HTMLImageElement|?HTMLCanvasElement|?HTMLVideoElement|number=} opt_imgOrOffset
  * @param {number=} opt_srcOffset
  * @return {undefined}
  * @override
@@ -1797,9 +1797,9 @@ WebGL2RenderingContext.prototype.texImage2D = function(
  * @param {number} yoffset
  * @param {number} formatOrWidth
  * @param {number} typeOrHeight
- * @param {?TexImageSource|number} dataOrFormat
+ * @param {?ImageData|?HTMLImageElement|?HTMLCanvasElement|?HTMLVideoElement|number} dataOrFormat
  * @param {number=} opt_type
- * @param {?ArrayBufferView|?TexImageSource|number=} opt_imgOrOffset
+ * @param {?ArrayBufferView|?ImageData|?HTMLImageElement|?HTMLCanvasElement|?HTMLVideoElement|number=} opt_imgOrOffset
  * @param {number=} opt_srcOffset
  * @return {undefined}
  * @override
@@ -1818,7 +1818,7 @@ WebGL2RenderingContext.prototype.texSubImage2D = function(
  * @param {number} border
  * @param {number} format
  * @param {number} type
- * @param {?ArrayBufferView|?TexImageSource|number} srcData
+ * @param {?ArrayBufferView|?ImageData|?HTMLImageElement|?HTMLCanvasElement|?HTMLVideoElement|number} srcData
  * @param {number=} opt_srcOffset
  * @return {undefined}
  */
@@ -1837,7 +1837,7 @@ WebGL2RenderingContext.prototype.texImage3D = function(
  * @param {number} depth
  * @param {number} format
  * @param {number} type
- * @param {?ArrayBufferView|?TexImageSource|number} srcData
+ * @param {?ArrayBufferView|?ImageData|?HTMLImageElement|?HTMLCanvasElement|?HTMLVideoElement|number} srcData
  * @param {number=} opt_srcOffset
  * @return {undefined}
  */

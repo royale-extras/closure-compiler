@@ -70,6 +70,7 @@ import java.util.logging.Logger;
  *   Foo.b = 0;
  *   Bar.a = 0;
  * </code>
+ *
  */
 class AmbiguateProperties implements CompilerPass {
   private static final Logger logger = Logger.getLogger(
@@ -78,9 +79,9 @@ class AmbiguateProperties implements CompilerPass {
   private final AbstractCompiler compiler;
 
   private final List<Node> stringNodesToRename = new ArrayList<>();
-  // Can't use these to start property names.
+  // Can't use these as property names.
   private final char[] reservedFirstCharacters;
-  // Can't use these at all in property names.
+  // Can't use these as property names.
   private final char[] reservedNonFirstCharacters;
 
   /** Map from property name to Property object */
@@ -113,15 +114,17 @@ class AmbiguateProperties implements CompilerPass {
   /** A map from JSType to a unique representative Integer. */
   private final BiMap<JSType, Integer> intForType = HashBiMap.create();
 
-  /**
-   * A map from JSType to JSTypeBitSet representing the types related to the type.
-   *
-   * <p>A type is always related to itself.
-   */
+  /** A map from JSType to JSTypeBitSet representing the types related to the type. */
   private final Map<JSType, JSTypeBitSet> relatedBitsets = new HashMap<>();
 
   /** A set of types that invalidate properties from ambiguation. */
   private final InvalidatingTypes invalidatingTypes;
+
+  /**
+   * Prefix of properties to skip renaming.  These should be renamed in the
+   * RenameProperties pass.
+   */
+  static final String SKIP_PREFIX = "JSAbstractCompiler";
 
   AmbiguateProperties(
       AbstractCompiler compiler,
@@ -163,7 +166,7 @@ class AmbiguateProperties implements CompilerPass {
   /** Returns an integer that uniquely identifies a JSType. */
   private int getIntForType(JSType type) {
     // Templatized types don't exist at runtime, so collapse to raw type
-    if (type != null && type.isTemplatizedType()) {
+    if (type != null && type.isGenericObjectType()) {
       type = type.toMaybeObjectType().getRawType();
     }
     if (intForType.containsKey(type)) {
@@ -231,10 +234,6 @@ class AmbiguateProperties implements CompilerPass {
         }
       }
     }
-
-    // We may have renamed getter / setter properties.
-    GatherGetterAndSetterProperties.update(compiler, externs, root);
-
     if (logger.isLoggable(Level.FINE)) {
       logger.fine("Collapsed " + numRenamedPropertyNames + " properties into "
                   + numNewPropertyNames + " and skipped renaming "
@@ -244,7 +243,7 @@ class AmbiguateProperties implements CompilerPass {
 
   private BitSet getRelatedTypesOnNonUnion(JSType type) {
     // All of the types we encounter should have been added to the
-    // relatedBitsets via computeRelatedTypesForNonUnionType.
+    // relatedBitsets via computeRelatedTypes.
     if (relatedBitsets.containsKey(type)) {
       return relatedBitsets.get(type);
     } else {
@@ -254,17 +253,18 @@ class AmbiguateProperties implements CompilerPass {
   }
 
   /**
-   * Adds subtypes - and implementors, in the case of interfaces - of the type to its JSTypeBitSet
-   * of related types.
+   * Adds subtypes - and implementors, in the case of interfaces - of the type
+   * to its JSTypeBitSet of related types. Union types are decomposed into their
+   * alternative types.
    *
-   * <p>The 'is related to' relationship is best understood graphically. Draw an arrow from each
-   * instance type to the prototype of each of its subclass. Draw an arrow from each prototype to
-   * its instance type. Draw an arrow from each interface to its implementors. A type is related to
-   * another if there is a directed path in the graph from the type to other. Thus, the 'is related
-   * to' relationship is reflexive and transitive.
+   * <p>The 'is related to' relationship is best understood graphically. Draw an
+   * arrow from each instance type to the prototype of each of its
+   * subclass. Draw an arrow from each prototype to its instance type. Draw an
+   * arrow from each interface to its implementors. A type is related to another
+   * if there is a directed path in the graph from the type to other. Thus, the
+   * 'is related to' relationship is reflexive and transitive.
    *
    * <p>Example with Foo extends Bar which extends Baz and Bar implements I:
-   *
    * <pre>{@code
    * Foo -> Bar.prototype -> Bar -> Baz.prototype -> Baz
    *                          ^
@@ -272,14 +272,20 @@ class AmbiguateProperties implements CompilerPass {
    *                          I
    * }</pre>
    *
-   * <p>We also need to handle relationships between functions because of ES6 class-side inheritance
-   * although the top Function type itself is invalidating.
+   * <p>Note that we don't need to correctly handle the relationships between
+   * functions, because the function type is invalidating (i.e. its properties
+   * won't be ambiguated).
    */
-  @SuppressWarnings("ReferenceEquality")
-  private void computeRelatedTypesForNonUnionType(JSType type) {
-    // This method could be expanded to handle union types if necessary, but currently no union
-    // types are ever passed as input so the method doesn't have logic for union types
-    checkState(!type.isUnionType(), type);
+  private void computeRelatedTypes(JSType type) {
+    if (type.isUnionType()) {
+      type = type.restrictByNotNullOrUndefined();
+      if (type.isUnionType()) {
+        for (JSType alt : type.getUnionMembers()) {
+           computeRelatedTypes(alt);
+        }
+        return;
+      }
+    }
 
     if (relatedBitsets.containsKey(type)) {
       // We only need to generate the bit set once.
@@ -306,24 +312,6 @@ class AmbiguateProperties implements CompilerPass {
         addRelatedInstance(subType, related);
       }
     }
-
-    // We only specifically handle implicit prototypes of functions in the case of ES6 classes
-    // For regular functions, the implicit prototype being Function.prototype does not matter
-    // because the type `Function` is invalidating.
-    // This may cause unexpected behavior for code that manually sets a prototype, e.g.
-    //   Object.setPrototypeOf(myFunction, prototypeObj);
-    // but code like that should not be used with --ambiguate_properties or type-based optimizations
-    FunctionType fnType = type.toMaybeFunctionType();
-    if (fnType != null) {
-      for (FunctionType subType : fnType.getDirectSubTypes()) {
-        // We record all subtypes of constructors, but don't care about old 'ES5-style' subtyping,
-        // just ES6-style. This is equivalent to saying that the subtype constructor's implicit
-        // prototype is the given type
-        if (fnType == subType.getImplicitPrototype()) {
-          addRelatedType(subType, related);
-        }
-      }
-    }
   }
 
   /**
@@ -334,13 +322,9 @@ class AmbiguateProperties implements CompilerPass {
     checkArgument(constructor.hasInstanceType(),
         "Constructor %s without instance type.", constructor);
     ObjectType instanceType = constructor.getInstanceType();
-    addRelatedType(instanceType, related);
-  }
-
-  /** Adds the given type and all its related types to the given bit set. */
-  private void addRelatedType(JSType type, JSTypeBitSet related) {
-    computeRelatedTypesForNonUnionType(type);
-    related.or(relatedBitsets.get(type));
+    related.set(getIntForType(instanceType.getImplicitPrototype()));
+    computeRelatedTypes(instanceType);
+    related.or(relatedBitsets.get(instanceType));
   }
 
   class PropertyGraph implements AdjacencyGraph<Property, Void> {
@@ -425,9 +409,8 @@ class AmbiguateProperties implements CompilerPass {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public <A extends Annotation> A getAnnotation() {
-      return (A) annotation;
+    public Annotation getAnnotation() {
+      return annotation;
     }
 
     @Override
@@ -439,7 +422,7 @@ class AmbiguateProperties implements CompilerPass {
   private void reportInvalidRenameFunction(Node n, String functionName, String message) {
     compiler.report(
         JSError.make(
-            n, PropertyRenamingDiagnostics.INVALID_RENAME_FUNCTION, functionName, message));
+            n, DisambiguateProperties.Warnings.INVALID_RENAME_FUNCTION, functionName, message));
   }
   private static final String WRONG_ARGUMENT_COUNT = " Must be called with 1 or 2 arguments.";
   private static final String WANT_STRING_LITERAL = " The first argument must be a string literal.";
@@ -450,178 +433,91 @@ class AmbiguateProperties implements CompilerPass {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
-        case GETPROP:
-          processGetProp(n);
+        case GETPROP: {
+          Node propNode = n.getSecondChild();
+          JSType type = getJSType(n.getFirstChild());
+          maybeMarkCandidate(propNode, type);
           return;
+        }
+        case CALL: {
+          Node target = n.getFirstChild();
+          if (!target.isQualifiedName()) {
+            return;
+          }
 
-        case CALL:
-          processCall(n);
+          String renameFunctionName = target.getOriginalQualifiedName();
+          if (renameFunctionName != null
+              && compiler.getCodingConvention().isPropertyRenameFunction(renameFunctionName)) {
+            int childCount = n.getChildCount();
+            if (childCount != 2 && childCount != 3) {
+              reportInvalidRenameFunction(n, renameFunctionName, WRONG_ARGUMENT_COUNT);
+              return;
+            }
+
+            Node propName = n.getSecondChild();
+            if (!propName.isString()) {
+              reportInvalidRenameFunction(n, renameFunctionName, WANT_STRING_LITERAL);
+              return;
+            }
+
+            if (propName.getString().contains(".")) {
+              reportInvalidRenameFunction(n, renameFunctionName, DO_NOT_WANT_PATH);
+              return;
+            }
+
+            maybeMarkCandidate(propName, getJSType(n.getSecondChild()));
+          } else if (NodeUtil.isObjectDefinePropertiesDefinition(n)) {
+            Node typeObj = n.getSecondChild();
+            JSType type = getJSType(typeObj);
+            Node objectLiteral = typeObj.getNext();
+
+            if (!objectLiteral.isObjectLit()) {
+              return;
+            }
+
+            for (Node key : objectLiteral.children()) {
+              if (key.isQuotedString()) {
+                quotedNames.add(key.getString());
+              } else {
+                maybeMarkCandidate(key, type);
+              }
+            }
+          }
           return;
-
+        }
         case OBJECTLIT:
-        case OBJECT_PATTERN:
-          processObjectLitOrPattern(n);
-          return;
+          // Object.defineProperties literals are handled at the CALL node.
+          if (n.getParent().isCall()
+              && NodeUtil.isObjectDefinePropertiesDefinition(n.getParent())) {
+            return;
+          }
 
+          // The children of an OBJECTLIT node are keys, where the values
+          // are the children of the keys.
+          JSType type = getJSType(n);
+          for (Node key = n.getFirstChild(); key != null; key = key.getNext()) {
+            // We only want keys that were unquoted.
+            // Keys are STRING, GET, SET
+            if (key.isQuotedString()) {
+              // Ensure that we never rename some other property in a way
+              // that could conflict with this quoted key.
+              quotedNames.add(key.getString());
+            } else {
+              maybeMarkCandidate(key, type);
+            }
+          }
+          return;
         case GETELEM:
-          processGetElem(n);
+          // If this is a quoted property access (e.g. x['myprop']), we need to
+          // ensure that we never rename some other property in a way that
+          // could conflict with this quoted name.
+          Node child = n.getLastChild();
+          if (child.isString()) {
+            quotedNames.add(child.getString());
+          }
           return;
-
-        case CLASS:
-          processClass(n);
-          return;
-
         default:
           // Nothing to do.
-      }
-    }
-
-    private void processGetProp(Node getProp) {
-      Node propNode = getProp.getSecondChild();
-      JSType type = getJSType(getProp.getFirstChild());
-      maybeMarkCandidate(propNode, type);
-    }
-
-    private void processCall(Node call) {
-      Node target = call.getFirstChild();
-      if (!target.isQualifiedName()) {
-        return;
-      }
-
-      String renameFunctionName = target.getOriginalQualifiedName();
-      if (renameFunctionName != null
-          && compiler.getCodingConvention().isPropertyRenameFunction(renameFunctionName)) {
-        int childCount = call.getChildCount();
-        if (childCount != 2 && childCount != 3) {
-          reportInvalidRenameFunction(call, renameFunctionName, WRONG_ARGUMENT_COUNT);
-          return;
-        }
-
-        Node propName = call.getSecondChild();
-        if (!propName.isString()) {
-          reportInvalidRenameFunction(call, renameFunctionName, WANT_STRING_LITERAL);
-          return;
-        }
-
-        if (propName.getString().contains(".")) {
-          reportInvalidRenameFunction(call, renameFunctionName, DO_NOT_WANT_PATH);
-          return;
-        }
-
-        // Skip ambiguation for properties in renaming calls
-        // NOTE (lharker@) - I'm not sure if this behavior is necessary, or if we could safely
-        // ambiguate the property as long as we also updated the property renaming call
-        Property p = getProperty(propName.getString());
-        p.skipAmbiguating = true;
-      } else if (NodeUtil.isObjectDefinePropertiesDefinition(call)) {
-        Node typeObj = call.getSecondChild();
-        JSType type = getJSType(typeObj);
-        Node objectLiteral = typeObj.getNext();
-
-        if (!objectLiteral.isObjectLit()) {
-          return;
-        }
-
-        for (Node key : objectLiteral.children()) {
-          processObjectProperty(objectLiteral, key, type);
-        }
-      }
-    }
-
-    private void processObjectProperty(Node objectLit, Node key, JSType type) {
-      checkArgument(objectLit.isObjectLit() || objectLit.isObjectPattern(), objectLit);
-      switch (key.getToken()) {
-        case COMPUTED_PROP:
-          if (key.getFirstChild().isString()) {
-            // If this quoted prop name is statically determinable, ensure we don't rename some
-            // other property in a way that could conflict with it.
-            //
-            // This is largely because we store quoted member functions as computed properties and
-            // want to be consistent with how other quoted properties invalidate property names.
-            quotedNames.add(key.getFirstChild().getString());
-          }
-          break;
-
-        case MEMBER_FUNCTION_DEF:
-        case GETTER_DEF:
-        case SETTER_DEF:
-        case STRING_KEY:
-          if (key.isQuotedString()) {
-            // If this quoted prop name is statically determinable, ensure we don't rename some
-            // other property in a way that could conflict with it
-            quotedNames.add(key.getString());
-          } else {
-            maybeMarkCandidate(key, type);
-          }
-          break;
-
-        case OBJECT_REST:
-        case OBJECT_SPREAD:
-          break; // Nothing to do.
-
-        default:
-          throw new IllegalStateException(
-              "Unexpected child of " + objectLit.getToken() + ": " + key.toStringTree());
-      }
-    }
-
-    private void processObjectLitOrPattern(Node objectLit) {
-      // Object.defineProperties literals are handled at the CALL node, as we determine the type
-      // differently than for regular object literals.
-      if (objectLit.getParent().isCall()
-          && NodeUtil.isObjectDefinePropertiesDefinition(objectLit.getParent())) {
-        return;
-      }
-
-      // The children of an OBJECTLIT node are keys, where the values
-      // are the children of the keys.
-      JSType type = getJSType(objectLit);
-      for (Node key = objectLit.getFirstChild(); key != null; key = key.getNext()) {
-        processObjectProperty(objectLit, key, type);
-      }
-    }
-
-    private void processGetElem(Node n) {
-      // If this is a quoted property access (e.g. x['myprop']), we need to
-      // ensure that we never rename some other property in a way that
-      // could conflict with this quoted name.
-      Node child = n.getLastChild();
-      if (child.isString()) {
-        quotedNames.add(child.getString());
-      }
-    }
-
-    private void processClass(Node classNode) {
-      JSType classConstructorType = getJSType(classNode);
-      JSType classPrototype =
-          classConstructorType.isFunctionType()
-              ? classConstructorType.toMaybeFunctionType().getPrototype()
-              : compiler.getTypeRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
-      for (Node member : NodeUtil.getClassMembers(classNode).children()) {
-        if (member.isQuotedString()) {
-          // ignore get 'foo'() {} and prevent property name collisions
-          // Note that only getters/setters are represented as quoted strings, not 'foo'() {}
-          // see https://github.com/google/closure-compiler/issues/3071
-          quotedNames.add(member.getString());
-          continue;
-        } else if (member.isComputedProp()) {
-          // ignore ['foo']() {}
-          // for simple cases, we also prevent renaming collisions
-          if (member.getFirstChild().isString()) {
-            quotedNames.add(member.getFirstChild().getString());
-          }
-          continue;
-        } else if (NodeUtil.isEs6ConstructorMemberFunctionDef(member)) {
-          // don't rename `class C { constructor() {} }` !
-          // This only applies for ES6 classes, not generic properties called 'constructor', which
-          // is why it's handled in this method specifically.
-          continue;
-        }
-
-        JSType memberOwnerType = member.isStaticMember() ? classConstructorType : classPrototype;
-
-        // member could be a MEMBER_FUNCTION_DEF, GETTER_DEF, or SETTER_DEF
-        maybeMarkCandidate(member, memberOwnerType);
       }
     }
 
@@ -660,9 +556,16 @@ class AmbiguateProperties implements CompilerPass {
    * present.
    */
   private JSType getJSType(Node n) {
+    if (n == null) {
+      return compiler.getTypeRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
+    }
+
     JSType type = n.getJSType();
     if (type == null) {
-      // TODO(bradfordcsmith): This branch indicates a compiler bug. It should throw an exception.
+      // TODO(user): This branch indicates a compiler bug, not worthy of
+      // halting the compilation but we should log this and analyze to track
+      // down why it happens. This is not critical and will be resolved over
+      // time as the type checker is extended.
       return compiler.getTypeRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
     } else {
       return type;
@@ -679,6 +582,11 @@ class AmbiguateProperties implements CompilerPass {
 
     Property(String name) {
       this.oldName = name;
+
+      // Properties with this suffix are handled in RenameProperties.
+      if (name.startsWith(SKIP_PREFIX)) {
+        skipAmbiguating = true;
+      }
     }
 
     /** Add this type to this property, calculating */
@@ -707,7 +615,7 @@ class AmbiguateProperties implements CompilerPass {
         return;
       }
       if (!relatedTypes.get(getIntForType(newType))) {
-        computeRelatedTypesForNonUnionType(newType);
+        computeRelatedTypes(newType);
         relatedTypes.or(getRelatedTypesOnNonUnion(newType));
       }
     }
@@ -719,6 +627,10 @@ class AmbiguateProperties implements CompilerPass {
 
     private JSTypeBitSet(int size) {
       super(size);
+    }
+
+    private JSTypeBitSet() {
+      super();
     }
 
     /**

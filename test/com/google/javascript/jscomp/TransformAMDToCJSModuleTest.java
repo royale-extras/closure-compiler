@@ -28,6 +28,11 @@ public final class TransformAMDToCJSModuleTest extends CompilerTestCase {
     return new TransformAMDToCJSModule(compiler);
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testDefine() {
     test("define(['foo', 'bar'], function(foo, bar) { foo(bar); bar+1; })",

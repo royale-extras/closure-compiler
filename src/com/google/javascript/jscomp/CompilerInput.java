@@ -26,13 +26,12 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.deps.DependencyInfo;
-import com.google.javascript.jscomp.deps.JsFileRegexParser;
+import com.google.javascript.jscomp.deps.JsFileParser;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.deps.ModuleLoader.ModulePath;
 import com.google.javascript.jscomp.deps.SimpleDependencyInfo;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.InputId;
-import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import java.io.IOException;
@@ -45,6 +44,7 @@ import java.util.TreeMap;
  * A class for the internal representation of an input to the compiler. Wraps a {@link SourceAst}
  * and maintain state such as module for the input and whether the input is an extern. Also
  * calculates provided and required types.
+ *
  */
 public class CompilerInput extends DependencyInfo.Base implements SourceAst {
 
@@ -190,16 +190,6 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
     return getDependencyInfo().getProvides();
   }
 
-  @Override
-  public boolean getHasExternsAnnotation() {
-    return getDependencyInfo().getHasExternsAnnotation();
-  }
-
-  @Override
-  public boolean getHasNoCompileAnnotation() {
-    return getDependencyInfo().getHasNoCompileAnnotation();
-  }
-
   /**
    * Gets a list of types provided, but does not attempt to
    * regenerate the dependency information. Typically this occurs
@@ -267,8 +257,10 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
     extraRequires.add(require);
   }
 
-  /** Returns the DependencyInfo object, generating it lazily if necessary. */
-  DependencyInfo getDependencyInfo() {
+  /**
+   * Returns the DependencyInfo object, generating it lazily if necessary.
+   */
+  private DependencyInfo getDependencyInfo() {
     if (dependencyInfo == null) {
       dependencyInfo = generateDependencyInfo();
     }
@@ -277,10 +269,7 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
           SimpleDependencyInfo.builder(getName(), getName())
               .setProvides(concat(dependencyInfo.getProvides(), extraProvides))
               .setRequires(concat(dependencyInfo.getRequires(), extraRequires))
-              .setTypeRequires(dependencyInfo.getTypeRequires())
               .setLoadFlags(dependencyInfo.getLoadFlags())
-              .setHasExternsAnnotation(dependencyInfo.getHasExternsAnnotation())
-              .setHasNoCompileAnnotation(dependencyInfo.getHasNoCompileAnnotation())
               .build();
       extraRequires.clear();
       extraProvides.clear();
@@ -300,8 +289,8 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
         compiler.getErrorManager(), "Expected compiler to call an error manager: %s", this);
 
     // If the code is a JsAst, then it was originally JS code, and is compatible with the
-    // regex-based parsing of JsFileRegexParser.
-    if (ast instanceof JsAst && JsFileRegexParser.isSupported()) {
+    // regex-based parsing of JsFileParser.
+    if (ast instanceof JsAst && JsFileParser.isSupported()) {
       // Look at the source code.
       // Note: it's OK to use getName() instead of
       // getPathRelativeToClosureBase() here because we're not using
@@ -309,7 +298,7 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
       // symbol dependencies.)
       try {
         DependencyInfo info =
-            new JsFileRegexParser(compiler.getErrorManager())
+            new JsFileParser(compiler.getErrorManager())
                 .setModuleLoader(compiler.getModuleLoader())
                 .setIncludeGoogBase(true)
                 .parseFile(getName(), getName(), getCode());
@@ -329,7 +318,6 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
       }
 
       finder.visitTree(root);
-      JSDocInfo info = root.getJSDocInfo();
 
       // TODO(nicksantos|user): This caching behavior is a bit
       // odd, and only works if you assume the exact call flow that
@@ -346,8 +334,6 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
           .setRequires(finder.requires)
           .setTypeRequires(finder.typeRequires)
           .setLoadFlags(finder.loadFlags)
-          .setHasExternsAnnotation(info != null && info.isExterns())
-          .setHasNoCompileAnnotation(info != null && info.isNoCompile())
           .build();
     }
   }
@@ -382,7 +368,7 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
         case CALL:
           if (n.hasTwoChildren()
               && n.getFirstChild().isGetProp()
-              && n.getFirstFirstChild().matchesName("goog")) {
+              && n.getFirstFirstChild().matchesQualifiedName("goog")) {
 
             if (!requires.contains(Require.BASE)) {
               requires.add(Require.BASE);
@@ -425,7 +411,8 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
             }
           } else if (parent.isGetProp()
               // TODO(johnplaisted): Consolidate on declareModuleId
-              && parent.matchesQualifiedName("goog.declareModuleId")
+              && (parent.matchesQualifiedName("goog.module.declareNamespace")
+                  || parent.matchesQualifiedName("goog.declareModuleId"))
               && parent.getParent().isCall()) {
             Node argument = parent.getParent().getSecondChild();
             if (!argument.isString()) {
@@ -453,7 +440,7 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
           return;
 
         case VAR:
-          if (n.getFirstChild().matchesName("goog")
+          if (n.getFirstChild().matchesQualifiedName("goog")
               && NodeUtil.isNamespaceDecl(n.getFirstChild())) {
             provides.add("goog");
           }
@@ -482,7 +469,7 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
       checkArgument(n.isString());
       checkArgument(parent.isExport() || parent.isImport());
 
-      // TODO(blickly): Move this (and the duplicated logic in JsFileRegexParser/Es6RewriteModules)
+      // TODO(blickly): Move this (and the duplicated logic in JsFileParser/Es6RewriteModules)
       // into ModuleLoader.
       String moduleName = n.getString();
       if (moduleName.startsWith("goog:")) {
@@ -561,7 +548,7 @@ public class CompilerInput extends DependencyInfo.Base implements SourceAst {
     return ImmutableSet.<T>builder().addAll(first).addAll(second).build();
   }
 
-  public ModulePath getPath() {
+  ModulePath getPath() {
     if (modulePath == null) {
       ModuleLoader moduleLoader = compiler.getModuleLoader();
       this.modulePath = moduleLoader.resolve(getName());

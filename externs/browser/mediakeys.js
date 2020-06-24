@@ -15,18 +15,13 @@
  */
 /**
  * @fileoverview MediaKey externs.
- * Based on {@link https://w3c.github.io/encrypted-media/ EME draft 5 December
- * 2019}.
+ * Based on {@link http://goo.gl/blgtZZ EME draft 12 March 2015}.
  * @externs
  */
 
 
 /**
- * @typedef {{
- *   contentType: string,
- *   encryptionScheme: (?string|undefined),
- *   robustness: (string|undefined)
- * }}
+ * @typedef {{contentType: string, robustness: string}}
  * @see https://w3c.github.io/encrypted-media/#mediakeysystemmediacapability-dictionary
  */
 var MediaKeySystemMediaCapability;
@@ -63,7 +58,7 @@ HTMLMediaElement.prototype.mediaKeys;
 /**
  * @param {MediaKeys} mediaKeys
  * @return {!Promise}
- * @see https://w3c.github.io/encrypted-media/#dom-htmlmediaelement-setmediakeys
+ * @see https://w3c.github.io/encrypted-media/#widl-HTMLMediaElement-setMediaKeys-Promise-void--MediaKeys-mediaKeys
  */
 HTMLMediaElement.prototype.setMediaKeys = function(mediaKeys) {};
 
@@ -221,23 +216,29 @@ MediaKeySession.prototype.close = function() {};
 MediaKeySession.prototype.remove = function() {};
 
 
-/** @override */
+/**
+ * @override
+ */
 MediaKeySession.prototype.addEventListener = function(
     type, listener, opt_options) {};
 
 
-/** @override */
+/**
+ * @override
+ */
 MediaKeySession.prototype.removeEventListener = function(
     type, listener, opt_options) {};
 
 
-/** @override */
+/**
+ * @override
+ * @return {boolean}
+ */
 MediaKeySession.prototype.dispatchEvent = function(evt) {};
 
 /**
  * @record
  * @extends {EventInit}
- * @see https://w3c.github.io/encrypted-media/#dom-mediakeymessageeventinit
  */
 function MediaKeyMessageEventInit() {};
 
@@ -272,7 +273,6 @@ MediaKeyMessageEvent.prototype.target;
 /**
  * @record
  * @extends {EventInit}
- * @see https://w3c.github.io/encrypted-media/#dom-mediaencryptedeventinit
  */
 function MediaEncryptedEventInit() {};
 

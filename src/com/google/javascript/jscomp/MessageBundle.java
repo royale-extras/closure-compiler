@@ -19,6 +19,7 @@ package com.google.javascript.jscomp;
 /**
  * An interface for providing alternative values for user-visible messages in
  * JavaScript code.
+ *
  */
 public interface MessageBundle {
 

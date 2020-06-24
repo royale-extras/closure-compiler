@@ -9,5 +9,3 @@ target/
 .classpath
 .project
 /bin
-/yarn.lock
-/node_modules

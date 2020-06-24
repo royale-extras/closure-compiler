@@ -34,6 +34,8 @@ import javax.annotation.Nullable;
 /**
  * A symbol table for references that are removed by preprocessor passes (like {@code
  * ProcessClosurePrimitives}).
+ *
+ * @author nicksantos@google.com (Nick Santos)
  */
 final class PreprocessorSymbolTable
     implements StaticTypedScope, StaticSymbolTable<SimpleSlot, PreprocessorSymbolTable.Reference> {
@@ -107,11 +109,20 @@ final class PreprocessorSymbolTable
   }
 
   /**
-   * This variant of Node#getQualifiedName is adds special support STRING nodes which represent
-   * module names.
+   * This variant of Node#getQualifiedName is adds special support for
+   * IS_MODULE_NAME.
    */
   public String getQualifiedName(Node n) {
-    return n.isString() ? n.getString() : n.getQualifiedName();
+    if (n.getBooleanProp(Node.IS_MODULE_NAME)) {
+      return n.getString();
+    } else if (n.isGetProp()) {
+      String left = getQualifiedName(n.getFirstChild());
+      if (left == null) {
+        return null;
+      }
+      return left + "." + n.getLastChild().getString();
+    }
+    return n.getQualifiedName();
   }
 
   static final class Reference extends SimpleReference<SimpleSlot> {

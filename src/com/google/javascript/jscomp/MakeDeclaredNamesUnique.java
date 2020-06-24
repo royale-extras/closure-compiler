@@ -26,7 +26,7 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Multiset;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
-import com.google.javascript.rhino.JSDocInfoBuilder;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.TokenStream;
 import java.util.ArrayDeque;
@@ -41,6 +41,7 @@ import javax.annotation.Nullable;
 /**
  *  Find all Functions, VARs, and Exception names and make them
  *  unique.  Specifically, it will not modify object properties.
+ *  @author johnlenz@google.com (John Lenz)
  */
 class MakeDeclaredNamesUnique extends NodeTraversal.AbstractScopedCallback {
 
@@ -74,6 +75,10 @@ class MakeDeclaredNamesUnique extends NodeTraversal.AbstractScopedCallback {
 
   @Override
   public void enterScope(NodeTraversal t) {
+    checkState(
+        t.getScopeCreator().hasBlockScope(),
+        "MakeDeclaredNamesUnique requires an ES6-compatible scope creator. %s is not compatible.",
+        t.getScopeCreator());
     Node declarationRoot = t.getScopeRoot();
 
     Renamer renamer;
@@ -104,30 +109,35 @@ class MakeDeclaredNamesUnique extends NodeTraversal.AbstractScopedCallback {
     switch (n.getToken()) {
       case NAME:
       case IMPORT_STAR:
-        visitNameOrImportStar(t, n, parent);
+        visitName(t, n, parent);
         break;
+
+      case STRING_KEY: {
+        String newName = getReplacementName(n.getString());
+        if (newName != null && !n.hasChildren()) {
+          Node name = IR.name(n.getString()).useSourceInfoFrom(n);
+          n.addChildToBack(name);
+          visitName(t, name, n);
+        }
+        break;
+      }
 
       default:
         break;
     }
   }
 
-  private void visitNameOrImportStar(NodeTraversal t, Node n, Node parent) {
+  private void visitName(NodeTraversal t, Node n, Node parent) {
     // Don't rename the exported name foo in export {a as foo}; or import {foo as b};
-    if (n.isName() && NodeUtil.isNonlocalModuleExportName(n)) {
+    if (NodeUtil.isNonlocalModuleExportName(n)) {
       return;
     }
     String newName = getReplacementName(n.getString());
     if (newName != null) {
       Renamer renamer = renamerStack.peek();
       if (renamer.stripConstIfReplaced()) {
+        // TODO(johnlenz): Do we need to do anything about the Javadoc?
         n.removeProp(Node.IS_CONSTANT_NAME);
-        Node jsDocInfoNode = NodeUtil.getBestJSDocInfoNode(n);
-        if (jsDocInfoNode != null && jsDocInfoNode.getJSDocInfo() != null) {
-          JSDocInfoBuilder builder = JSDocInfoBuilder.copyFrom(jsDocInfoNode.getJSDocInfo());
-          builder.recordMutable();
-          jsDocInfoNode.setJSDocInfo(builder.build());
-        }
       }
       n.setString(newName);
       if (markChanges) {
@@ -614,26 +624,27 @@ class MakeDeclaredNamesUnique extends NodeTraversal.AbstractScopedCallback {
     }
   }
 
-  /** Only rename things that match specific names. Wraps another renamer. */
-  static class TargettedRenamer implements Renamer {
+  /** Only rename things that match the whitelist. Wraps another renamer. */
+  static class WhitelistedRenamer implements Renamer {
     private final Renamer delegate;
-    private final Set<String> targets;
+    private final Set<String> whitelist;
 
-    TargettedRenamer(Renamer delegate, Set<String> targets) {
+    WhitelistedRenamer(Renamer delegate, Set<String> whitelist) {
       this.delegate = delegate;
-      this.targets = targets;
+      this.whitelist = whitelist;
     }
 
     @Override
     public void addDeclaredName(String name, boolean hoisted) {
-      if (targets.contains(name)) {
+      if (whitelist.contains(name)) {
         delegate.addDeclaredName(name, hoisted);
       }
     }
 
     @Override
     public String getReplacementName(String oldName) {
-      return targets.contains(oldName) ? delegate.getReplacementName(oldName) : null;
+      return whitelist.contains(oldName)
+          ? delegate.getReplacementName(oldName) : null;
     }
 
     @Override
@@ -643,8 +654,8 @@ class MakeDeclaredNamesUnique extends NodeTraversal.AbstractScopedCallback {
 
     @Override
     public Renamer createForChildScope(Node scopeRoot, boolean hoistingTargetScope) {
-      return new TargettedRenamer(
-          delegate.createForChildScope(scopeRoot, hoistingTargetScope), targets);
+      return new WhitelistedRenamer(
+          delegate.createForChildScope(scopeRoot, hoistingTargetScope), whitelist);
     }
 
     @Override

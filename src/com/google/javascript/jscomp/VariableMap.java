@@ -26,7 +26,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.io.Files;
-import com.google.errorprone.annotations.Immutable;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -37,10 +36,8 @@ import java.util.Map;
 
 /**
  * Stores the mapping from original variable name to new variable names.
- *
  * @see RenameVars
  */
-@Immutable
 public final class VariableMap {
 
   private static final char SEPARATOR = ':';

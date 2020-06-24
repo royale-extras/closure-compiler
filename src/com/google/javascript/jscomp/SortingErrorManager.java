@@ -16,11 +16,11 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
@@ -76,13 +76,13 @@ public class SortingErrorManager implements ErrorManager {
   }
 
   @Override
-  public ImmutableList<JSError> getErrors() {
-    return filterToListOf(CheckLevel.ERROR);
+  public JSError[] getErrors() {
+    return toArray(CheckLevel.ERROR);
   }
 
   @Override
-  public ImmutableList<JSError> getWarnings() {
-    return filterToListOf(CheckLevel.WARNING);
+  public JSError[] getWarnings() {
+    return toArray(CheckLevel.WARNING);
   }
 
   Iterable<ErrorWithLevel> getSortedDiagnostics() {
@@ -101,11 +101,14 @@ public class SortingErrorManager implements ErrorManager {
     return typedPercent;
   }
 
-  private ImmutableList<JSError> filterToListOf(CheckLevel level) {
-    return messages.stream()
-        .filter((e) -> e.level == level)
-        .map((e) -> e.error)
-        .collect(toImmutableList());
+  private JSError[] toArray(CheckLevel level) {
+    List<JSError> errors = new ArrayList<>(messages.size());
+    for (ErrorWithLevel p : messages) {
+      if (p.level == level) {
+        errors.add(p.error);
+      }
+    }
+    return errors.toArray(new JSError[0]);
   }
 
   // TODO(b/114762232): It should be invalid to report errors during the execution of this method;
@@ -151,8 +154,8 @@ public class SortingErrorManager implements ErrorManager {
       }
 
       // sourceName comparison
-      String source1 = p1.error.getSourceName();
-      String source2 = p2.error.getSourceName();
+      String source1 = p1.error.sourceName;
+      String source2 = p2.error.sourceName;
       if (source1 != null && source2 != null) {
         int sourceCompare = source1.compareTo(source2);
         if (sourceCompare != 0) {
@@ -164,8 +167,8 @@ public class SortingErrorManager implements ErrorManager {
         return P1_GT_P2;
       }
       // lineno comparison
-      int lineno1 = p1.error.getLineNumber();
-      int lineno2 = p2.error.getLineNumber();
+      int lineno1 = p1.error.lineNumber;
+      int lineno2 = p2.error.lineNumber;
       if (lineno1 != lineno2) {
         return lineno1 - lineno2;
       } else if (lineno1 < 0 && 0 <= lineno2) {
@@ -184,7 +187,7 @@ public class SortingErrorManager implements ErrorManager {
         return P1_GT_P2;
       }
       // description
-      return p1.error.getDescription().compareTo(p2.error.getDescription());
+      return p1.error.description.compareTo(p2.error.description);
     }
   }
 
@@ -200,11 +203,7 @@ public class SortingErrorManager implements ErrorManager {
     @Override
     public int hashCode() {
       return Objects.hash(
-          level,
-          error.getDescription(),
-          error.getSourceName(),
-          error.getLineNumber(),
-          error.getCharno());
+          level, error.description, error.sourceName, error.lineNumber, error.getCharno());
     }
 
     @Override
@@ -214,9 +213,9 @@ public class SortingErrorManager implements ErrorManager {
       }
       ErrorWithLevel e = (ErrorWithLevel) obj;
       return Objects.equals(level, e.level)
-          && Objects.equals(error.getDescription(), e.error.getDescription())
-          && Objects.equals(error.getSourceName(), e.error.getSourceName())
-          && error.getLineNumber() == e.error.getLineNumber()
+          && Objects.equals(error.description, e.error.description)
+          && Objects.equals(error.sourceName, e.error.sourceName)
+          && error.lineNumber == e.error.lineNumber
           && error.getCharno() == e.error.getCharno();
     }
   }

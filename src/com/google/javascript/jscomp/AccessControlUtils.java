@@ -29,6 +29,7 @@ import javax.annotation.Nullable;
  * Helper functions for computing the visibility of names and properties
  * in JavaScript source code.
  *
+ * @author brndn@google.com (Brendan Linn)
  * @see CheckAccessControls
  */
 public final class AccessControlUtils {

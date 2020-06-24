@@ -20,6 +20,8 @@ import java.io.Serializable;
 
 /**
  * Id generator used in CrossModuleMotion.
+ *
+ * @author nicksantos@google.com (Nick Santos)
  */
 class IdGenerator implements Serializable {
 

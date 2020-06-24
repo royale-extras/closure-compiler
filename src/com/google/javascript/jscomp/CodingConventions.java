@@ -19,9 +19,7 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.Immutable;
-import com.google.javascript.rhino.ClosurePrimitive;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.NominalTypeBuilder;
 import com.google.javascript.rhino.StaticSourceFile;
@@ -29,11 +27,13 @@ import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.jstype.ObjectType;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Helper classes for dealing with coding conventions.
+ * @author nicksantos@google.com (Nick Santos)
  */
 public final class CodingConventions {
 
@@ -128,7 +128,7 @@ public final class CodingConventions {
 
     @Override
     public final boolean isExported(String name) {
-      return CodingConvention.super.isExported(name);
+      return isExported(name, false) || isExported(name, true);
     }
 
     @Override
@@ -345,21 +345,19 @@ public final class CodingConventions {
 
     @Override
     public boolean isOptionalParameter(Node parameter) {
-      return false;
+      // be as lax as possible, but this must be mutually exclusive from
+      // var_args parameters.
+      return parameter.isOptionalArg();
     }
 
     @Override
     public boolean isVarArgsParameter(Node parameter) {
       // be as lax as possible
-      return parameter.isRest();
+      return parameter.isRest() || parameter.isVarArgs();
     }
 
     @Override
     public boolean isFunctionCallThatAlwaysThrows(Node n) {
-      if (NodeUtil.isExprCall(n)) {
-        FunctionType fnType = FunctionType.toMaybeFunctionType(n.getFirstFirstChild().getJSType());
-        return fnType != null && ClosurePrimitive.ASSERTS_FAIL == fnType.getClosurePrimitive();
-      }
       return false;
     }
 
@@ -377,8 +375,8 @@ public final class CodingConventions {
     }
 
     @Override
-    public final boolean isExported(String name) {
-      return CodingConvention.super.isExported(name);
+    public boolean isExported(String name) {
+      return isExported(name, false) || isExported(name, true);
     }
 
     @Override
@@ -400,8 +398,8 @@ public final class CodingConventions {
     public SubclassRelationship getClassesDefinedByCall(Node callNode) {
       Node callName = callNode.getFirstChild();
       if ((callName.matchesQualifiedName("$jscomp.inherits")
-              || callName.matchesName("$jscomp$inherits"))
-          && callNode.hasXChildren(3)) {
+          || callName.matchesQualifiedName("$jscomp$inherits"))
+          && callNode.getChildCount() == 3) {
         Node subclass = callName.getNext();
         Node superclass = subclass.getNext();
         // The StripCode pass may create $jscomp.inherits calls with NULL arguments.
@@ -534,7 +532,7 @@ public final class CodingConventions {
 
     @Override
     public boolean isPropertyRenameFunction(String name) {
-      return NodeUtil.JSC_PROPERTY_NAME_FN.equals(name) || "$jscomp.reflectProperty".equals(name);
+      return NodeUtil.JSC_PROPERTY_NAME_FN.equals(name);
     }
 
     @Override
@@ -548,14 +546,8 @@ public final class CodingConventions {
     }
 
     @Override
-    public ImmutableSet<AssertionFunctionSpec> getAssertionFunctions() {
-      return ImmutableSet.of(
-          AssertionFunctionSpec.forTruthy()
-              .setClosurePrimitive(ClosurePrimitive.ASSERTS_TRUTHY)
-              .build(),
-          AssertionFunctionSpec.forMatchesReturn()
-              .setClosurePrimitive(ClosurePrimitive.ASSERTS_MATCHES_RETURN)
-              .build());
+    public Collection<AssertionFunctionSpec> getAssertionFunctions() {
+      return Collections.emptySet();
     }
 
     @Override

@@ -24,15 +24,13 @@ import static com.google.common.base.Strings.isNullOrEmpty;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.JSType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import javax.annotation.Nullable;
 
 /**
  * Just to fold known methods when they are called with constants.
+ *
  */
 class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
 
@@ -61,22 +59,19 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
   private Node tryFoldKnownMethods(Node subtree) {
     // For now we only support string methods .join(),
     // .indexOf(), .substring() and .substr()
-    // array method concat()
     // and numeric methods parseInt() and parseFloat().
 
-    checkArgument(subtree.isCall(), subtree);
     subtree = tryFoldArrayJoin(subtree);
-    // tryFoldArrayJoin may return a string literal instead of a CALL node
-    if (subtree.isCall()) {
-      subtree = tryToFoldArrayConcat(subtree);
-      checkState(subtree.isCall(), subtree);
-      Node callTarget = checkNotNull(subtree.getFirstChild());
 
-      if (NodeUtil.isNormalGet(callTarget)) {
+    if (subtree.isCall()) {
+      Node callTarget = subtree.getFirstChild();
+      if (callTarget == null) {
+        return subtree;
+      }
+
+      if (NodeUtil.isGet(callTarget)) {
         if (isASTNormalized() && callTarget.getFirstChild().isQualifiedName()) {
           switch (callTarget.getFirstChild().getQualifiedName()) {
-            case "Array":
-              return tryFoldKnownArrayMethods(subtree, callTarget);
             case "Math":
               return tryFoldKnownMathMethods(subtree, callTarget);
             default: // fall out
@@ -91,39 +86,12 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     return subtree;
   }
 
-  /** Tries to evaluate a method on the Array object */
-  private Node tryFoldKnownArrayMethods(Node subtree, Node callTarget) {
-    checkArgument(subtree.isCall());
-
-    Node targetMethod = callTarget.getFirstChild().getNext();
-    // Method node might not be a string if callTarget is a GETELEM.
-    // e.g. Array[something]()
-    if (!targetMethod.isString() || !targetMethod.getString().equals("of")) {
-      return subtree;
-    }
-
-    subtree.removeFirstChild();
-
-    Node arraylit = new Node(Token.ARRAYLIT);
-    arraylit.addChildrenToBack(subtree.removeChildren());
-    subtree.replaceWith(arraylit);
-    reportChangeToEnclosingScope(arraylit);
-    return arraylit;
-  }
-
   /** Tries to evaluate a method on the Math object */
   private strictfp Node tryFoldKnownMathMethods(Node subtree, Node callTarget) {
-    checkArgument(NodeUtil.isNormalGet(callTarget), callTarget);
-    Node methodNode = callTarget.getLastChild();
-    // Method node might not be a string if callTarget is a GETELEM.
-    // e.g. Math[something]()
-    if (!methodNode.isString()) {
-      return subtree;
-    }
     // first collect the arguments, if they are all numbers then we proceed
     List<Double> args = ImmutableList.of();
     for (Node arg = callTarget.getNext(); arg != null; arg = arg.getNext()) {
-      Double d = getSideEffectFreeNumberValue(arg);
+      Double d = NodeUtil.getNumberValue(arg);
       if (d != null) {
         if (args.isEmpty()) {
           // lazily allocate, most calls will not be optimizable
@@ -135,7 +103,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
       }
     }
     Double replacement = null;
-    String methodName = methodNode.getString();
+    String methodName = callTarget.getFirstChild().getNext().getString();
     // NOTE: the standard does not define precision for these methods, but we are conservative, so
     // for now we only implement the methods that are guaranteed to not increase the size of the
     // numeric constants.
@@ -157,7 +125,6 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
             // if the double is exactly representable as a float, then just cast since no rounding
             // is involved
           } else if ((float) arg == arg) {
-            // TODO(b/155511629): This condition is always true after J2CL transpilation.
             replacement = Double.valueOf((float) arg);
           } else {
             // (float) arg does not necessarily use the correct rounding mode, so don't do anything
@@ -217,7 +184,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     if (replacement != null) {
       Node numberNode = NodeUtil.numberNode(replacement, subtree);
       subtree.replaceWith(numberNode);
-      reportChangeToEnclosingScope(numberNode);
+      compiler.reportChangeToEnclosingScope(numberNode);
       return numberNode;
     }
     return subtree;
@@ -281,10 +248,10 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
             || (stringNode.getJSType() != null
                 && stringNode.getJSType().isStringValueType()))) {
       if (subtree.hasXChildren(3)) {
-        Double maybeStart = getSideEffectFreeNumberValue(firstArg);
+        Double maybeStart = NodeUtil.getNumberValue(firstArg);
         if (maybeStart != null) {
           int start = maybeStart.intValue();
-          Double maybeLengthOrEnd = getSideEffectFreeNumberValue(firstArg.getNext());
+          Double maybeLengthOrEnd = NodeUtil.getNumberValue(firstArg.getNext());
           if (maybeLengthOrEnd != null) {
             switch (functionNameString) {
               case "substr":
@@ -331,40 +298,26 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
   }
 
   /**
-   * Returns The lowered string Node.
-   *
-   * <p>This method is believed to be correct independent of the locale of the compiler and the JSVM
-   * executing the compiled code, assuming both are implementations of Unicode are correct.
-   *
-   * @see <a href="https://tc39.es/ecma262/#sec-string.prototype.tolowercase"></a>
-   * @see <a href="https://unicode.org/faq/casemap_charprop.html#5"></a>
-   * @see <a
-   *     href="https://docs.oracle.com/javase/8/docs/api/java/lang/String.html#toLowerCase-java.util.Locale-"></a>
+   * @return The lowered string Node.
    */
   private Node tryFoldStringToLowerCase(Node subtree, Node stringNode) {
+    // From Rhino, NativeString.java. See ECMA 15.5.4.11
     String lowered = stringNode.getString().toLowerCase(Locale.ROOT);
     Node replacement = IR.string(lowered);
     subtree.replaceWith(replacement);
-    reportChangeToEnclosingScope(replacement);
+    compiler.reportChangeToEnclosingScope(replacement);
     return replacement;
   }
 
   /**
-   * Returns The upped string Node.
-   *
-   * <p>This method is believed to be correct independent of the locale of the compiler and the JSVM
-   * executing the compiled code, assuming both are implementations of Unicode are correct.
-   *
-   * @see <a href="https://tc39.es/ecma262/#sec-string.prototype.touppercase"></a>
-   * @see <a href="https://unicode.org/faq/casemap_charprop.html#5"></a>
-   * @see <a
-   *     href="https://docs.oracle.com/javase/8/docs/api/java/lang/String.html#toUpperCase-java.util.Locale-"></a>
+   * @return The upped string Node.
    */
   private Node tryFoldStringToUpperCase(Node subtree, Node stringNode) {
+    // From Rhino, NativeString.java. See ECMA 15.5.4.12
     String upped = stringNode.getString().toUpperCase(Locale.ROOT);
     Node replacement = IR.string(upped);
     subtree.replaceWith(replacement);
-    reportChangeToEnclosingScope(replacement);
+    compiler.reportChangeToEnclosingScope(replacement);
     return replacement;
   }
 
@@ -378,7 +331,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
         stringNode.getString().replaceAll("^" + whitespace + "|" + whitespace + "$", "");
     Node replacement = IR.string(trimmed);
     subtree.replaceWith(replacement);
-    reportChangeToEnclosingScope(replacement);
+    compiler.reportChangeToEnclosingScope(replacement);
     return replacement;
   }
 
@@ -455,7 +408,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     String stringVal = null;
     Double checkVal;
     if (firstArg.isNumber()) {
-      checkVal = getSideEffectFreeNumberValue(firstArg);
+      checkVal = NodeUtil.getNumberValue(firstArg);
       if (!(radix == 0 || radix == 10) && isParseInt) {
         //Convert a numeric first argument to a different base
         stringVal = String.valueOf(checkVal.intValue());
@@ -471,11 +424,11 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
           numericNode = IR.number(checkVal);
         }
         n.replaceWith(numericNode);
-        reportChangeToEnclosingScope(numericNode);
+        compiler.reportChangeToEnclosingScope(numericNode);
         return numericNode;
       }
     } else {
-      stringVal = getSideEffectFreeStringValue(firstArg);
+      stringVal = NodeUtil.getStringValue(firstArg);
       if (stringVal == null) {
         return n;
       }
@@ -542,7 +495,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     }
 
     n.replaceWith(newNode);
-    reportChangeToEnclosingScope(newNode);
+    compiler.reportChangeToEnclosingScope(newNode);
 
     return newNode;
   }
@@ -557,10 +510,10 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     checkArgument(n.isCall());
     checkArgument(lstringNode.isString());
 
-    String lstring = lstringNode.getString();
+    String lstring = NodeUtil.getStringValue(lstringNode);
     boolean isIndexOf = functionName.equals("indexOf");
     Node secondArg = firstArg.getNext();
-    String searchValue = getSideEffectFreeStringValue(firstArg);
+    String searchValue = NodeUtil.getStringValue(firstArg);
     // searchValue must be a valid string.
     if (searchValue == null) {
       return n;
@@ -578,7 +531,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
                              : lstring.lastIndexOf(searchValue, fromIndex);
     Node newNode = IR.number(indexVal);
     n.replaceWith(newNode);
-    reportChangeToEnclosingScope(newNode);
+    compiler.reportChangeToEnclosingScope(newNode);
 
     return newNode;
   }
@@ -611,11 +564,9 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     if (right != null && right.isString() && ",".equals(right.getString())) {
       // "," is the default, it doesn't need to be explicit
       n.removeChild(right);
-      reportChangeToEnclosingScope(n);
+      compiler.reportChangeToEnclosingScope(n);
     }
 
-    // logic above ensures that `right` is immutable, so no need to check for
-    // side effects with getSideEffectFreeStringValue(right)
     String joinString = (right == null) ? "," : NodeUtil.getStringValue(right);
     List<Node> arrayFoldedChildren = new ArrayList<>();
     StringBuilder sb = null;
@@ -661,8 +612,8 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     switch (arrayFoldedChildren.size()) {
       case 0:
         Node emptyStringNode = IR.string("");
-        n.replaceWith(emptyStringNode);
-        reportChangeToEnclosingScope(emptyStringNode);
+        n.getParent().replaceChild(n, emptyStringNode);
+        compiler.reportChangeToEnclosingScope(emptyStringNode);
         return emptyStringNode;
       case 1:
         Node foldedStringNode = arrayFoldedChildren.remove(0);
@@ -674,7 +625,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
         if (foldedStringNode.isString()) {
           arrayNode.detachChildren();
           n.replaceWith(foldedStringNode);
-          reportChangeToEnclosingScope(foldedStringNode);
+          compiler.reportChangeToEnclosingScope(foldedStringNode);
           return foldedStringNode;
         } else {
           // Because of special case behavior for `null` and `undefined` values, there's no safe way
@@ -697,7 +648,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
         for (Node node : arrayFoldedChildren) {
           arrayNode.addChildToBack(node);
         }
-        reportChangeToEnclosingScope(arrayNode);
+        compiler.reportChangeToEnclosingScope(arrayNode);
         break;
     }
 
@@ -716,7 +667,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     int length;
     String stringAsString = stringNode.getString();
 
-    Double maybeStart = getSideEffectFreeNumberValue(arg1);
+    Double maybeStart = NodeUtil.getNumberValue(arg1);
     if (maybeStart != null) {
       start = maybeStart.intValue();
     } else {
@@ -725,7 +676,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
 
     Node arg2 = arg1.getNext();
     if (arg2 != null) {
-      Double maybeLength = getSideEffectFreeNumberValue(arg2);
+      Double maybeLength = NodeUtil.getNumberValue(arg2);
       if (maybeLength != null) {
         length = maybeLength.intValue();
       } else {
@@ -756,7 +707,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
 
     Node parent = n.getParent();
     parent.replaceChild(n, resultNode);
-    reportChangeToEnclosingScope(parent);
+    compiler.reportChangeToEnclosingScope(parent);
     return resultNode;
   }
 
@@ -772,7 +723,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     int end;
     String stringAsString = stringNode.getString();
 
-    Double maybeStart = getSideEffectFreeNumberValue(arg1);
+    Double maybeStart = NodeUtil.getNumberValue(arg1);
     if (maybeStart != null) {
       start = maybeStart.intValue();
     } else {
@@ -781,7 +732,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
 
     Node arg2 = arg1.getNext();
     if (arg2 != null) {
-      Double maybeEnd = getSideEffectFreeNumberValue(arg2);
+      Double maybeEnd = NodeUtil.getNumberValue(arg2);
       if (maybeEnd != null) {
         end = maybeEnd.intValue();
       } else {
@@ -812,7 +763,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
 
     Node parent = n.getParent();
     parent.replaceChild(n, resultNode);
-    reportChangeToEnclosingScope(parent);
+    compiler.reportChangeToEnclosingScope(parent);
     return resultNode;
   }
 
@@ -820,7 +771,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     // TODO(moz): Maybe correct the arity of the function type here.
     callTarget.getLastChild().setString("charAt");
     firstArg.getNext().detach();
-    reportChangeToEnclosingScope(firstArg);
+    compiler.reportChangeToEnclosingScope(firstArg);
     return n;
   }
 
@@ -851,7 +802,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
         stringAsString.substring(index, index + 1));
     Node parent = n.getParent();
     parent.replaceChild(n, resultNode);
-    reportChangeToEnclosingScope(parent);
+    compiler.reportChangeToEnclosingScope(parent);
     return resultNode;
   }
 
@@ -881,7 +832,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     Node resultNode = IR.number(stringAsString.charAt(index));
     Node parent = n.getParent();
     parent.replaceChild(n, resultNode);
-    reportChangeToEnclosingScope(parent);
+    compiler.reportChangeToEnclosingScope(parent);
     return resultNode;
   }
 
@@ -1000,140 +951,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
 
     Node parent = n.getParent();
     parent.replaceChild(n, arrayOfStrings);
-    reportChangeToEnclosingScope(parent);
+    compiler.reportChangeToEnclosingScope(parent);
     return arrayOfStrings;
-  }
-
-  private Node tryToFoldArrayConcat(Node n) {
-    checkArgument(n.isCall(), n);
-
-    if (!isASTNormalized() || !useTypes) {
-      return n;
-    }
-    ConcatFunctionCall concatFunctionCall = createConcatFunctionCallForNode(n);
-    if (concatFunctionCall == null) {
-      return n;
-    }
-    concatFunctionCall = tryToRemoveArrayLiteralFromFrontOfConcat(concatFunctionCall);
-    checkNotNull(concatFunctionCall);
-    return tryToFoldConcatChaining(concatFunctionCall);
-  }
-
-  /**
-   * Check if we have this code pattern `[].concat(exactlyArrayArgument,...*)` and if yes replace
-   * empty array literal from the front of concatenation by the first argument of concat function
-   * call `[].concat(arr,1)` -> `arr.concat(1)`.
-   */
-  private ConcatFunctionCall tryToRemoveArrayLiteralFromFrontOfConcat(
-      ConcatFunctionCall concatFunctionCall) {
-    checkNotNull(concatFunctionCall);
-
-    Node callNode = concatFunctionCall.callNode;
-    Node arrayLiteralToRemove = concatFunctionCall.calleeNode;
-    if (!arrayLiteralToRemove.isArrayLit() || arrayLiteralToRemove.hasChildren()) {
-      return concatFunctionCall;
-    }
-    Node firstArg = concatFunctionCall.firstArgumentNode;
-    if (!containsExactlyArray(firstArg)) {
-      return concatFunctionCall;
-    }
-
-    callNode.removeChild(firstArg);
-    Node currentTarget = callNode.getFirstChild();
-    currentTarget.replaceChild(arrayLiteralToRemove, firstArg);
-
-    reportChangeToEnclosingScope(callNode);
-    return createConcatFunctionCallForNode(callNode);
-  }
-
-  /**
-   * Check if we have this code pattern `array.concat(...*).concat(sideEffectFreeArguments)` and if
-   * yes fold chained concat functions, so `arr.concat(a).concat(b)` will be fold into
-   * `arr.concat(a,b)`.
-   */
-  private Node tryToFoldConcatChaining(ConcatFunctionCall concatFunctionCall) {
-    checkNotNull(concatFunctionCall);
-
-    Node concatCallNode = concatFunctionCall.callNode;
-
-    Node maybeFunctionCall = concatFunctionCall.calleeNode;
-    if (!maybeFunctionCall.isCall()) {
-      return concatCallNode;
-    }
-    ConcatFunctionCall previousConcatFunctionCall =
-        createConcatFunctionCallForNode(maybeFunctionCall);
-    if (previousConcatFunctionCall == null) {
-      return concatCallNode;
-    }
-    // make sure that arguments in second concat function call can't change the array
-    // so we can fold chained concat functions
-    // to clarify, consider this code
-    // here we can't fold concatenation
-    // var a = [];
-    // a.concat(1).concat(a.push(1)); -> [1,1]
-    // a.concat(1,a.push(1)); -> [1,1,1]
-    for (Node arg = concatFunctionCall.firstArgumentNode; arg != null; arg = arg.getNext()) {
-      if (mayHaveSideEffects(arg)) {
-        return concatCallNode;
-      }
-    }
-
-    // perform folding
-    Node previousConcatCallNode = previousConcatFunctionCall.callNode;
-    Node arg = concatFunctionCall.firstArgumentNode;
-    while (arg != null) {
-      Node currentArg = arg;
-      arg = arg.getNext();
-      previousConcatCallNode.addChildToBack(currentArg.detach());
-    }
-    concatCallNode.replaceWith(previousConcatCallNode.detach());
-    reportChangeToEnclosingScope(previousConcatCallNode);
-    return previousConcatCallNode;
-  }
-
-  private abstract static class ConcatFunctionCall {
-    private final Node callNode;
-    private final Node calleeNode;
-    @Nullable private final Node firstArgumentNode;
-
-    ConcatFunctionCall(Node callNode, Node calleeNode, Node firstArgumentNode) {
-      this.callNode = checkNotNull(callNode);
-      this.calleeNode = checkNotNull(calleeNode);
-      this.firstArgumentNode = firstArgumentNode;
-    }
-  }
-
-  /**
-   * If the argument node is a call to `Array.prototype.concat`, then return a `ConcatFunctionCall`
-   * object for it, otherwise return `null`.
-   */
-  @Nullable
-  private static ConcatFunctionCall createConcatFunctionCallForNode(Node n) {
-    checkArgument(n.isCall(), n);
-    Node callTarget = checkNotNull(n.getFirstChild());
-    if (!callTarget.isGetProp()) {
-      return null;
-    }
-    Node functionName = callTarget.getSecondChild();
-    if (functionName == null || !functionName.getString().equals("concat")) {
-      return null;
-    }
-    Node calleNode = callTarget.getFirstChild();
-    if (!containsExactlyArray(calleNode)) {
-      return null;
-    }
-    Node firstArgumentNode = n.getSecondChild();
-    return new ConcatFunctionCall(n, calleNode, firstArgumentNode) {};
-  }
-
-  /** Check if a node contains an array type or function call that returns only an array. */
-  private static boolean containsExactlyArray(Node n) {
-    if (n == null || n.getJSType() == null) {
-      return false;
-    }
-    JSType nodeType = n.getJSType();
-    return (nodeType.isArrayType()
-        || (nodeType.isTemplatizedType()
-            && nodeType.toMaybeTemplatizedType().getReferencedType().isArrayType()));
   }
 }

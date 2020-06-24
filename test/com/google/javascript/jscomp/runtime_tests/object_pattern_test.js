@@ -52,6 +52,7 @@ function testSideEffects() {
   assertEquals(1, callCount);
 }
 
+/** @suppress {newCheckTypes} */
 function testInitializer() {
   function f() {
     return {};

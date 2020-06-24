@@ -18,14 +18,13 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_INVALID_DECLARATION;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_INVALID_EXTENDS;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_MISSING_EXTERNS;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.javascript.jscomp.NodeTraversal.ExternsSkippingCallback;
-import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
-import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
+import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfoBuilder;
@@ -42,8 +41,10 @@ import java.util.Set;
  * <p>Only works with Polymer version 0.8 and above.
  *
  * <p>Design and examples: https://github.com/google/closure-compiler/wiki/Polymer-Pass
+ *
+ * @author jlklein@google.com (Jeremy Klein)
  */
-final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompilerPass {
+final class PolymerPass extends AbstractPostOrderCallback implements HotSwapCompilerPass {
   private static final String VIRTUAL_FILE = "<PolymerPass.java>";
 
   private final AbstractCompiler compiler;
@@ -57,9 +58,7 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
   private final Set<String> nativeExternsAdded;
   private ImmutableList<Node> polymerElementProps;
   private GlobalNamespace globalNames;
-  private PolymerBehaviorExtractor behaviorExtractor;
   private boolean warnedPolymer1ExternsMissing = false;
-  private boolean propertySinkExternInjected = false;
 
   PolymerPass(
       AbstractCompiler compiler,
@@ -88,7 +87,7 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
 
     if (polymerVersion == 1 && polymerElementExterns == null) {
       this.warnedPolymer1ExternsMissing = true;
-      compiler.report(JSError.make(POLYMER_MISSING_EXTERNS));
+      compiler.report(JSError.make(externs, POLYMER_MISSING_EXTERNS));
       return;
     }
 
@@ -97,12 +96,8 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
     }
 
     globalNames = new GlobalNamespace(compiler, externs, root);
-    behaviorExtractor =
-        new PolymerBehaviorExtractor(
-            compiler, globalNames, compiler.getModuleMetadataMap(), compiler.getModuleMap());
 
-    Node externsAndJsRoot = root.getParent();
-    hotSwapScript(externsAndJsRoot, null);
+    hotSwapScript(root, null);
   }
 
   @Override
@@ -121,7 +116,7 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
       if (polymerElementExterns != null) {
         rewritePolymer1ClassDefinition(node, parent, traversal);
       } else if (!warnedPolymer1ExternsMissing) {
-        compiler.report(JSError.make(node, POLYMER_MISSING_EXTERNS));
+        compiler.report(JSError.make(polymerElementExterns, POLYMER_MISSING_EXTERNS));
         warnedPolymer1ExternsMissing = true;
       }
     } else if (PolymerPassStaticUtils.isPolymerClass(node)) {
@@ -129,41 +124,15 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
     }
   }
 
-  private ModuleMetadata getModuleMetadata(NodeTraversal traversal) {
-    Node script = traversal.getCurrentScript();
-    if (script != null && script.getFirstChild().isModuleBody()) {
-      return ModuleImportResolver.getModuleFromScopeRoot(
-              compiler.getModuleMap(), compiler, script.getFirstChild())
-          .metadata();
-    }
-    // Check for bundled goog.loadModule calls
-    Node scopeRoot = traversal.getScopeRoot();
-    if (NodeUtil.isBundledGoogModuleScopeRoot(scopeRoot)) {
-      return ModuleImportResolver.getModuleFromScopeRoot(
-              compiler.getModuleMap(), compiler, scopeRoot)
-          .metadata();
-    }
-    return null;
-  }
-
   /** Polymer 1.x and Polymer 2 Legacy Element Definitions */
   private void rewritePolymer1ClassDefinition(Node node, Node parent, NodeTraversal traversal) {
     Node grandparent = parent.getParent();
     if (grandparent.isConst()) {
-      grandparent.setToken(Token.LET);
-      Node scriptNode = traversal.getCurrentScript();
-      if (scriptNode != null) {
-        NodeUtil.addFeatureToScript(scriptNode, Feature.LET_DECLARATIONS, compiler);
-      }
-      traversal.reportCodeChange();
+      compiler.report(JSError.make(node, POLYMER_INVALID_DECLARATION));
+      return;
     }
-    if (NodeUtil.isNameDeclaration(grandparent) && grandparent.getParent().isExport()) {
-      normalizePolymerExport(grandparent, grandparent.getParent());
-      traversal.reportCodeChange();
-    }
-    PolymerClassDefinition def =
-        PolymerClassDefinition.extractFromCallNode(
-            node, compiler, getModuleMetadata(traversal), behaviorExtractor);
+    PolymerClassDefinition def = PolymerClassDefinition.extractFromCallNode(
+        node, compiler, globalNames);
     if (def != null) {
       if (def.nativeBaseElement != null) {
         appendPolymerElementExterns(def);
@@ -175,7 +144,11 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
               polymerVersion,
               polymerExportPolicy,
               this.propertyRenamingEnabled);
-      rewriter.rewritePolymerCall(def, traversal);
+      if (NodeUtil.isNameDeclaration(grandparent) || parent.isAssign()) {
+        rewriter.rewritePolymerCall(grandparent, def, traversal.inGlobalScope());
+      } else {
+        rewriter.rewritePolymerCall(parent, def, traversal.inGlobalScope());
+      }
     }
   }
 
@@ -191,22 +164,8 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
               polymerVersion,
               polymerExportPolicy,
               this.propertyRenamingEnabled);
-      rewriter.propertySinkExternInjected = propertySinkExternInjected;
-      rewriter.rewritePolymerClassDeclaration(node, traversal, def);
-      propertySinkExternInjected = rewriter.propertySinkExternInjected;
+      rewriter.rewritePolymerClassDeclaration(node, def, traversal.inGlobalScope());
     }
-  }
-
-  /** Replaces `export let Element = ...` with `let Element = ...; export {Element};` */
-  private void normalizePolymerExport(Node nameDecl, Node export) {
-    Node block = export.getParent();
-    Node name = nameDecl.getFirstChild();
-    block.addChildBefore(nameDecl.detach(), export);
-
-    Node exportSpec = new Node(Token.EXPORT_SPEC);
-    exportSpec.addChildToFront(name.cloneNode());
-    exportSpec.addChildToFront(name.cloneNode());
-    export.addChildToFront(new Node(Token.EXPORT_SPECS, exportSpec).srcrefTree(export));
   }
 
   private Node getExtensInsertionRef() {
@@ -243,9 +202,7 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
       return;
     }
     JSTypeExpression elementBaseType =
-        new JSTypeExpression(
-            new Node(Token.BANG, IR.string(elementType).srcrefTree(polymerElementExterns)),
-            VIRTUAL_FILE);
+        new JSTypeExpression(new Node(Token.BANG, IR.string(elementType)), VIRTUAL_FILE);
     JSDocInfoBuilder baseDocs = JSDocInfoBuilder.copyFrom(baseExterns.getJSDocInfo());
     baseDocs.changeBaseType(elementBaseType);
     baseExterns.setJSDocInfo(baseDocs.build());

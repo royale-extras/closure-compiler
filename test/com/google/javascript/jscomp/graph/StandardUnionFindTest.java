@@ -50,7 +50,7 @@ public final class StandardUnionFindTest {
   public void testAdd() {
     union.add("foo");
     union.add("bar");
-    assertThat(union.find("foo")).isNotNull();
+    assertThat(null != union.find("foo")).isTrue();
     assertThat(union.allEquivalenceClasses()).hasSize(2);
   }
 

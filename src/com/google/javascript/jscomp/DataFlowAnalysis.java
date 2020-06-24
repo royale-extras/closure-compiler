@@ -82,6 +82,7 @@ import java.util.TreeSet;
  * represents maximum fixed point solution. Any previous annotations at the
  * nodes of the control flow graph will be lost.
  *
+ *
  * @param <N> The control flow graph's node value type.
  * @param <L> Lattice element type.
  */
@@ -97,7 +98,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
    * If you just have a special case, consider calling
    * {@link #analyze(int)} instead.
    */
-  public static final int MAX_STEPS = 1000000;
+  public static final int MAX_STEPS = 800000;
 
   /**
    * Constructs a data flow analysis.
@@ -204,7 +205,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
       if (flow(curNode)) {
         // If there is a change in the current node, we want to grab the list
         // of nodes that this node affects.
-        List<? extends DiGraphNode<N, Branch>> nextNodes =
+        List<DiGraphNode<N, Branch>> nextNodes =
             isForward() ? cfg.getDirectedSuccNodes(curNode) : cfg.getDirectedPredNodes(curNode);
 
         for (DiGraphNode<N, Branch> nextNode : nextNodes) {
@@ -242,7 +243,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
     // LinkedHashSet. Consider creating a new work set if we plan to repeatedly
     // call analyze.
     orderedWorkSet.clear();
-    for (DiGraphNode<N, Branch> node : cfg.getNodes()) {
+    for (DiGraphNode<N, Branch> node : cfg.getDirectedGraphNodes()) {
       node.setAnnotation(new FlowState<>(createInitialEstimateLattice(),
           createInitialEstimateLattice()));
       if (node != cfg.getImplicitReturn()) {
@@ -281,7 +282,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
       if (cfg.getEntry() == node) {
         state.setIn(createEntryLattice());
       } else {
-        List<? extends DiGraphNode<N, Branch>> inNodes = cfg.getDirectedPredNodes(node);
+        List<DiGraphNode<N, Branch>> inNodes = cfg.getDirectedPredNodes(node);
         if (inNodes.size() == 1) {
           FlowState<L> inNodeState = inNodes.get(0).getAnnotation();
           state.setIn(inNodeState.getOut());
@@ -295,7 +296,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
         }
       }
     } else {
-      List<? extends DiGraphNode<N, Branch>> inNodes = cfg.getDirectedSuccNodes(node);
+      List<DiGraphNode<N, Branch>> inNodes = cfg.getDirectedSuccNodes(node);
       if (inNodes.size() == 1) {
         DiGraphNode<N, Branch> inNode = inNodes.get(0);
         if (inNode == cfg.getImplicitReturn()) {
@@ -394,7 +395,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
     @Override
     protected void initialize() {
       orderedWorkSet.clear();
-      for (DiGraphNode<N, Branch> node : getCfg().getNodes()) {
+      for (DiGraphNode<N, Branch> node : getCfg().getDirectedGraphNodes()) {
         int outEdgeCount = getCfg().getOutEdges(node.getValue()).size();
         List<L> outLattices = new ArrayList<>();
         for (int i = 0; i < outEdgeCount; i++) {
@@ -447,7 +448,8 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
     @Override
     protected void joinInputs(DiGraphNode<N, Branch> node) {
       BranchedFlowState<L> state = node.getAnnotation();
-      List<? extends DiGraphNode<N, Branch>> predNodes = getCfg().getDirectedPredNodes(node);
+      List<DiGraphNode<N, Branch>> predNodes =
+          getCfg().getDirectedPredNodes(node);
       List<L> values = new ArrayList<>(predNodes.size());
 
       for (DiGraphNode<N, Branch> predNode : predNodes) {
@@ -524,8 +526,9 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
    * referenced outside of the code that we are analyzing. A variable is escaped if any of the
    * following is true:
    *
-   * <p>1. Exported variables as they can be needed after the script terminates. 2. Names of named
-   * functions because in JavaScript, function foo(){} does not kill foo in the dataflow.
+   *   1. Exported variables as they can be needed after the script terminates.
+   *   2. Names of named functions because in JavaScript, function foo(){} does not kill
+   *       foo in the dataflow.
    *
    * @param jsScope Must be a function scope
    */
@@ -533,7 +536,7 @@ abstract class DataFlowAnalysis<N, L extends LatticeElement> {
       final Scope jsScope,
       final Set<Var> escaped,
       AbstractCompiler compiler,
-      SyntacticScopeCreator scopeCreator) {
+      Es6SyntacticScopeCreator scopeCreator) {
 
     checkArgument(jsScope.isFunctionScope());
 

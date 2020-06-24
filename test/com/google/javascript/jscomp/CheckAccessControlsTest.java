@@ -47,16 +47,9 @@ import org.junit.runners.JUnit4;
  * duplication. If a case using `@constructor`, `@interface`, or `@record` is added to this suite, a
  * similar case should be added there under the same name using `class`.
  */
+
 @RunWith(JUnit4.class)
 public final class CheckAccessControlsTest extends CompilerTestCase {
-
-  private static final String CLOSURE_PRIMITIVES =
-      lines(
-          "/** @const */",
-          "var goog = {};",
-          "goog.module = function(ns) {};",
-          "/** @return {?} */",
-          "goog.require = function(ns) {};");
 
   public CheckAccessControlsTest() {
     super(CompilerTypeTestCase.DEFAULT_EXTERNS);
@@ -70,7 +63,11 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
     enableParseTypeInfo();
     enableClosurePass();
     enableRewriteClosureCode();
-    enableCreateModuleMap();
+  }
+
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
   }
 
   @Override
@@ -102,14 +99,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   @Test
   public void testDeprecatedFunctionNoReason() {
     testError("/** @deprecated */ function f() {} function g() { f(); }", DEPRECATED_NAME);
-  }
-
-  @Test
-  public void testDeprecatedFunctionNoReason_googModule() {
-    disableRewriteClosureCode(); // Remove this line once closure rewriting is after typechecking
-    testError(
-        "goog.module('m'); /** @deprecated */ function f() {} function g() { f(); }",
-        DEPRECATED_NAME);
   }
 
   @Test
@@ -156,23 +145,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
     testDepName(
         "/** @deprecated Some global scope */ function f() {} f();",
         "Variable f has been deprecated: Some global scope");
-  }
-
-  @Test
-  public void testWarningInGoogModuleScopeForCall() {
-    disableRewriteClosureCode(); // Remove this line once Closure rewriting is after typechecking.
-    testDepName(
-        "goog.module('m'); /** @deprecated Some module scope */ function f() {} f();",
-        "Variable f has been deprecated: Some module scope");
-  }
-
-  @Test
-  public void testNoWarningInGoogModuleScopeWithFileoverviewForCall() {
-    disableRewriteClosureCode(); // Remove this line once Closure rewriting is after typechecking.
-    testDepName(
-        "/** @deprecated @fileoverview */ goog.module('m'); /** @deprecated Some module scope */"
-            + " function f() {} f();",
-        "Variable f has been deprecated: Some module scope");
   }
 
   @Test
@@ -253,29 +225,23 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testNoWarningForDeprecatedSuperClass() {
-    testNoWarning(
-        lines(
-            "/** @constructor @deprecated Superclass to the rescue! */",
-            "function Foo() {}",
-            "/** @constructor * @extends {Foo} */",
-            "function SubFoo() {}",
-            "function f() { new SubFoo(); }"));
+  public void testWarningForDeprecatedSuperClass() {
+    testDepClass(
+        "/** @constructor \n * @deprecated Superclass to the rescue! */ function Foo() {} "
+            + "/** @constructor \n * @extends {Foo} */ function SubFoo() {}"
+            + "function f() { new SubFoo(); }",
+        "Class SubFoo has been deprecated: Superclass to the rescue!");
   }
 
   @Test
-  public void testNoWarningForDeprecatedSuperClassOnNamespace() {
-    testNoWarning(
-        lines(
-            "/**",
-            " * @constructor",
-            " * @deprecated Its only weakness is Kryptoclass",
-            "*/",
-            " function Foo() {} ",
-            "/** @const */ var namespace = {};",
-            "/** @constructor \n * @extends {Foo} */",
-            "namespace.SubFoo = function() {};",
-            "function f() { new namespace.SubFoo(); }"));
+  public void testWarningForDeprecatedSuperClass2() {
+    testDepClass(
+        "/** @constructor \n * @deprecated Its only weakness is Kryptoclass */ function Foo() {} "
+            + "/** @const */ var namespace = {}; "
+            + "/** @constructor \n * @extends {Foo} */ "
+            + "namespace.SubFoo = function() {}; "
+            + "function f() { new namespace.SubFoo(); }",
+        "Class namespace.SubFoo has been deprecated: Its only weakness is Kryptoclass");
   }
 
   @Test
@@ -520,58 +486,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testBug133902968() {
-    test(
-        externs(
-            lines(
-                "/** @interface */", //
-                "function CSSProperties() {}",
-                "/** @type {string} */",
-                "CSSProperties.prototype.fontStyle;",
-                "",
-                "/** @struct @interface @extends {CSSProperties} */",
-                "function CSSStyleDeclaration() {}",
-                "",
-                "function alert(s) {}")),
-        srcs(
-            SourceFile.fromCode(
-                Compiler.joinPathParts("apackage", "afile.js"),
-                lines(
-                    "/**", //
-                    " * @fileoverview",
-                    " * @package",
-                    " */",
-                    "",
-                    "/** @param {!CSSStyleDeclaration} style */",
-                    "function f(style) {",
-                    "  style.fontStyle = 'normal';",
-                    "}")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("anotherpackage", "anotherfile.js"),
-                lines(
-                    "/** @param {!CSSStyleDeclaration} style */", //
-                    "function g(style) {",
-                    "  alert(style.fontStyle);",
-                    "}"))));
-  }
-
-  @Test
-  public void testPrivatePropAccess_inSameFile_throughDestructuring() {
-    test(
-        srcs(
-            lines(
-                "/** @constructor */",
-                "function Foo() { }", //
-                "",
-                "/** @private */",
-                "Foo.prototype.bar_ = function() { };",
-                "",
-                "function f(/** !Foo */ x) {", //
-                "  const {bar_: bar} = x;",
-                "}")));
-  }
-
-  @Test
   public void testPrivateAccessForProperties6() {
     testError(
         srcs(
@@ -770,23 +684,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
         + "}",
         "new Foo().bar_ = 1;"},
         BAD_PRIVATE_PROPERTY_ACCESS);
-  }
-
-  @Test
-  public void testNoPrivatePropAccess_inDifferentFile_throughDestructuring() {
-    test(
-        srcs(
-            lines(
-                "/** @constructor */",
-                "function Foo() { }", //
-                "",
-                "/** @private */",
-                "Foo.prototype.bar_ = function() { };"),
-            lines(
-                "function f(/** !Foo */ x) {", //
-                "  const {bar_: bar} = x;",
-                "}")),
-        error(BAD_PRIVATE_PROPERTY_ACCESS));
   }
 
   @Test
@@ -1058,25 +955,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testProtectedPropAccess_inDifferentFile_inSubclass_throughDestructuring() {
-    test(
-        srcs(
-            lines(
-                "/** @constructor */",
-                "function Foo() { }", //
-                "",
-                "/** @protected */",
-                "Foo.prototype.bar = function() { }"),
-            lines(
-                "/** @constructor @extends {Foo} */",
-                "function SubFoo() { }", //
-                "",
-                "SubFoo.prototype.method = function(/** !Foo */ x) {",
-                "  const {bar: bar} = x;",
-                "};")));
-  }
-
-  @Test
   public void testNoProtectedAccess_forOverriddenProperty_elsewhereInSubclassFile() {
     test(
         srcs(
@@ -1280,23 +1158,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testNoProtectedPropAccess_inDifferentFile_throughDestructuring() {
-    test(
-        srcs(
-            lines(
-                "/** @constructor */", //
-                "function Foo() { }", //
-                "",
-                "/** @protected */",
-                "Foo.prototype.bar = function() { }"),
-            lines(
-                "function f(/** !Foo */ x) {", //
-                "  const {bar: bar} = x;",
-                "}")),
-        error(BAD_PROTECTED_PROPERTY_ACCESS));
-  }
-
-  @Test
   public void testNoProtectedAccess_forInheritedProperty_elsewhereInSubclassFile() {
     test(
         srcs(
@@ -1343,41 +1204,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
                 Compiler.joinPathParts("baz", "quux.js"), //
                 lines("name;"))),
         BAD_PACKAGE_PROPERTY_ACCESS);
-  }
-
-  @Test
-  public void testPackagePrivateAccessForNames_googModule() {
-    // TODO(b/133450410): This should be a visibility violation.
-    disableRewriteClosureCode();
-    testNoWarning(
-        ImmutableList.of(
-            SourceFile.fromCode("goog.js", CLOSURE_PRIMITIVES),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "bar.js"),
-                lines(
-                    "goog.module('Foo');",
-                    "/** @package */",
-                    "var name = 'foo';",
-                    "exports = name;")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("baz", "quux.js"),
-                "goog.module('client'); const name = goog.require('Foo'); name;")));
-  }
-
-  @Test
-  public void testPackagePrivateAccessForNames_esModule() {
-    // TODO(b/133450410): This should be a visibility violation.
-    testNoWarning(
-        ImmutableList.of(
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "bar.js"),
-                lines(
-                    "/** @package */", //
-                    "var name = 'foo';",
-                    "export {name};")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("baz", "quux.js"),
-                "import {name} from '/foo/bar.js'; name;")));
   }
 
   @Test
@@ -1443,47 +1269,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
                 + "}\n"
                 + "Child.prototype = new Parent();")),
         BAD_PACKAGE_PROPERTY_ACCESS);
-  }
-
-  @Test
-  public void testPackagePropAccess_inSamePackage_throughDestructuring() {
-    test(
-        srcs(
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "bar.js"),
-                lines(
-                    "/** @constructor */", //
-                    "function Foo() { }",
-                    "",
-                    "/** @package */",
-                    "Foo.prototype.bar = function() { };")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "quux.js"),
-                lines(
-                    "function f(/** !Foo */ x) {", //
-                    "  const {bar: bar} = x;",
-                    "}"))));
-  }
-
-  @Test
-  public void testNoPackagePropAccess_inDifferentPackage_throughDestructuring() {
-    test(
-        srcs(
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "bar.js"),
-                lines(
-                    "/** @constructor */", //
-                    "function Foo() { }",
-                    "",
-                    "/** @package */",
-                    "Foo.prototype.bar = function() { };")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("baz", "quux.js"),
-                lines(
-                    "function f(/** !Foo */ x) {", //
-                    "  const {bar: bar} = x;",
-                    "}"))),
-        error(BAD_PACKAGE_PROPERTY_ACCESS));
   }
 
   @Test
@@ -1628,48 +1413,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void
-      testOverrideWithoutVisibilityRedeclInFileWithFileOverviewVisibilityNotAllowed_GoogModule() {
-    testError(
-        lines(
-            "/**",
-            " * @fileoverview",
-            " * @package",
-            " */",
-            "goog.module('mod')",
-            "/** @struct @constructor */",
-            "Foo = function() {};",
-            "/** @private */",
-            "Foo.prototype.privateMethod_ = function() {};",
-            "/** @struct @constructor @extends {Foo} */",
-            "Bar = function() {};",
-            "/** @override */",
-            "Bar.prototype.privateMethod_ = function() {};"),
-        BAD_PROPERTY_OVERRIDE_IN_FILE_WITH_FILEOVERVIEW_VISIBILITY);
-  }
-
-  @Test
-  public void
-      testOverrideWithoutVisibilityRedeclInFileWithFileOverviewVisibilityNotAllowed_esModule() {
-    testError(
-        lines(
-            "/**",
-            " * @fileoverview",
-            " * @package",
-            " */",
-            "/** @struct @constructor */",
-            "var Foo = function() {};",
-            "/** @private */",
-            "Foo.prototype.privateMethod_ = function() {};",
-            "/** @struct @constructor @extends {Foo} */",
-            "var Bar = function() {};",
-            "/** @override */",
-            "Bar.prototype.privateMethod_ = function() {};",
-            "export {Foo, Bar};"),
-        BAD_PROPERTY_OVERRIDE_IN_FILE_WITH_FILEOVERVIEW_VISIBILITY);
-  }
-
-  @Test
   public void testNamespacedFunctionDoesNotNeedVisibilityRedeclInFileWithFileOverviewVisibility() {
     testSame("/**\n"
         + " * @fileoverview\n"
@@ -1800,49 +1543,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
                 + "var Foo = function() {};\n"),
             SourceFile.fromCode(Compiler.joinPathParts("baz", "quux.js"), "new Foo();")),
         BAD_PACKAGE_PROPERTY_ACCESS);
-  }
-
-  @Test
-  public void testPackageFileOverviewVisibilityAppliesToNameWithoutExplicitVisibility_googModule() {
-    // TODO(b/133450410): Requiring 'Foo' should be a visibility violation.
-    disableRewriteClosureCode();
-    testNoWarning(
-        ImmutableList.of(
-            SourceFile.fromCode("goog.js", CLOSURE_PRIMITIVES),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "bar.js"),
-                lines(
-                    "/**",
-                    " * @fileoverview",
-                    " * @package",
-                    " */",
-                    "goog.module('Foo');",
-                    "/** @constructor */",
-                    "var Foo = function() {};",
-                    "exports = Foo;")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("baz", "quux.js"),
-                "goog.module('client'); const Foo = goog.require('Foo'); new Foo();")));
-  }
-
-  @Test
-  public void testPackageFileOverviewVisibilityAppliesToNameWithoutExplicitVisibility_esModule() {
-    // TODO(b/133450410): Importing 'Foo' should be a visibility violation.
-    testNoWarning(
-        ImmutableList.of(
-            SourceFile.fromCode(
-                Compiler.joinPathParts("foo", "bar.js"),
-                lines(
-                    "/**",
-                    " * @fileoverview",
-                    " * @package",
-                    " */",
-                    "/** @constructor */",
-                    "var Foo = function() {};",
-                    "export {Foo};")),
-            SourceFile.fromCode(
-                Compiler.joinPathParts("baz", "quux.js"),
-                "import {Foo} from '/foo/bar.js'; new Foo();")));
   }
 
   @Test
@@ -2306,28 +2006,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testConstantPropertyReassigned_crossModuleWithCollidingNames() {
-    disableRewriteClosureCode();
-    testNoWarning(
-        srcs(
-            "var goog = {}; goog.module = function(ns) {};",
-            lines(
-                "goog.module('mod1');",
-                "/** @constructor */",
-                "function A() {",
-                "  /** @const */",
-                "  this.bar = 3;",
-                "}"),
-            lines(
-                "goog.module('mod2');",
-                "/** @constructor */",
-                "function A() {",
-                "  /** @const */",
-                "  this.bar = 3;",
-                "}")));
-  }
-
-  @Test
   public void testConstantProperty1b() {
     testError(
         "/** @constructor */ function A() {"
@@ -2631,22 +2309,6 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testFunctionWithNewType_canReturnFinalClass() {
-    testNoWarning(
-        lines(
-            "goog.forwardDeclare('Parent');",
-            "/** @type {function(new: Parent): !Parent} */",
-            "const PatchedParent = function Parent() { return /** @type {?} */ (0); }"));
-
-    testNoWarning(
-        lines(
-            "/** @constructor @final */",
-            "const Parent = function() {}",
-            "/** @type {function(new: Parent): !Parent} */",
-            "const PatchedParent = function Parent() { return /** @type {?} */ (0); }"));
-  }
-
-  @Test
   public void testFinalClassCannotBeSubclassed() {
     testError(
         lines(
@@ -2695,18 +2357,5 @@ public final class CheckAccessControlsTest extends CompilerTestCase {
             "/** @const */ Foo.prop = 1;",
             "Foo.prop = 2;"),
         CONST_PROPERTY_REASSIGNED_VALUE);
-  }
-
-  @Test
-  public void testCheckFinalClass_prototypeMethodMarkedCtor_butNotOwnerFunction_doesNotCrash() {
-    // Covers an edge case reported in b/129361702.
-    testSame(
-        lines(
-            "function Foo() {}",
-            "",
-            "Foo.prototype = {",
-            "  /** @constructor */",
-            "  init: function() { }",
-            "};"));
   }
 }

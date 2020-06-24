@@ -16,8 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.CompilerOptions.LanguageMode.ECMASCRIPT_NEXT_IN;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -45,7 +43,6 @@ public final class OptimizeReturnsTest extends CompilerTestCase {
   @Before
   public void setUp() throws Exception {
     super.setUp();
-    enableNormalize(); // Required for `OptimizeCalls`.
     enableGatherExternProperties();
   }
 
@@ -53,14 +50,6 @@ public final class OptimizeReturnsTest extends CompilerTestCase {
   protected int getNumRepetitions() {
     // run pass once.
     return 1;
-  }
-
-  @Test
-  public void nullishCoalesceReturnRemoved() {
-    setAcceptedLanguage(ECMASCRIPT_NEXT_IN);
-    test(
-        "var f = (function() {return 1}) ?? (function() {return 2}); f();",
-        "var f = function() { return; } ?? function() { return; }; f();");
   }
 
   @Test
@@ -249,17 +238,6 @@ public final class OptimizeReturnsTest extends CompilerTestCase {
     String source = lines(
         "var a = function b(){return b()}",
         "a()");
-    testSame(source);
-  }
-
-  @Test
-  public void testNoRewriteWhenAliasedDuringAssignment() {
-    String source =
-        lines(
-            "var a, b;",
-            "a = b = function (){return 1}",
-            "use(a());", // result used
-            "b()"); // result unused
     testSame(source);
   }
 
@@ -517,22 +495,6 @@ public final class OptimizeReturnsTest extends CompilerTestCase {
             "let x = functionFactory();",
             "x(1, 2);",
             "x = function(a,b) { return b; }"));
-  }
-
-  @Test
-  public void testReturnNotRemovedFromRecursiveNamedFunctionExpression() {
-    testSame(
-        lines(
-            "let x = function innerName(n) {",
-            "  if (n < 1) {",
-            "    return 0",
-            "  } else {",
-            "    return innerName(n - 1) + n;",
-            "  }",
-            "",
-            "}",
-            "x(3);",
-            ""));
   }
 
   @Test

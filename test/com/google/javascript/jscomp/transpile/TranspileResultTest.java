@@ -25,6 +25,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 /** Tests for {@link TranspileResult}. */
+
 @RunWith(JUnit4.class)
 public final class TranspileResultTest {
 
@@ -44,8 +45,8 @@ public final class TranspileResultTest {
   @Test
   public void testEmbedSourceMap_noSourceMap() throws Exception {
     TranspileResult result = new TranspileResult(new URI("a"), "b", "c", "");
-    assertThat(result.embedSourcemap()).isSameInstanceAs(result);
-    assertThat(result.embedSourcemapUrl("foo")).isSameInstanceAs(result);
+    assertThat(result.embedSourcemap()).isSameAs(result);
+    assertThat(result.embedSourcemapUrl("foo")).isSameAs(result);
   }
 
   @Test

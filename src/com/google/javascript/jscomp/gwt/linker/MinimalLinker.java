@@ -26,6 +26,7 @@ import com.google.gwt.core.ext.linker.ArtifactSet;
 import com.google.gwt.core.ext.linker.CompilationResult;
 import com.google.gwt.core.ext.linker.LinkerOrder;
 import com.google.gwt.core.ext.linker.LinkerOrder.Order;
+import com.google.gwt.core.ext.linker.SelectionProperty;
 import com.google.gwt.core.linker.SymbolMapsLinker;
 
 /**
@@ -38,20 +39,41 @@ import com.google.gwt.core.linker.SymbolMapsLinker;
 public class MinimalLinker extends AbstractLinker {
 
   /**
+   * A configuration property indicating whether {@link MinimalLinker} should export via JSInterop.
+   */
+  private static final String EXPORT_PROPERTY = "linker.minimal.export";
+
+  /**
+   * @param context LinkerContext containing properties
+   * @return Whether to export, default false
+   */
+  private static boolean getExportProperty(LinkerContext context) {
+    for (SelectionProperty prop : context.getProperties()) {
+      if (EXPORT_PROPERTY.equals(prop.getName())) {
+        String value = prop.tryGetValue();
+        return value == null ? false : Boolean.parseBoolean(value);
+      }
+    }
+    return false;
+  }
+
+  /**
    * Formats the application's JS code for output.
    *
    * @param js Code to format.
+   * @param export Whether to export via JSInterop.
    * @return Formatted, linked code.
    */
-  private static String formatOutput(String js) {
+  private static String formatOutput(String js, boolean export) {
     StringBuilder output = new StringBuilder();
 
     // Shadow window so that non-browser environments can pass their own global object here.
     output.append("(function(window){");
 
-    // $wnd is set to this, which should allow JSInterop's normal export to run and
-    // pollute the global namespace.
-    output.append("var $wnd=this;");
+    // If $wnd is set to this, then JSInterop's normal export will run, and pollute the global
+    // namespace. If export is false, fake out $wnd with an empty object.
+    // (We also add Error to work around StackTraceCreator using it in a static block).
+    output.append("var $wnd=").append(export ? "this" : "{'Error':{}}").append(";");
 
     // Shadow $doc, $moduleName and $moduleBase.
     output.append("var $doc={},$moduleName,$moduleBase;");
@@ -94,12 +116,13 @@ public class MinimalLinker extends AbstractLinker {
       throws UnableToCompleteException {
     ArtifactSet toReturn = new ArtifactSet(artifacts);
     ArtifactSet writableArtifacts = new ArtifactSet(artifacts);
+    boolean export = getExportProperty(context);
 
     for (CompilationResult result : toReturn.find(CompilationResult.class)) {
       String[] js = result.getJavaScript();
       checkArgument(js.length == 1, "MinimalLinker doesn't support GWT.runAsync");
 
-      String output = formatOutput(js[0]);
+      String output = formatOutput(js[0], export);
       toReturn.add(emitString(logger, output, context.getModuleName() + ".js"));
     }
 

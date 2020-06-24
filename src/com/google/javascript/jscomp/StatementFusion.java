@@ -22,36 +22,90 @@ import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 
 /**
- * Tries to fuse all the statements in a block into a one statement by using COMMAs or statements.
+ * Tries to fuse all the statements in a block into a one statement by using
+ * COMMAs.
  *
- * <p>Because COMMAs has the lowest precedence, we never need to insert extra () around. Once we
- * have only one statement in a block, we can then eliminate a pair of {}'s. Further more, we can
- * also fold a single statement IF into && or create further opportunities for all the other goodies
- * in {@link PeepholeMinimizeConditions}.
+ * Because COMMAs has the lowest precedence, we never need to insert
+ * extra () around. Once we have only one statement in a block, we can then
+ * eliminate a pair of {}'s. Further more, we can also fold a single
+ * statement IF into && or create further opportunities for all the other
+ * goodies in {@link PeepholeMinimizeConditions}.
  *
- * <p>NOTE(user): The current compiler assumes that there are more ;'s than ,'s in a real
- * program, and so it makes sense to prefer fusing statements with semicolons rather than commas.
- * This assumption has never been validated on a real program.
  */
 class StatementFusion extends AbstractPeepholeOptimization {
+  // TODO(user): We probably need to test this more. The current compiler
+  // assumes that there are more ;'s than ,'s in a real program. However,
+  // this assumption may be incorrect. We can probably do a quick traverse
+  // to check this assumption if that's necessary.
+  public static final boolean SHOULD_FAVOR_COMMA_OVER_SEMI_COLON = false;
+
+  private final boolean favorsCommaOverSemiColon;
+
+  public StatementFusion() {
+    this(SHOULD_FAVOR_COMMA_OVER_SEMI_COLON);
+  }
+
+  public StatementFusion(boolean favorsCommaOverSemiColon) {
+    this.favorsCommaOverSemiColon = favorsCommaOverSemiColon;
+  }
 
   @Override
   Node optimizeSubtree(Node n) {
-    if (n.getParent().isFunction() || !canFuseIntoOneStatement(n)) {
+    // TODO(user): It is much cleaner to have two algorithms depending
+    // on favorsCommaOverSemiColon. If we decided the less aggressive one is
+    // no longer useful, delete it.
+    if (favorsCommaOverSemiColon) {
+      return tryFuseStatementsAggressively(n);
+    } else {
+      return tryFuseStatements(n);
+    }
+  }
+
+  Node tryFuseStatements(Node n) {
+    if (!n.getParent().isFunction() && canFuseIntoOneStatement(n)) {
+      Node start = n.getFirstChild();
+      Node end = n.getLastChild();
+      Node result = fuseIntoOneStatement(n, start, end);
+      fuseExpressionIntoControlFlowStatement(result, n.getLastChild());
+      compiler.reportChangeToEnclosingScope(n);
+    }
+    return n;
+  }
+
+  Node tryFuseStatementsAggressively(Node n) {
+    if (!NodeUtil.isStatementBlock(n)) {
       return n;
     }
 
-    Node start = n.getFirstChild();
-    Node end = n.getLastChild();
-    Node result = fuseIntoOneStatement(n, start, end);
-    fuseExpressionIntoControlFlowStatement(result, n.getLastChild());
+    Node cur = n.getFirstChild();
+    while (cur != null) {
+      if (!cur.isExprResult()) {
+        cur = cur.getNext();
+        continue;
+      }
+      Node next = cur.getNext();
+      while (next != null && next.isExprResult()) {
+        next = next.getNext();
+      }
+      if (cur.getNext() != next) {
+        cur = fuseIntoOneStatement(n, cur, next);
+        compiler.reportChangeToEnclosingScope(cur);
+      }
+      if (cur.isExprResult() &&
+          next != null && isFusableControlStatement(next)) {
+        fuseExpressionIntoControlFlowStatement(cur, next);
+        compiler.reportChangeToEnclosingScope(next);
+        next = next.getNext();
+      }
+      cur = next;
+    }
 
-    reportChangeToEnclosingScope(n);
     return n;
   }
 
   private boolean canFuseIntoOneStatement(Node block) {
-    if (!block.isBlock()) {
+    // If we are favoring semi-colon, we shouldn't fuse script blocks.
+    if (!favorsCommaOverSemiColon && !block.isBlock()) {
       return false;
     }
 
@@ -144,11 +198,11 @@ class StatementFusion extends AbstractPeepholeOptimization {
       case SWITCH:
       case EXPR_RESULT:
       case FOR:
-        before.detach();
+        before.getParent().removeChild(before);
         fuseExpressionIntoFirstChild(before.removeFirstChild(), control);
         return;
       case FOR_IN:
-        before.detach();
+        before.getParent().removeChild(before);
         fuseExpressionIntoSecondChild(before.removeFirstChild(), control);
         return;
       case LABEL:

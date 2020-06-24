@@ -34,26 +34,28 @@ import org.junit.runners.JUnit4;
  * Tests for the "missing requires" check in {@link CheckMissingAndExtraRequires}.
  *
  */
+
 @RunWith(JUnit4.class)
 public final class MissingRequireTest extends CompilerTestCase {
+  private CheckMissingAndExtraRequires.Mode mode;
+
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
+    mode = CheckMissingAndExtraRequires.Mode.FULL_COMPILE;
   }
 
   @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
+  protected CompilerOptions getOptions(CompilerOptions options) {
     options.setWarningLevel(DiagnosticGroups.STRICT_MISSING_REQUIRE, CheckLevel.WARNING);
-    return options;
+    return super.getOptions(options);
   }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new CheckMissingAndExtraRequires(compiler);
+    return new CheckMissingAndExtraRequires(compiler, mode);
   }
 
   private void testMissingRequireStrict(String js, String warningText) {
@@ -246,7 +248,7 @@ public final class MissingRequireTest extends CompilerTestCase {
   public void testWarnES6Module_noRewriting() {
     testMissingRequireStrict(
         lines(
-            "import '/example';",
+            "import 'example';",
             "",
             "/**",
             " * @param {Array<string>} ids",
@@ -380,9 +382,9 @@ public final class MissingRequireTest extends CompilerTestCase {
   public void testPassES6Module_noRewriting() {
     testSame(
         lines(
-            "import '/example';",
+            "import 'example';",
             "",
-            "import dom from '/goog.dom';",
+            "import dom from 'goog.dom';",
             "",
             "/**",
             " * @param {Array<string>} ids",
@@ -578,19 +580,21 @@ public final class MissingRequireTest extends CompilerTestCase {
 
   @Test
   public void testFailConstant() {
-    // TODO(user): this code used to warn in single-file mode, but it no longer warns
-    // after I removed single-file mode. Fix the logic and restore this test.
-    // testMissingRequireStrict(
-    //     "goog.require('example.Class'); alert(example.Constants.FOO);",
-    //     "missing require: 'example.Constants'");
-    // testMissingRequireStrict(
-    //     "goog.require('example.Class'); alert(example.Outer.Inner.FOO);",
-    //     "missing require: 'example.Outer'");
+    mode = CheckMissingAndExtraRequires.Mode.SINGLE_FILE;
+    testMissingRequireStrict(
+        "goog.require('example.Class'); alert(example.Constants.FOO);",
+        "missing require: 'example.Constants'");
+    testMissingRequireStrict(
+        "goog.require('example.Class'); alert(example.Outer.Inner.FOO);",
+        "missing require: 'example.Outer'");
   }
 
   @Test
   public void testFailGoogArray() {
-    testMissingRequireStrict("goog.array.contains([1, 2, 3], 4);", "missing require: 'goog.array'");
+    mode = CheckMissingAndExtraRequires.Mode.SINGLE_FILE;
+    testMissingRequireStrict(
+        "console.log(goog.array.contains([1, 2, 3], 4));",
+        "missing require: 'goog.array'");
   }
 
   @Test
@@ -909,14 +913,14 @@ public final class MissingRequireTest extends CompilerTestCase {
     opts.setClosurePass(true);
 
     Result result = compiler.compile(ImmutableList.<SourceFile>of(), ImmutableList.of(input), opts);
-    ImmutableList<JSError> warnings = result.warnings;
+    JSError[] warnings = result.warnings;
     assertThat(warnings).isNotNull();
     assertThat(warnings).isNotEmpty();
 
     String expectation = "missing require: 'foo.bar.goo'";
 
     for (JSError warning : warnings) {
-      if (expectation.equals(warning.getDescription())) {
+      if (expectation.equals(warning.description)) {
         return;
       }
     }
@@ -1290,16 +1294,6 @@ public final class MissingRequireTest extends CompilerTestCase {
   }
 
   @Test
-  public void testNoCrash() {
-    testSame(
-        lines(
-            "goog.module('example');",
-            "",
-            "const {getElement: {getEl}} = goog.require('goog.dom');",
-            ""));
-  }
-
-  @Test
   public void testReferenceInDefaultParam() {
     testWarning(lines(
         "function func( a = new Bar() ){}",
@@ -1312,7 +1306,10 @@ public final class MissingRequireTest extends CompilerTestCase {
 
   @Test
   public void testPassModule() {
-    testSame(lines("import {Foo} from '/bar';", "new Foo();"));
+    testSame(
+        lines(
+            "import {Foo} from 'bar';",
+            "new Foo();"));
   }
 
   // Check to make sure that we still get warnings when processing a non-module after processing
@@ -1321,7 +1318,7 @@ public final class MissingRequireTest extends CompilerTestCase {
   public void testFailAfterModule() {
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT);
 
-    String module = "import {Foo} from '/bar';";
+    String module = "import {Foo} from 'bar';";
     String script = "var x = new example.X()";
     String[] js = new String[] {module, script};
     String warning = "missing require: 'example.X'";

@@ -53,6 +53,11 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         };
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testValidBuiltInTypeRedefinition() {
     testSame(externs(ALL_NATIVE_EXTERN_TYPES), srcs(""));
@@ -72,8 +77,8 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
                 "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                    + "found   : function(new:String, *=): number\n"
+                    + "expected: function(new:String, *=): string"));
   }
 
   @Test
@@ -89,8 +94,8 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
                 "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                    + "found   : function(new:String): string\n"
+                    + "expected: function(new:String, *=): string"));
   }
 
   @Test
@@ -106,8 +111,8 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
                 "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                    + "found   : function(new:String, ?=, ?=): string\n"
+                    + "expected: function(new:String, *=): string"));
   }
 
   @Test
@@ -123,8 +128,8 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
                 "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                    + "found   : function(new:String, ?=): string\n"
+                    + "expected: function(new:String, *=): string"));
   }
 
   @Test
@@ -135,8 +140,8 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
                 "attempted re-definition of type Function\n"
-                    + "found   : (typeof Function)\n"
-                    + "expected: (typeof Function)"));
+                    + "found   : function(new:Function, ?=): ?\n"
+                    + "expected: function(new:Function, ...*): ?"));
   }
 
   @Test
@@ -172,7 +177,7 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
       String typeName = type.getInstanceType().toString();
       FunctionType typeInRegistry = ((ObjectType) getLastCompiler()
           .getTypeRegistry().getGlobalType(typeName)).getConstructor();
-      assertThat(typeInRegistry).isSameInstanceAs(type);
+      assertThat(typeInRegistry).isSameAs(type);
     }
   }
 }

@@ -112,23 +112,12 @@ function PerformanceNavigationTiming() {}
 /** @type {NavigationType} */ PerformanceNavigationTiming.prototype.type;
 /** @type {number} */ PerformanceNavigationTiming.prototype.redirectCount;
 
-/**
- * https://w3c.github.io/paint-timing/#sec-PerformancePaintTiming
- * @constructor
- * @extends {PerformanceEntry}
- */
-function PerformancePaintTiming() {}
-
 /** @constructor */
 function PerformanceNavigation() {}
-/** @const {number} */ PerformanceNavigation.TYPE_NAVIGATE;
-/** @const {number} */ PerformanceNavigation.prototype.TYPE_NAVIGATE;
-/** @const {number} */ PerformanceNavigation.TYPE_RELOAD;
-/** @const {number} */ PerformanceNavigation.prototype.TYPE_RELOAD;
-/** @const {number} */ PerformanceNavigation.TYPE_BACK_FORWARD;
-/** @const {number} */ PerformanceNavigation.prototype.TYPE_BACK_FORWARD;
-/** @const {number} */ PerformanceNavigation.TYPE_RESERVED;
-/** @const {number} */ PerformanceNavigation.prototype.TYPE_RESERVED;
+/** @type {number} */ PerformanceNavigation.prototype.TYPE_NAVIGATE = 0;
+/** @type {number} */ PerformanceNavigation.prototype.TYPE_RELOAD = 1;
+/** @type {number} */ PerformanceNavigation.prototype.TYPE_BACK_FORWARD = 2;
+/** @type {number} */ PerformanceNavigation.prototype.TYPE_RESERVED = 255;
 /** @type {number} */ PerformanceNavigation.prototype.type;
 /** @type {number} */ PerformanceNavigation.prototype.redirectCount;
 
@@ -152,38 +141,6 @@ function PerformanceLongTaskTiming() {}
 /** @type {!Array<!TaskAttributionTiming>} */
 PerformanceLongTaskTiming.prototype.attribution;
 
-/**
- * https://wicg.github.io/layout-instability/#sec-layout-shift
- * @constructor
- * @extends {PerformanceEntry}
- */
-function LayoutShift() {}
-/** @type {number} */ LayoutShift.prototype.value;
-/** @type {boolean} */ LayoutShift.prototype.hadRecentInput;
-/** @type {number} */ LayoutShift.prototype.lastInputTime;
-
-/**
- * https://wicg.github.io/largest-contentful-paint/#largestcontentfulpaint
- * @constructor
- * @extends {PerformanceEntry}
- */
-function LargestContentfulPaint() {}
-/** @type {number} */ LargestContentfulPaint.prototype.renderTime;
-/** @type {number} */ LargestContentfulPaint.prototype.loadTime;
-/** @type {number} */ LargestContentfulPaint.prototype.size;
-/** @type {string} */ LargestContentfulPaint.prototype.id;
-/** @type {string} */ LargestContentfulPaint.prototype.url;
-/** @type {?Element} */ LargestContentfulPaint.prototype.element;
-
-/**
- * https://wicg.github.io/event-timing/#sec-performance-event-timing
- * @constructor
- * @extends {PerformanceEntry}
- */
-function PerformanceEventTiming() {}
-/** @type {number} */ PerformanceEventTiming.prototype.processingStart;
-/** @type {number} */ PerformanceEventTiming.prototype.processingEnd;
-/** @type {boolean} */ PerformanceEventTiming.prototype.cancelable;
 
 /** @constructor */
 function Performance() {}
@@ -204,6 +161,12 @@ Performance.prototype.timeOrigin;
  * @return {undefined}
  */
 Performance.prototype.clearResourceTimings = function() {};
+
+/**
+ * Clear out the buffer of performance timing events for webkit browsers.
+ * @return {undefined}
+ */
+Performance.prototype.webkitClearResourceTimings = function() {};
 
 /**
  * A callback that is invoked when the resourcetimingbufferfull event is fired.
@@ -245,11 +208,21 @@ Performance.prototype.getEntriesByType = function(entryType) {};
  */
 Performance.prototype.getEntriesByName = function(name, opt_entryType) {};
 
+// Nonstandard. Only available in Blink.
+// Returns more granular results with the --enable-memory-info flag.
+/** @type {MemoryInfo} */ Performance.prototype.memory;
+
 /**
  * @return {number}
  * @nosideeffects
  */
 Performance.prototype.now = function() {};
+
+/**
+ * @return {number}
+ * @nosideeffects
+ */
+Performance.prototype.webkitNow = function() {};
 
 /**
  * @param {string} markName
@@ -315,23 +288,12 @@ PerformanceObserver.prototype.observe = function(options) {};
 PerformanceObserver.prototype.disconnect = function() {};
 
 /**
- * See https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver/takeRecords
- * @return {!PerformanceObserverEntryList}
- */
-PerformanceObserver.prototype.takeRecords = function() {};
-
-/** @const {!Array<string>} */
-PerformanceObserver.prototype.supportedEntryTypes;
-
-/**
  * @record
  */
 function PerformanceObserverInit() {}
 
 /** @type {undefined|!Array<string>} */
 PerformanceObserverInit.prototype.entryTypes;
-/** @type {undefined|string} */
-PerformanceObserverInit.prototype.type;
 /** @type {undefined|boolean} */
 PerformanceObserverInit.prototype.buffered;
 

@@ -29,6 +29,8 @@ import com.google.javascript.rhino.Node;
  * created by this refactoring.
  *
  * TODO(tbreisacher): Handle (function(){}).bind(this); as well.
+ *
+ * @author tbreisacher@google.com (Tyler Breisacher)
  */
 public final class GoogBindToArrow extends Scanner {
   private static boolean isGoogBind(Node n) {
@@ -68,7 +70,7 @@ public final class GoogBindToArrow extends Scanner {
       Node returnNode = body.getFirstChild();
       if (returnNode.isReturn()) {
         arrowFunction.replaceChild(
-            arrowFunction.getLastChild(), returnNode.getFirstChild().detach());
+            arrowFunction.getLastChild(), returnNode.getFirstChild().detachFromParent());
       }
     }
 

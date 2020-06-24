@@ -46,6 +46,8 @@ import javax.annotation.Nullable;
  * versions that can be used equivalently for compilation of downstream dependencies.
 
  * [1] https://github.com/bazelbuild/bazel/blob/master/third_party/ijar/README.txt
+ *
+ * @author blickly@google.com (Ben Lickly)
  */
 public class ConvertToTypedInterface implements CompilerPass {
   static final DiagnosticType CONSTANT_WITH_SUGGESTED_TYPE =
@@ -68,16 +70,16 @@ public class ConvertToTypedInterface implements CompilerPass {
 
   private static final ImmutableSet<String> CALLS_TO_PRESERVE =
       ImmutableSet.of(
-          "Polymer",
           "goog.addSingletonGetter",
           "goog.define",
           "goog.forwardDeclare",
           "goog.module",
           "goog.module.declareLegacyNamespace",
+          // TODO(johnplaisted): Consolidate on declareModuleId / delete declareNamespace.
           "goog.declareModuleId",
+          "goog.module.declareNamespace",
           "goog.provide",
-          "goog.require",
-          "goog.requireType");
+          "goog.require");
 
   private final AbstractCompiler compiler;
 
@@ -85,33 +87,20 @@ public class ConvertToTypedInterface implements CompilerPass {
     this.compiler = compiler;
   }
 
-  private static void maybeReport(
-      AbstractCompiler compiler, Node node, DiagnosticType diagnostic, String... fillers) {
-    String sourceName = NodeUtil.getSourceName(node);
-    if (sourceName.endsWith("_test.js") || sourceName.endsWith("_test.closure.js")) {
-      // Allow _test.js files and their tsickle generated
-      // equivalents to avoid emitting errors at .i.js generation time.
-      // We expect these files to not be consumed by any other downstream libraries.
-      return;
-    }
-    compiler.report(JSError.make(node, diagnostic, fillers));
-  }
-
   private static void maybeWarnForConstWithoutExplicitType(
       AbstractCompiler compiler, PotentialDeclaration decl) {
     if (decl.isConstToBeInferred()
         && !decl.getLhs().isFromExterns()
         && !JsdocUtil.isPrivate(decl.getJsDoc())) {
-
       Node nameNode = decl.getLhs();
       if (nameNode.getJSType() == null) {
-        maybeReport(compiler, nameNode, CONSTANT_WITHOUT_EXPLICIT_TYPE);
+        compiler.report(JSError.make(nameNode, CONSTANT_WITHOUT_EXPLICIT_TYPE));
       } else {
-        maybeReport(
-            compiler,
-            nameNode,
-            CONSTANT_WITH_SUGGESTED_TYPE,
-            nameNode.getJSType().toAnnotationString(Nullability.EXPLICIT));
+        compiler.report(
+            JSError.make(
+                nameNode,
+                CONSTANT_WITH_SUGGESTED_TYPE,
+                nameNode.getJSType().toAnnotationString(Nullability.EXPLICIT)));
       }
     }
   }
@@ -125,11 +114,6 @@ public class ConvertToTypedInterface implements CompilerPass {
 
   private void processFile(Node scriptNode) {
     checkArgument(scriptNode.isScript());
-    String sourceFileName = scriptNode.getSourceFileName();
-    if (AbstractCompiler.isFillFileName(sourceFileName)) {
-      scriptNode.detach();
-      return;
-    }
     FileInfo currentFile = new FileInfo();
     NodeTraversal.traverse(compiler, scriptNode, new RemoveNonDeclarations());
     NodeTraversal.traverse(compiler, scriptNode, new PropagateConstJsdoc(currentFile));
@@ -165,10 +149,9 @@ public class ConvertToTypedInterface implements CompilerPass {
             case CALL:
               Node callee = expr.getFirstChild();
               checkState(!callee.matchesQualifiedName("goog.scope"));
-              if (CALLS_TO_PRESERVE.contains(callee.getQualifiedName())) {
-                return true;
+              if (!CALLS_TO_PRESERVE.contains(callee.getQualifiedName())) {
+                NodeUtil.deleteNode(n, t.getCompiler());
               }
-              NodeUtil.deleteNode(n, t.getCompiler());
               return false;
             case ASSIGN:
               Node lhs = expr.getFirstChild();
@@ -221,7 +204,6 @@ public class ConvertToTypedInterface implements CompilerPass {
           NodeUtil.deleteNode(n.getSecondChild(), t.getCompiler());
           // fall-through
         case FOR_OF:
-        case FOR_AWAIT_OF:
         case FOR_IN:
           NodeUtil.deleteNode(n.getSecondChild(), t.getCompiler());
           Node initializer = n.removeFirstChild();
@@ -269,7 +251,6 @@ public class ConvertToTypedInterface implements CompilerPass {
         case FOR:
         case FOR_IN:
         case FOR_OF:
-        case FOR_AWAIT_OF:
         case IF:
         case SWITCH:
           if (n.getParent() != null) {
@@ -298,13 +279,9 @@ public class ConvertToTypedInterface implements CompilerPass {
 
     /**
      * Does three simplifications to const/let/var nodes.
-     *
-     * <ul>
-     *   <li>Splits them so that each declaration is a separate statement.
-     *   <li>Removes non-import and non-alias destructuring statements, which we assume are not type
-     *       declarations.
-     *   <li>Moves inline JSDoc annotations onto the declaration nodes.
-     * </ul>
+     * 1. Splits them so that each declaration is a separate statement.
+     * 2. Removes non-import destructuring statements, which we assume are not type declarations.
+     * 3. Moves inline JSDoc annotations onto the declaration nodes.
      */
     static void splitNameDeclarationsAndRemoveDestructuring(Node n, NodeTraversal t) {
       checkArgument(NodeUtil.isNameDeclaration(n));
@@ -314,8 +291,7 @@ public class ConvertToTypedInterface implements CompilerPass {
       while (n.hasChildren()) {
         Node lhsToSplit = n.getLastChild();
         if (lhsToSplit.isDestructuringLhs()
-            && !PotentialDeclaration.isImportRhs(lhsToSplit.getLastChild())
-            && !PotentialDeclaration.isAliasDeclaration(lhsToSplit, lhsToSplit.getLastChild())) {
+            && !PotentialDeclaration.isImportRhs(lhsToSplit.getLastChild())) {
           // Remove destructuring statements, which we assume are not type declarations
           NodeUtil.markFunctionsDeleted(lhsToSplit, t.getCompiler());
           NodeUtil.removeChild(n, lhsToSplit);
@@ -436,6 +412,9 @@ public class ConvertToTypedInterface implements CompilerPass {
         decl.remove(compiler);
         return;
       }
+      if (decl.isAliasDefinition()) {
+        return;
+      }
       if (decl.getRhs() != null && decl.getRhs().isFunction()) {
         processFunction(decl.getRhs());
       } else if (decl.getRhs() != null && isClass(decl.getRhs())) {
@@ -493,7 +472,7 @@ public class ConvertToTypedInterface implements CompilerPass {
         // and should not be depended on.
         if (decl.getRhs() != null && decl.getRhs().isClass()
             || decl.getJsDoc() != null && decl.getJsDoc().containsTypeDefinition()) {
-          maybeReport(compiler, decl.getLhs(), GOOG_SCOPE_HIDDEN_TYPE);
+          compiler.report(JSError.make(decl.getLhs(), GOOG_SCOPE_HIDDEN_TYPE));
         }
         return true;
       }

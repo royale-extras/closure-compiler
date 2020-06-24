@@ -55,11 +55,3 @@ buffer.SlowBuffer.prototype.slice;
  * @return {string}
  */
 buffer.SlowBuffer.prototype.toString;
-
-/**
- * @param {number} size
- * @param {(string|!Buffer|number)=} fill
- * @param {string=} encoding
- * @return {!Buffer}
- */
-buffer.Buffer.alloc;

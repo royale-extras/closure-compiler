@@ -45,13 +45,16 @@ import java.util.regex.Pattern;
  * what to do with the white-list by implementing the {@code level} function.
  * Warnings are defined by the name of the JS file and the first line of
  * warnings description.
+ *
+ * @author anatol@google.com (Anatol Pomazau)
+ * @author bashir@google.com (Bashir Sadjad)
  */
 @GwtIncompatible("java.io, java.util.regex")
 public class WhitelistWarningsGuard extends WarningsGuard {
   private static final Splitter LINE_SPLITTER = Splitter.on('\n');
 
-  /** The set of allowlisted warnings, same format as {@code formatWarning}. */
-  private final Set<String> allowlist;
+  /** The set of white-listed warnings, same format as {@code formatWarning}. */
+  private final Set<String> whitelist;
 
   /** Pattern to match line number in error descriptions. */
   private static final Pattern LINE_NUMBER = Pattern.compile(":-?\\d+");
@@ -61,27 +64,28 @@ public class WhitelistWarningsGuard extends WarningsGuard {
   }
 
   /**
-   * This class depends on an input set that contains the white-list. The format of each white-list
-   * string is: {@code <file-name>:<line-number>? <warning-description>} {@code #
-   * <optional-comment>}
+   * This class depends on an input set that contains the white-list. The format
+   * of each white-list string is:
+   * {@code <file-name>:<line-number>?  <warning-description>}
+   * {@code # <optional-comment>}
    *
-   * @param allowlist The set of JS-warnings that are white-listed. This is expected to have similar
-   *     format as {@code formatWarning(JSError)}.
+   * @param whitelist The set of JS-warnings that are white-listed. This is
+   *     expected to have similar format as {@code formatWarning(JSError)}.
    */
-  public WhitelistWarningsGuard(Set<String> allowlist) {
-    checkNotNull(allowlist);
-    this.allowlist = normalizeWhitelist(allowlist);
+  public WhitelistWarningsGuard(Set<String> whitelist) {
+    checkNotNull(whitelist);
+    this.whitelist = normalizeWhitelist(whitelist);
   }
 
   /**
-   * Loads legacy warnings list from the set of strings. During development line numbers are changed
-   * very often - we just cut them and compare without ones.
+   * Loads legacy warnings list from the set of strings. During development line
+   * numbers are changed very often - we just cut them and compare without ones.
    *
    * @return known legacy warnings without line numbers.
    */
-  protected Set<String> normalizeWhitelist(Set<String> allowlist) {
+  protected Set<String> normalizeWhitelist(Set<String> whitelist) {
     Set<String> result = new HashSet<>();
-    for (String line : allowlist) {
+    for (String line : whitelist) {
       String trimmed = line.trim();
       if (trimmed.isEmpty() || trimmed.charAt(0) == '#') {
         // strip out empty lines and comments.
@@ -96,25 +100,24 @@ public class WhitelistWarningsGuard extends WarningsGuard {
 
   @Override
   public CheckLevel level(JSError error) {
-    if (error.getDefaultLevel().equals(CheckLevel.ERROR)) {
-      return null;
-    }
     if (containWarning(formatWarning(error))) {
       // If the message matches the guard we use WARNING, so that it
       // - Shows up on stderr, and
       // - Gets caught by the WhitelistBuilder downstream in the pipeline
       return CheckLevel.WARNING;
     }
+
     return null;
   }
+
   /**
    * Determines whether a given warning is included in the white-list.
    *
-   * @param formattedWarning the warning formatted by {@code formattedWarning}
+   * @param formattedWarning the warning formatted by {@code formatWarning}
    * @return whether the given warning is white-listed or not.
    */
   protected boolean containWarning(String formattedWarning) {
-    return allowlist.contains(formattedWarning);
+    return whitelist.contains(formattedWarning);
   }
 
   @Override
@@ -177,11 +180,11 @@ public class WhitelistWarningsGuard extends WarningsGuard {
    */
   protected String formatWarning(JSError error, boolean withMetaData) {
     StringBuilder sb = new StringBuilder();
-    sb.append(error.getSourceName()).append(":");
+    sb.append(error.sourceName).append(":");
     if (withMetaData) {
-      sb.append(error.getLineNumber());
+      sb.append(error.lineNumber);
     }
-    List<String> lines = LINE_SPLITTER.splitToList(error.getDescription());
+    List<String> lines = LINE_SPLITTER.splitToList(error.description);
     sb.append("  ").append(lines.get(0));
 
     // Add the rest of the message as a comment.
@@ -216,13 +219,13 @@ public class WhitelistWarningsGuard extends WarningsGuard {
       return this;
     }
 
-    /** Fill in instructions on how to generate this allowlist. */
+    /** Fill in instructions on how to generate this whitelist. */
     public WhitelistBuilder setGeneratorTarget(String name) {
       this.generatorTarget = name;
       return this;
     }
 
-    /** A note to include at the top of the allowlist file. */
+    /** A note to include at the top of the whitelist file. */
     public WhitelistBuilder setNote(String note) {
       this.headerNote  = note;
       return this;
@@ -230,10 +233,6 @@ public class WhitelistWarningsGuard extends WarningsGuard {
 
     @Override
     public void report(CheckLevel level, JSError error) {
-      if (error.getDefaultLevel().equals(CheckLevel.ERROR)) {
-        // ERROR-level diagnostics are ignored by WhitelistWarningsGuard (c.f. above getLevel).
-        return;
-      }
       warnings.add(error);
     }
 
@@ -278,7 +277,7 @@ public class WhitelistWarningsGuard extends WarningsGuard {
 
       for (DiagnosticType type : warningsByType.keySet()) {
         if (DiagnosticGroups.DEPRECATED.matches(type)) {
-          // Deprecation warnings are not raisable to error, so we don't need them in allowlists.
+          // Deprecation warnings are not raisable to error, so we don't need them in whitelists.
           continue;
         }
         out.append("\n# Warning ")

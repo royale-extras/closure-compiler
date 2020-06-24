@@ -209,17 +209,12 @@ public final class Es6ExtractClassesTest extends CompilerTestCase {
                 lines(
                     "const $some$$path$file$classdecl$var0 = class{};",
                     "alert($some$$path$file$classdecl$var0);"))));
+
   }
 
   @Test
   public void testConditionalBlocksExtractionFromCall() {
-    test(
-        "maybeTrue() && f(class{});",
-        lines(
-            "if (maybeTrue()) {",
-            "  const testcode$classdecl$var0=class{};",
-            "  f(testcode$classdecl$var0);",
-            "}"));
+    testError("maybeTrue() && f(class{});", CANNOT_CONVERT);
   }
 
   @Test
@@ -233,39 +228,21 @@ public final class Es6ExtractClassesTest extends CompilerTestCase {
 
   @Test
   public void testTernaryOperatorBlocksExtraction() {
-    test(
-        "var c = maybeTrue() ? class A {} : anotherExpr",
-        lines(
-            "var JSCompiler_temp$jscomp$0;",
-            "if (maybeTrue()) {",
-            "  const testcode$classdecl$var0=class{};",
-            "  /** @constructor */ JSCompiler_temp$jscomp$0 = testcode$classdecl$var0;",
-            "} else {",
-            "  JSCompiler_temp$jscomp$0 = anotherExpr;",
-            "}",
-            "var c = JSCompiler_temp$jscomp$0;"));
-    test(
-        "var c = maybeTrue() ? anotherExpr : class B {}",
-        lines(
-            "var JSCompiler_temp$jscomp$0;",
-            "if (maybeTrue()) { ",
-            "  JSCompiler_temp$jscomp$0=anotherExpr; ",
-            "} else {",
-            "  const testcode$classdecl$var0 = class{};",
-            "  /** @constructor */ JSCompiler_temp$jscomp$0 = testcode$classdecl$var0",
-            "}",
-            "var c = JSCompiler_temp$jscomp$0;"));
+    testError("var c = maybeTrue() ? class A {} : anotherExpr", CANNOT_CONVERT);
+    testError("var c = maybeTrue() ? anotherExpr : class B {}", CANNOT_CONVERT);
   }
 
   @Test
   public void testCannotExtract() {
-    testError("let x; while(x = class A{}) {use(x);}", CANNOT_CONVERT);
+    testError(
+        "var c = maybeTrue() && class A extends sideEffect() {}",
+        CANNOT_CONVERT);
 
     testError(
         lines(
             "/** @type {number} */ var x = 0;",
             "function f(x, y) {}",
-            "while(f(x = 2, class Foo { [x=3]() {} })){}"),
+            "f(x = 2, class Foo { [x=3]() {} });"),
         CANNOT_CONVERT);
   }
 

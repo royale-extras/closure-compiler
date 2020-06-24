@@ -40,6 +40,11 @@ public final class DeclaredGlobalExternsOnWindowTest extends CompilerTestCase {
     enableRunTypeCheckAfterProcessing();
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testWindowProperty1a() {
     testExternChanges("var window; var a;", "", "var window;var a;window.a");

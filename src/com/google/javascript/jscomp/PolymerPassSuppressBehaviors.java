@@ -15,7 +15,7 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.NodeTraversal.ExternsSkippingCallback;
+import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.PolymerPass.MemberDefinition;
 import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.Node;
@@ -25,7 +25,7 @@ import java.util.List;
  * For every Polymer Behavior, strip property type annotations and add suppress checktypes on
  * functions.
  */
-final class PolymerPassSuppressBehaviors extends ExternsSkippingCallback {
+final class PolymerPassSuppressBehaviors extends AbstractPostOrderCallback {
 
   private final AbstractCompiler compiler;
 
@@ -50,20 +50,22 @@ final class PolymerPassSuppressBehaviors extends ExternsSkippingCallback {
       if (NodeUtil.isNameDeclaration(n)) {
         behaviorValue = n.getFirstFirstChild();
       }
-      suppressBehavior(behaviorValue, n);
+      suppressBehavior(behaviorValue);
     }
   }
 
-  /** Strip property type annotations and add suppressions on functions. */
-  private void suppressBehavior(Node behaviorValue, Node reportNode) {
+  /**
+   * Strip property type annotations and add suppressions on functions.
+   */
+  private void suppressBehavior(Node behaviorValue) {
     if (behaviorValue == null) {
-      compiler.report(JSError.make(reportNode, PolymerPassErrors.POLYMER_UNQUALIFIED_BEHAVIOR));
+      compiler.report(JSError.make(behaviorValue, PolymerPassErrors.POLYMER_UNQUALIFIED_BEHAVIOR));
       return;
     }
 
     if (behaviorValue.isArrayLit()) {
       for (Node child : behaviorValue.children()) {
-        suppressBehavior(child, behaviorValue);
+        suppressBehavior(child);
       }
     } else if (behaviorValue.isObjectLit()) {
       stripPropertyTypes(behaviorValue);

@@ -16,9 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
-import com.google.javascript.jscomp.testing.TestExternsBuilder;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
 import org.junit.Test;
@@ -37,32 +34,21 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
         lines(
             "var undefined;",
             "var goog = {};",
-            "/** @const {!Global} */ goog.global;",
             "goog.reflect = {};",
             "goog.reflect.object = function(obj, propertiesObj) {};",
             "function goog$inherits(subClass, superClass) {}",
-            "function goog$mixin(dstPrototype, srcPrototype) {}",
+            "function goog$mixin(dstPrototype, srcPrototype){}",
             "function alert() {}",
             "function use() {}",
             "function externFunction() {}",
             "var externVar;",
-            "var window;",
-            "var console = {};",
-            "console.log = function(var_args) {};",
-            "/** @constructor @return {!Array} */ function Array(/** ...* */ var_args) {}",
-            "/** @constructor @return {string} */ function String(/** *= */ opt_arg) {}",
-            "/** @constructor */ function Map() {}",
-            "/** @constructor */ function Set() {}",
-            "/** @constructor */ function WeakMap() {}",
-            ""));
+            "var window;"));
   }
 
-  private static final String JSCOMP_POLYFILL =
-      lines(
-          "var $jscomp = {};",
-          "$jscomp.polyfill = function(",
-          "    /** string */ name, /** Function */ func, /** string */ from, /** string */ to) {};",
-          "");
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
 
   @Override
   @Before
@@ -70,16 +56,8 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
     super.setUp();
     enableNormalize();
     enableGatherExternProperties();
-    onlyValidateNoNewGettersAndSetters();
     removeGlobal = true;
     preserveFunctionExpressionNames = false;
-  }
-
-  @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_2019);
-    return options;
   }
 
   @Override
@@ -90,31 +68,11 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
         new RemoveUnusedCode.Builder(compiler)
             .removeLocalVars(true)
             .removeGlobals(removeGlobal)
-            .removeUnusedPolyfills(true)
             .preserveFunctionExpressionNames(preserveFunctionExpressionNames)
             .build()
             .process(externs, root);
       }
     };
-  }
-
-  @Test
-  public void testDoNotRemoveUnusedVarDeclaredInObjectPatternUsingRest() {
-    testSame(
-        lines(
-            "const data = {",
-            "  hello: 'abc',",
-            "  world: 'def',",
-            "}",
-            "",
-            "const {",
-            // If `hello` were removed, then `rest` could end up getting a `hello` property.
-            "  hello,",
-            "  ...rest",
-            "} = data",
-            "",
-            "console.log(rest);",
-            ""));
   }
 
   @Test
@@ -277,6 +235,7 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
 
   @Test
   public void testRemoveUnusedVars1() {
+    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     test(
         lines(
             "var a;",
@@ -662,14 +621,6 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
   }
 
   @Test
-  public void testUnusedSetterParam_isRetained() {
-    // These params are a syntactic requirement.
-    testSame("class Foo { set foo(x)     { } }; use(new Foo);");
-    testSame("class Foo { set ['foo'](x) { } }; use(new Foo);");
-    testSame("class Foo { set 'foo'(x)   { } }; use(new Foo);");
-  }
-
-  @Test
   public void testArrayDestructuringParams() {
     // Default values in array pattern unused
     test(
@@ -693,8 +644,12 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
 
   @Test
   public void testRestPattern() {
-    testSame("var x; [...x] = externVar;");
-    testSame("var [...x] = externVar;");
+    test(
+        "var x; [...x] = externVar;", // preserve alignment
+        "       [    ] = externVar;");
+    test(
+        "var [...x] = externVar;", // preserve alignment
+        "var [    ] = externVar;");
     testSame("var x; [...x] = externVar; use(x);");
     testSame("var [...x] = externVar; use(x);");
     testSame("var x; [...x.y] = externVar;");
@@ -719,9 +674,13 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
             "}",
           "alert(countArgs(1, 1, 1, 1, 1));"));
 
-    testSame("function foo([...rest]) {/**rest unused*/}; foo();");
+    test(
+        " function foo([...rest]) {/**rest unused*/}; foo();",
+        " function foo(         ) {/**rest unused*/}; foo();");
 
-    testSame("function foo([x, ...rest]) { x; }; foo();");
+    test(
+        "function foo([x, ...rest]) { x; }; foo();", // preserve alignment
+        "function foo([x         ]) { x; }; foo();");
   }
 
   @Test
@@ -751,14 +710,14 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
 
   @Test
   public void testModule() {
-    test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk(
-                "var unreferenced=1; function x() { foo(); }"
-                    + "function uncalled() { var x; return 2; }")
-            .addChunk("var a,b; function foo() { this.foo(a); } x()")
-            .build(),
-        new String[] {"function x(){foo()}", "var a;function foo(){this.foo(a)}x()"});
+    test(createModules(
+        "var unreferenced=1; function x() { foo(); }" +
+            "function uncalled() { var x; return 2; }",
+        "var a,b; function foo() { this.foo(a); } x()"),
+        new String[]{
+            "function x(){foo()}",
+            "var a;function foo(){this.foo(a)}x()"
+        });
   }
 
   @Test
@@ -1181,6 +1140,14 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
             "JSCompiler_renameProperty('a');",
         "function JSCompiler_renameProperty() {};" +
             "JSCompiler_renameProperty('a');");
+  }
+
+  @Test
+  public void testDoNotOptimizeJSCompiler_ObjectPropertyString() {
+    test("function JSCompiler_ObjectPropertyString(a, b) {};" +
+            "JSCompiler_ObjectPropertyString(window,'b');",
+        "function JSCompiler_ObjectPropertyString() {};" +
+            "JSCompiler_ObjectPropertyString(window,'b');");
   }
 
   @Test
@@ -1682,39 +1649,6 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
   }
 
   @Test
-  public void testForAwaitOf() {
-    testSame("async () => { let item; for await (item of externVar){} }");
-
-    testSame("async () => { for(var item of externVar){} }");
-
-    testSame("async () => { for(let item of externVar){} }");
-
-    testSame(
-        lines(
-            "async () => { ",
-            "  var x;",
-            "  for (var n of externVar) {",
-            "    if (x > n) {};", // keeps x alive
-            "  }",
-            "};"));
-
-    test(
-        lines(
-            "async () => { ",
-            "  var x;", // no references to this
-            "  for (var n of externVar) {",
-            "    if (n) {};",
-            "  }",
-            "};"),
-        lines(
-            "async () => { ",
-            "  for (var n of externVar) {", // x removed
-            "    if (n) {};",
-            "  }",
-            "};"));
-  }
-
-  @Test
   public void testEnhancedForWithExternVar() {
     testSame("for(externVar in externVar){}");
     testSame("for(externVar of externVar){}");
@@ -1741,7 +1675,7 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
     test("function f([a]) {} f();", "function f() {} f();");
     test("function f(...a) {} f();", "function f() {} f();");
     test("function f(...[a]) {} f();", "function f() {} f();");
-    testSame("function f(...[...a]) {} f();");
+    test("function f(...[...a]) {} f();", "function f() {} f();");
     test("function f(...{length:a}) {} f();", "function f() {} f();");
 
     test("function f(a) {} f();", "function f() {} f();");
@@ -1762,17 +1696,17 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
     test("function f([a]) {} f();", "function f() {} f();");
     test("function f([a], b) {} f();", "function f() {} f();");
     test("function f([a], ...b) {} f();", "function f() {} f();");
-    testSame("function f([...a]) {} f();");
+    test("function f([...a]) {} f();", "function f() {} f();");
     test("function f([[]]) {} f();", "function f([[]]) {} f();");
-    testSame("function f([[],...a]) {} f();");
+    test("function f([[],...a]) {} f();", "function f([[]]) {} f();");
 
     test("var [a] = [];", "var [] = [];");
-    testSame("var [...a] = [];");
-    testSame("var [...[...a]] = [];");
+    test("var [...a] = [];", "var [] = [];");
+    test("var [...[...a]] = [];", "var [...[]] = [];");
 
     test("var [a, b] = [];", "var [] = [];");
-    test("var [a, ...b] = [];", "var [ , ...b] = [];");
-    test("var [a, ...[...b]] = [];", "var [ ,...[...b]] = [];");
+    test("var [a, ...b] = [];", "var [] = [];");
+    test("var [a, ...[...b]] = [];", "var [,...[]] = [];");
 
     test("var [a, b, c] = []; use(a, b);", "var [a,b  ] = []; use(a, b);");
     test("var [a, b, c] = []; use(a, c);", "var [a, ,c] = []; use(a, c);");
@@ -1793,9 +1727,9 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
     test("var a, b, c; [[a, b, c]] = []; use(b);", "var b; [[ ,b]] = []; use(b);");
     test("var a, b, c; [[a, b, c]] = []; use(c);", "var c; [[ , ,c]] = []; use(c);");
 
-    test("var a, b, c; [a, b, ...c] = []; use(a);", "var a, c; [a,  , ...c] = []; use(a);");
-    test("var a, b, c; [a, b, ...c] = []; use(b);", "var b, c; [ , b, ...c] = []; use(b);");
-    test("var a, b, c; [a, b, ...c] = []; use(c);", "var c;    [ ,  , ...c] = []; use(c);");
+    test("var a, b, c; [a, b, ...c] = []; use(a);", "var a; [a] = []; use(a);");
+    test("var a, b, c; [a, b, ...c] = []; use(b);", "var b; [ ,b, ] = []; use(b);");
+    test("var a, b, c; [a, b, ...c] = []; use(c);", "var c; [ , ,...c] = []; use(c);");
 
     test("var a, b, c; [a=1, b=2, c=3] = []; use(a);", "var a; [a=1] = []; use(a);");
     test("var a, b, c; [a=1, b=2, c=3] = []; use(b);", "var b; [   ,b=2, ] = []; use(b);");
@@ -1972,1275 +1906,5 @@ public final class RemoveUnusedCodeTest extends CompilerTestCase {
     // Same as above case without the destructuring declaration
     test("var a, b = alert();", "alert();");
   }
-
-  @Test
-  public void testRemoveUnusedPolyfills_global_untyped() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(JSCOMP_POLYFILL, "/** @constructor */ function Map() {}")
-                .build());
-
-    // Unused polyfill is removed.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log();")),
-        expected("console.log();"));
-
-    // Used polyfill is not removed.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log(new Map());")));
-
-    // Local names shadowing global polyfills are not themselves polyfill references.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');",
-                "console.log(function(Map) {",
-                "  console.log(new Map());",
-                "});")),
-        expected(
-            lines(
-                "console.log(function(Map) {", //
-                "  console.log(new Map());",
-                "});")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_global_typed() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(JSCOMP_POLYFILL, "/** @constructor */ function Map() {}", "")
-                .build());
-    enableTypeCheck();
-
-    // Unused polyfill is removed.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log();")),
-        expected("console.log();"));
-
-    // Used polyfill is not removed.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log(new Map());")));
-
-    // Local names shadowing global polyfills are not themselves polyfill references.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');",
-                "console.log(function(Map) {",
-                "  console.log(new Map());",
-                "});")),
-        expected(
-            lines(
-                "console.log(function(Map) {", //
-                "  console.log(new Map());",
-                "});")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_propertyOfGlobalObject_untyped() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "/** @constructor */ function Map() {}",
-                    "/** @const */ var goog = {};")
-                .build());
-
-    // Global polyfills may be accessed as properties on the global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log(new goog.global.Map());")));
-
-    // NOTE: Without type information we don't see that x is not the global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log(new goog.structs.Map());")));
-
-    // Global polyfills may be accessed as properties on the global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');",
-                "var x = {Map: /** @constructor */ function() {}};",
-                "console.log(new x.Map());")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_propertyOfGlobalObject_typed() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "/** @constructor */ function Map() {}",
-                    "/** @type {!Global} */ var someGlobal;",
-                    "/** @const */ var notGlobal = {};",
-                    "/** @constructor */ notGlobal.Map = function() {};",
-                    "")
-                .build());
-    enableTypeCheck();
-
-    // Global polyfills may be accessed as properties on the global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');",
-                "console.log(new someGlobal.Map());")));
-
-    // We cannot tell that notGlobal.Map is not Map.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');",
-                "console.log(new notGlobal.Map());")));
-
-    // Global polyfills may be accessed as properties on the global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');",
-                "var alsoNotGlobal = {Map: /** @constructor */ function() {}};",
-                "console.log(new alsoNotGlobal.Map());")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_staticProperty_untyped() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addArray()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "/** @constructor */ function Map() {}",
-                    "/** @const */ var goog = {};")
-                .build());
-
-    // Used polyfill is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');", //
-                "console.log(Array.from());")));
-
-    // Used polyfill is retained, even if accessed as a property of global.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "console.log(goog.global.Array.from());")));
-
-    // Unused polyfill is not removed if there is another static property with the same name
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "class NotArray { static from() {} }",
-                "console.log(NotArray.from());")));
-
-    // Without type information, we can't correctly remove this polyfill.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "var x = {Array: {from: function() {}}};",
-                "console.log(x.Array.from());")));
-
-    // Without type information, we don't recognize the aliased call.
-    // https://github.com/google/closure-compiler/issues/3171
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "/** @const */ var MyArray = Array;",
-                "console.log(MyArray.from());")));
-
-    // Without type information, we don't recognize the subclass call.
-    // https://github.com/google/closure-compiler/issues/3171
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "class SubArray extends Array {}",
-                "console.log(SubArray.from());")));
-
-    // Cannot distinguish between Set.from and Array.from.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Set.from', function() {}, 'es6', 'es3');",
-                "console.log(Array.from());")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_staticProperty_typed() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addArray()
-                .addConsole()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "Array.from = function() {};",
-                    "/** @constructor */ function Set() {}",
-                    // NOTE: this is not a real API but it allows testing that we can tell it apart.
-                    "Set.from = function() {};",
-                    "")
-                .build());
-    enableTypeCheck();
-
-    // Used polyfill is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');", //
-                "console.log(Array.from([]));")));
-
-    // Used polyfill is retained, even if accessed via a global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "console.log($jscomp.global.Array.from());")));
-
-    // Used polyfill is retained, even if accessed via a global object.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "class NotArray { static from() {} }",
-                "console.log(NotArray.from());")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "class NotArray { static from() {} }", //
-                "console.log(NotArray.from());")));
-
-    // Unused polyfill is kept since compiler doesn't know `x` is not the global object.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "var x = {Array: {from: function() {}}};",
-                "console.log(x.Array.from());")));
-
-    // Used polyfill via aliased owner: retains definition.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "/** @const */ var MyArray = Array;",
-                "console.log(MyArray.from([]));")));
-
-    // Used polyfill via subclass: retains definition.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "class SubArray extends Array {}",
-                "console.log(SubArray.from([]));")));
-
-    // Cannot distinguish static polyfills on different types.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Set.from', function() {}, 'es6', 'es3');",
-                "console.log(Array.from([]));")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_prototypeProperty_untyped() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addArray()
-                .addConsole()
-                .addString()
-                .addExtra(JSCOMP_POLYFILL, "function externFunction() {}", "function alert() {}")
-                .build());
-
-    // Unused polyfill is removed.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "console.log();")),
-        expected("console.log();"));
-
-    // Used polyfill is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "''.repeat();")));
-
-    // Used polyfill (directly via String.prototype) is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "String.prototype.repeat();")));
-
-    // Used polyfill (directly String.prototype and Function.prototype.call) is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "String.prototype.repeat.call('');")));
-
-    // Unknown type is not removed.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "var x = externFunction();",
-                "x.repeat();")));
-
-    // Without type information, cannot remove the polyfill.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "String.repeat();")));
-
-    // Without type information, cannot remove the polyfill.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "var /** number */ x = 42;",
-                "x.repeat();")));
-
-    // Multiple same-name methods
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.includes', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Array.prototype.includes', function() {}, 'es6', 'es3');",
-                "[].includes(5);")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_prototypeProperty_typed() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addFunction()
-                .addString()
-                .addArray()
-                .addConsole()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "/** @this {string} */",
-                    "String.prototype.repeat = function() {}",
-                    "String.prototype.includes = function(arg) {}",
-                    "Array.prototype.includes = function(arg) {}",
-                    "function externFunction() {}")
-                .build());
-    enableTypeCheck();
-
-    // Unused polyfill is removed.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "console.log();")),
-        expected("console.log();"));
-
-    // Used polyfill is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "''.repeat();")));
-
-    // Used polyfill (via String.prototype) is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "String.prototype.repeat();")));
-
-    // Used polyfill (via String.prototype and Function.prototype.call) is retained.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "String.prototype.repeat.call('');")));
-
-    // Unknown type is not removed.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "var x = externFunction();",
-                "x.repeat();")));
-
-    // Calling a prototype property like a static also prevents removing the prototype.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.repeat', function() {}, 'es6', 'es3');",
-                "String.repeat();")),
-        warning(TypeCheck.INEXISTENT_PROPERTY));
-
-    // Cannot discern between string and array.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.includes', function() {}, 'es6', 'es3');",
-                "var x = [];",
-                "x.includes(1);")));
-
-    // Union type prevents removal.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.includes', function() {}, 'es6', 'es3');",
-                "var /** string|Array */ x = [];",
-                "x.includes(1);")));
-
-    // Multiple same-name methods prevent removal of unused polyfills.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.includes', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Array.prototype.includes', function() {}, 'es6', 'es3');",
-                "'x'.includes(5);")));
-
-    // Multiple same-name methods cannot be disambiguated.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.includes', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Array.prototype.includes', function() {}, 'es6', 'es3');",
-                "Array.prototype.includes.call('x', 1);")),
-        warning(TypeValidator.TYPE_MISMATCH_WARNING));
-
-    // Multiple same-name methods cannot be disambiguated. This is actually safer because code will
-    // continue to work in the presence of type mismatches.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('String.prototype.includes', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Array.prototype.includes', function() {}, 'es6', 'es3');",
-                "function f(/** string */ s) {",
-                // The compiler will think this is String.prototype.includes when it is in fact
-                // Array.prototype.includes.
-                " return s.includes('1');",
-                "}",
-                "f([]); // type mismatch")),
-        warning(TypeValidator.TYPE_MISMATCH_WARNING));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_globalWithPrototypePolyfill_untyped() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder().addPromise().addConsole().addExtra(JSCOMP_POLYFILL).build());
-
-    // Both the base polyfill and the extra method are removed when unused.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "console.log();")),
-        expected("console.log();"));
-
-    // The extra method polyfill is removed if not used, even when the base is retained.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "console.log(Promise.resolve());")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "console.log(Promise.resolve());")));
-
-    // Can't remove finally without type information
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "const p = {finally() {}};",
-                "p.finally();")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "const p = {finally() {}};",
-                "p.finally();")));
-
-    // Retain both the base and the extra method when both are used.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "console.log(Promise.resolve().finally(() => {}));")));
-
-    // The base polyfill is removed and the extra method retained if the constructor never shows up
-    // anywhere in the source code.  NOTE: this is probably the wrong thing to do.  This situation
-    // should only be possible if async function transpilation happens *after* RemoveUnusedCode
-    // (since we have an async function).  The fact that we inserted the Promise polyfill in the
-    // first case indicates the output language is < ES6.  When that later transpilation occurs, we
-    // will end up adding uses of the Promise constructor.  We need to keep this in mind when moving
-    // transpilation after optimizations.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "async function f() {}",
-                "f().finally(() => {});")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "async function f() {}",
-                "f().finally(() => {});")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_globalWithPrototypePolyfill_typed() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder().addPromise().addConsole().addExtra(JSCOMP_POLYFILL).build());
-    enableTypeCheck();
-
-    // Both the base polyfill and the extra method are removed when unused.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "console.log();")),
-        expected("console.log();"));
-
-    // The extra method polyfill is removed if not used, even when the base is retained.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "console.log(Promise.resolve());")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "console.log(Promise.resolve());")));
-
-    // Calls a different finally preventing removal of the polyfill
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "const p = {finally() {}};",
-                "p.finally();")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "const p = {finally() {}};",
-                "p.finally();")));
-
-    // Retain both the base and the extra method when both are used.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "console.log(Promise.resolve().finally(() => {}));")));
-
-    // The base polyfill is removed and the extra method retained if the constructor never shows up
-    // anywhere in the source code.  NOTE: this is probably the wrong thing to do.  This situation
-    // should only be possible if async function transpilation happens *after* RemoveUnusedCode
-    // (since we have an async function).  The fact that we inserted the Promise polyfill in the
-    // first case indicates the output language is < ES6.  When that later transpilation occurs, we
-    // will end up adding uses of the Promise constructor.  We need to keep this in mind when moving
-    // transpilation after optimizations.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "async function f() {}",
-                "f().finally(() => {});")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise.prototype.finally', function() {}, 'es8', 'es3');",
-                "async function f() {}",
-                "f().finally(() => {});")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_chained() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "/** @constructor */ function Map() {}",
-                    "/** @constructor */ function Set() {}",
-                    "/** @constructor */ function WeakMap() {}")
-                .build());
-
-    // Removes polyfills that are only referenced in other (removed) polyfills' definitions.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('WeakMap', function() { console.log(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Map', function() { new WeakMap(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Set', function() { new Map(); }, 'es6', 'es3');",
-                "function unused() { new Set(); }",
-                "console.log();")),
-        expected("console.log();"));
-
-    // Chains can be partially removed if just an outer-most symbol is unreferenced.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('WeakMap', function() { console.log(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Map', function() { new WeakMap(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Set', function() { new Map(); }, 'es6', 'es3');",
-                "console.log(new Map());")),
-        expected(
-            lines(
-                "$jscomp.polyfill('WeakMap', function() { console.log(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Map', function() { new WeakMap(); }, 'es6', 'es3');",
-                "console.log(new Map());")));
-
-    // Only requires a single reference to the outermost symbol to retain the whole chain.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('WeakMap', function() { console.log(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Map', function() { new WeakMap(); }, 'es6', 'es3');",
-                "$jscomp.polyfill('Set', function() { new Map(); }, 'es6', 'es3');",
-                "console.log(new Set())")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_continued() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(JSCOMP_POLYFILL, "/** @constructor */ function Map() {}")
-                .build());
-
-    // Ensure that continuations occur so that retained polyfill definitions are still optimized.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() { var x; }, 'es6', 'es3');",
-                "console.log(new Map());")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log(new Map());")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_collapsedPolyfillFunction() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra("function $jscomp$polyfill() {}", "/** @constructor */ function Map() {}")
-                .build());
-
-    // The pass should also work after CollapseProperties.
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp$polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log();")),
-        expected("console.log();"));
-
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp$polyfill('Map', function() {}, 'es6', 'es3');", //
-                "console.log(new Map());")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_guardedGlobals() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(
-                    JSCOMP_POLYFILL,
-                    "/** @constructor */ function Map() {}",
-                    "/** @constructor */ function Promise() {}")
-                .build());
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "if (typeof Map !== 'undefined') {",
-                "  console.log(Map);",
-                "}")),
-        expected(
-            lines(
-                "if (typeof Map !== 'undefined') {", //
-                "  console.log(Map);",
-                "}")));
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "if (Map) {",
-                "  console.log(Map);",
-                "}")),
-        expected(
-            lines(
-                "if (Map) {", //
-                "  console.log(Map);",
-                "}")));
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "if (typeof Map !== 'undefined') {",
-                "  console.log(Map);",
-                "  console.log(Promise);",
-                "}")),
-        expected(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');", //
-                "if (typeof Map !== 'undefined') {", //
-                "  console.log(Map);",
-                "  console.log(Promise);",
-                "}")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_guardedStatics() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addArray()
-                .addPromise()
-                .addExtra(JSCOMP_POLYFILL)
-                .build());
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');", //
-                "if (typeof Array.from !== 'undefined') {",
-                "  console.log(Array.from);",
-                "}")),
-        expected(
-            lines(
-                "if (typeof Array.from !== 'undefined') {", //
-                "console.log(Array.from);",
-                "}")));
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Promise', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Promise.allSettled', function() {}, 'es8', 'es3');",
-                "var a;",
-                "if (Promise && Promise.allSettled) {",
-                "  Promise.allSettled(a);",
-                "}")),
-        expected(
-            lines(
-                "var a;",
-                "if (Promise && Promise.allSettled) {",
-                "  Promise.allSettled(a);",
-                "}")));
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Symbol', function() {}, 'es6', 'es3');",
-                "$jscomp.polyfill('Symbol.iterator', function() {}, 'es6', 'es3');",
-                "if (Symbol && Symbol.iterator) {",
-                "  console.log(Symbol.iterator);",
-                "}")),
-        expected(
-            lines("if (Symbol && Symbol.iterator) {", "  console.log(Symbol.iterator);", "}")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_guardedMethods() {
-    Externs externs =
-        externs(new TestExternsBuilder().addConsole().addArray().addExtra(JSCOMP_POLYFILL).build());
-
-    test(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Array.prototype.find', function() {}, 'es6', 'es3');", //
-                "const arr = [];",
-                "if (typeof arr.find !== 'undefined') {",
-                "  console.log(arr.find(0));",
-                "}")),
-        expected(
-            lines(
-                "const arr = [];",
-                "if (typeof arr.find !== 'undefined') {",
-                "  console.log(arr.find(0));",
-                "}")));
-  }
-
-  @Test
-  public void testRemoveUnusedPolyfills_unguardedAndGuarded() {
-    Externs externs =
-        externs(
-            new TestExternsBuilder()
-                .addConsole()
-                .addExtra(JSCOMP_POLYFILL, "/** @constructor */ function Map() {}")
-                .build());
-
-    // Map is not removed because it has an unguarded usage.
-    testSame(
-        externs,
-        srcs(
-            lines(
-                "$jscomp.polyfill('Map', function() {}, 'es6', 'es3');", //
-                "if (typeof Map == 'undefined') {",
-                "  console.log(Map);",
-                "}",
-                "console.log(Map);")));
-  }
-
-  @Test
-  public void testNoCatchBinding() {
-    testSame("function doNothing() {} try { doNothing(); } catch { doNothing(); }");
-    testSame("function doNothing() {} try { throw 0; } catch { doNothing(); }");
-    testSame("function doNothing() {} try { doNothing(); } catch { console.log('stuff'); }");
-  }
-
-  @Test
-  public void testDoNotRemoveSetterAssignmentObject() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(x) {}",
-            "};",
-            "a.property = 1;"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetterAssignmentClass() {
-    testSame(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "const a = new Class();",
-            "a.property = 1;"));
-
-    testSame(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "new Class().property = 1;"));
-
-    test(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "function foo() {}",
-            "foo().property = 1;"),
-        lines(
-            "function foo() {}", //
-            "foo().property = 1;"));
-
-    test(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "var obj;",
-            "obj.property = 1;"),
-        lines(
-            "var obj;", //
-            "obj.property = 1;"));
-  }
-
-  @Test
-  public void testDoNotRemoveStaticSetterAssignment() {
-    testSame(
-        lines(
-            "class Class {", //
-            "  static set property(x) {}",
-            "}",
-            "Class.property = 1;"));
-
-    test(
-        lines(
-            "class Class {", //
-            "  static set property(x) {}",
-            "}",
-            "function foo() {}",
-            "foo().property = 1;"),
-        lines(
-            "function foo() {}", //
-            "foo().property = 1;"));
-
-    test(
-        lines(
-            "class Class {", //
-            "  static set property(x) {}",
-            "}",
-            "var obj;",
-            "obj.property = 1;"),
-        lines(
-            "var obj;", //
-            "obj.property = 1;"));
-  }
-
-  @Test
-  public void testMethodCallingSetterHasSideEffects() {
-    testSame(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "function foo() { new Class().property = 1; }",
-            "foo();"));
-
-    testSame(
-        lines(
-            "class Class {", //
-            "  static set property(x) {}",
-            "}",
-            "function foo() { Class.property = 1; }",
-            "foo();"));
-
-    testSame(
-        lines(
-            "class Class {", //
-            "  setProperty(v) { this.property = v; }",
-            "  set property(x) {}",
-            "}",
-            "new Class().setProperty(0);"));
-
-    testSame(
-        lines(
-            "class Class {", //
-            "  static setProperty(v) { this.property = v; }",
-            "  static set property(x) {}",
-            "}",
-            "Class.setProperty(0);"));
-
-    testSame(
-        lines(
-            "class Class {", //
-            "  setProperty(v) { Class.property = v; }",
-            "  static set property(x) {}",
-            "}",
-            "Class.setProperty(0);"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetter_fromObjectLiteral_inCompoundAssignment_onName() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(x) {}",
-            "};",
-            "a.property += 1;"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetter_fromObjectLiteral_inCompoundAssignment_onThis() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(x) {},",
-            "",
-            "  method() {",
-            "    this.property += 1;",
-            " },",
-            "};",
-            "a.method();"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetterCompoundAssignmentClass() {
-    testSame(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "const a = new Class();",
-            "a.property += 1;"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetter_fromObjectLiteral_inUnaryOp_onName() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(x) {}",
-            "};",
-            "a.property++;"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetter_fromObjectLiteral_inUnaryOp_onThis() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(x) {},",
-            "",
-            "  method() {",
-            "    this.property++;",
-            "  },",
-            "};",
-            "a.method();"));
-  }
-
-  @Test
-  public void testDoNotRemoveSetterUnaryOperatorClass() {
-    testSame(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "const a = new Class();",
-            "a.property++;"));
-  }
-
-  @Test
-  public void testDoNotRemoveAssignmentIfOtherPropertyIsSetterObject() {
-    test(
-        lines(
-            "var a = {", //
-            "  set property(x) {}",
-            "};",
-            "var b = {",
-            "  property: 0",
-            "};",
-            "b.property = 1;"),
-        lines(
-            "var b = {", //
-            "  property: 0",
-            "};",
-            "b.property = 1;"));
-
-    // Test that this gets cleaned up on a second pass...
-    test(
-        lines(
-            "var b = {", //
-            "  property: 0",
-            "};",
-            "b.property = 1;"),
-        "");
-  }
-
-  @Test
-  public void testDoNotRemoveAssignmentIfOtherPropertyIsSetterClass() {
-    test(
-        lines(
-            "class Class {", //
-            "  set property(x) {}",
-            "}",
-            "var b = {",
-            "  property: 0",
-            "};",
-            "b.property = 1;"),
-        lines(
-            "var b = {", //
-            "  property: 0",
-            "};",
-            "b.property = 1;"));
-
-    // Test that this gets cleaned up on a second pass...
-    test(
-        lines(
-            "var b = {", //
-            "  property: 0",
-            "};",
-            "b.property = 1;"),
-        "");
-  }
-
-  @Test
-  public void testRemovePropertyUnrelatedFromSetterObject() {
-    test(
-        lines(
-            "var a = {", //
-            "  set property(x) {},",
-            "  aUnrelated: 0",
-            "};",
-            "var b = {",
-            "  unrelated: 0",
-            "};",
-            "a.property = 1;",
-            "a.aUnrelated = 1;",
-            "b.unrelated = 1;"),
-        lines(
-            "var a = {", //
-            "  set property(x) {},",
-            "  aUnrelated: 0",
-            "};",
-            "a.property = 1;",
-            "a.aUnrelated = 1;"));
-  }
-
-  @Test
-  public void testFunctionCallReferencesGetterIsNotRemoved() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  get property() {}",
-            "};",
-            "function foo() { a.property; }",
-            "foo();"));
-  }
-
-  @Test
-  public void testFunctionCallReferencesSetterIsNotRemoved() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(v) {}",
-            "};",
-            "function foo() { a.property = 0; }",
-            "foo();"));
-  }
-
-  @Test
-  public void testRemoveUnusedGettersAndSetters() {
-    testSame(
-        lines(
-            "class C {", //
-            "  get usedProperty() {}",
-            "  set usedProperty(v) {}",
-            "  get unUsedProperty() {}",
-            "  set unUsedProperty(v) {}",
-            "};",
-            "function foo() {",
-            "  const c = new C();",
-            "  c.usedProperty = 0;",
-            "  return c.usedProperty;",
-            "}",
-            "foo();"));
-  }
-
-  @Test
-  public void testRemovalFromRHSOfComma() {
-    // This is the repro for github issue 3612
-    test(
-        lines(
-            "function a() {",
-            "    var a = {}, b = null;",
-            "    a.a = 1,",
-            "    b.a = 2,", // Note the comma here.
-            "    Object.defineProperties(a, b);",
-            "}; ",
-            "alert(a);"),
-        lines("function a() {", "}; ", "alert(a);"));
-  }
 }
+

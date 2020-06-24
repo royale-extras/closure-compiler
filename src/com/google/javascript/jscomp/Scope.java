@@ -27,6 +27,7 @@ import com.google.javascript.rhino.Node;
  * A Scope contains information about variables defined in that scope.
  *
  * @see NodeTraversal
+ *
  */
 public abstract class Scope extends AbstractScope<Scope, Var> {
 

@@ -21,6 +21,7 @@ import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 /**
  * Interface for provide a way of mapping (line, column) positions back to
  * positions in the original (uncompiled) source code.
+ *
  */
 public interface SourceMapping {
   /**

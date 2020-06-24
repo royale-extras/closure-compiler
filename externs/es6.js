@@ -21,21 +21,13 @@
  * @externs
  */
 
-/**
- * Some es6 definitions:
- * Symbol, IIterableResult, Iterable, IteratorIterable, Iterator,
- * IteratorIterable moved to es3 file, because some base type requires them, and
- * we want to keep them together. If you add new externs related to those types
- * define them together in the es3 file.
- */
+
 
 /**
- * TODO(b/142881197): UNUSED_RETURN_T and UNUSED_NEXT_T are not yet used for
- * anything. https://github.com/google/closure-compiler/issues/3489
  * @interface
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator
  * @extends {IteratorIterable<VALUE>}
- * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T
+ * @template VALUE
  */
 function Generator() {}
 
@@ -145,12 +137,13 @@ Math.sign = function(value) {};
 Math.cbrt = function(value) {};
 
 /**
+ * @param {number} value1
  * @param {...number} var_args
  * @return {number}
  * @nosideeffects
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/hypot
  */
-Math.hypot = function(var_args) {};
+Math.hypot = function(value1, var_args) {};
 
 /**
  * @param {number} value1
@@ -169,14 +162,6 @@ Math.imul = function(value1, value2) {};
  */
 Math.clz32 = function(value) {};
 
-/**
- * @param {number} value
- * @return {number}
- * @nosideeffects
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/fround
- */
-Math.fround = function(value) {};
-
 
 /**
  * @param {*} a
@@ -185,7 +170,7 @@ Math.fround = function(value) {};
  * @nosideeffects
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is
  */
-Object.is = function(a, b) {};
+Object.is;
 
 
 /**
@@ -317,33 +302,6 @@ String.prototype.endsWith = function(searchString, opt_position) {};
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/includes
  */
 String.prototype.includes = function(searchString, opt_position) {};
-
-/**
- * @this {String|string}
- * @return {string}
- * @nosideeffects
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/trimStart
- */
-String.prototype.trimStart = function() {};
-
-
-/**
- * @this {String|string}
- * @return {string}
- * @nosideeffects
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/trimEnd
- */
-String.prototype.trimEnd = function() {};
-
-
-/**
- * @this {String|string}
- * @param {!RegExp|string} regexp
- * @return {!IteratorIterable<!RegExpResult>}
- * @nosideeffects
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/matchAll
- */
-String.prototype.matchAll = function(regexp) {};
 
 
 /**
@@ -564,8 +522,7 @@ TypedArray.prototype.length;
 TypedArray.prototype.map = function(callback, opt_thisArg) {};
 
 /**
- * @param {function((number|INIT|RET), number, number, !TypedArray) : RET}
- *     callback
+ * @param {function((number|INIT|RET), number, number, !TypedArray) : RET} callback
  * @param {INIT=} opt_initialValue
  * @return {RET}
  * @template INIT,RET
@@ -575,8 +532,7 @@ TypedArray.prototype.map = function(callback, opt_thisArg) {};
 TypedArray.prototype.reduce = function(callback, opt_initialValue) {};
 
 /**
- * @param {function((number|INIT|RET), number, number, !TypedArray) : RET}
- *     callback
+ * @param {function((number|INIT|RET), number, number, !TypedArray) : RET} callback
  * @param {INIT=} opt_initialValue
  * @return {RET}
  * @template INIT,RET
@@ -1143,7 +1099,6 @@ var Thenable;
  * {@see goog.Thenable} inherits from this making all promises
  * interoperate.
  * @interface
- * @struct
  * @template TYPE
  */
 function IThenable() {}
@@ -1155,8 +1110,8 @@ function IThenable() {}
  * @return {RESULT}
  * @template VALUE
  *
- * When a `Thenable` is fulfilled or rejected with another `Thenable`, the
- * payload of the second is used as the payload of the first.
+ * When a Promise (or thenable) is returned from the fulfilled callback,
+ * the result is the payload of that promise, not the promise itself.
  *
  * @template RESULT := type('IThenable',
  *     cond(isUnknown(VALUE), unknown(),
@@ -1222,50 +1177,6 @@ Promise.reject = function(opt_error) {};
  */
 Promise.all = function(iterable) {};
 
-/**
- * Record type representing a single element of the array value one gets from
- * Promise.allSettled.
- *
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled
- * @record
- * @template VALUE
- */
-Promise.AllSettledResultElement = function() {};
-
-/**
- * 'fulfilled' or 'rejected' to indicate the final state of the corresponding
- * Promise.
- * @type {string}
- */
-Promise.AllSettledResultElement.prototype.status;
-
-/**
- * Exists only if the status field is 'fulfilled'
- * @type {VALUE|undefined}
- */
-Promise.AllSettledResultElement.prototype.value;
-
-/**
- * Exists only if the status field is 'rejected'
- * @type {*|undefined}
- */
-Promise.AllSettledResultElement.prototype.reason;
-
-/**
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled
- * @param {!Iterable<VALUE>} iterable
- * @return {!Promise<!Array<!Promise.AllSettledResultElement<RESULT>>>}
- * @template VALUE
- * @template RESULT := mapunion(VALUE, (V) =>
- *     cond(isUnknown(V),
- *         unknown(),
- *         cond(isTemplatized(V) && sub(rawTypeOf(V), 'IThenable'),
- *             templateTypeOf(V, 0),
- *             cond(sub(V, 'Thenable'), unknown(), V))))
- * =:
- */
-Promise.allSettled = function(iterable) {};
-
 
 /**
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise
@@ -1289,8 +1200,8 @@ Promise.race = function(iterable) {};
  * @return {RESULT}
  * @template VALUE
  *
- * When a `Thenable` is fulfilled or rejected with another `Thenable`, the
- * payload of the second is used as the payload of the first.
+ * When a Promise (or thenable) is returned from the fulfilled callback,
+ * the result is the payload of that promise, not the promise itself.
  *
  * @template RESULT := type('Promise',
  *     cond(isUnknown(VALUE), unknown(),
@@ -1307,27 +1218,9 @@ Promise.prototype.then = function(opt_onFulfilled, opt_onRejected) {};
 
 
 /**
- * @param {function(*):VALUE} onRejected
- * @return {!Promise<TYPE|RESULT>} A Promise of the original type or a possibly
- *     a different type depending on whether the parent promise was rejected.
- *
- * @template VALUE
- *
- * When a `Thenable` is rejected with another `Thenable`, the payload of the
- * second is used as the payload of the first.
- *
- * @template RESULT := cond(
- *     isUnknown(VALUE),
- *     unknown(),
- *     mapunion(VALUE, (V) =>
- *         cond(
- *             isTemplatized(V) && sub(rawTypeOf(V), 'IThenable'),
- *             templateTypeOf(V, 0),
- *             cond(
- *                 sub(V, 'Thenable'),
- *                 unknown(),
- *                 V))))
- * =:
+ * @param {function(*): RESULT} onRejected
+ * @return {!Promise<RESULT>}
+ * @template RESULT
  */
 Promise.prototype.catch = function(onRejected) {};
 
@@ -1378,7 +1271,7 @@ Array.prototype.entries;
 
 
 /**
- * @param {function(this:S, T, number, !Array<T>): boolean} predicateFn
+ * @param {!function(this:S, T, number, !Array<T>): boolean} predicateFn
  * @param {S=} opt_this
  * @return {T|undefined}
  * @this {IArrayLike<T>|string}
@@ -1389,7 +1282,7 @@ Array.prototype.find = function(predicateFn, opt_this) {};
 
 
 /**
- * @param {function(this:S, T, number, !Array<T>): boolean} predicateFn
+ * @param {!function(this:S, T, number, !Array<T>): boolean} predicateFn
  * @param {S=} opt_this
  * @return {number}
  * @this {IArrayLike<T>|string}
@@ -1416,7 +1309,6 @@ Array.prototype.fill = function(value, opt_begin, opt_end) {};
  * @param {number} start
  * @param {number=} opt_end
  * @see http://www.ecma-international.org/ecma-262/6.0/#sec-array.prototype.copywithin
- * @this {!IArrayLike<T>|string}
  * @template T
  * @return {!Array<T>}
  */
@@ -1435,41 +1327,6 @@ Array.prototype.copyWithin = function(target, start, opt_end) {};
  */
 Array.prototype.includes = function(searchElement, opt_fromIndex) {};
 
-/**
- * Generates an array by passing every element of this array to a callback that
- * returns an array of zero or more elements to be added to the result.
- *
- * NOTE: The specified behavior of the method is that the callback can return
- * either an Array, which will be flattened into the result, or a non-array,
- * which will simply be included.
- *
- * However, while defining that in the type information here is possible it's
- * very hard to understand both for humans and automated tools other than
- * closure-compiler that process these files. Also, we think it's best to
- * encourage writing callbacks that just always return an Array for the sake
- * of readability.
- *
- * The polyfill for this method provided by closure-compiler does behave as
- * defined in the specification, though.
- *
- * @param {function(this: THIS, T, number, !IArrayLike<T>): !Array<S>}
- *     callback
- * @param {THIS=} thisArg
- * @return {!Array<S>}
- * @this {!IArrayLike<T>}
- * @template T, THIS, S
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/flatMap
- */
-Array.prototype.flatMap = function(callback, thisArg) {};
-
-/**
- * @param {number=} depth
- * @return {!Array<S>}
- * @this {!IArrayLike<T>}
- * @template T, S
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/flat
- */
-Array.prototype.flat = function(depth) {};
 
 /**
  * @param {!Object} obj
@@ -1593,13 +1450,6 @@ Object.values = function(obj) {};
 Object.entries = function(obj) {};
 
 /**
- * @param {!Iterable<*>} iter
- * @return {!Object}
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/fromEntries
- */
-Object.fromEntries = function(iter) {};
-
-/**
  * NOTE: this is an ES2017 (ES8) extern.
  * @param {!Object} obj
  * @return {!Object<!ObjectPropertyDescriptor>} descriptors
@@ -1635,8 +1485,7 @@ Reflect.apply = function(targetFn, thisArg, argList) {};
  * @template TARGET
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/construct
  */
-Reflect.construct = function(
-    targetConstructorFn, argList, opt_newTargetConstructorFn) {};
+Reflect.construct = function(targetConstructorFn, argList, opt_newTargetConstructorFn) {};
 
 /**
  * @param {!Object} target
@@ -1745,7 +1594,7 @@ var Atomics = {};
  * @param {number} value
  * @return {number}
  */
-Atomics.add = function(typedArray, index, value) {};
+Atomics.add = function(typedArray, index, value) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1753,7 +1602,7 @@ Atomics.add = function(typedArray, index, value) {};
  * @param {number} value
  * @return {number}
  */
-Atomics.and = function(typedArray, index, value) {};
+Atomics.and = function(typedArray, index, value) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1762,8 +1611,8 @@ Atomics.and = function(typedArray, index, value) {};
  * @param {number} replacementValue
  * @return {number}
  */
-Atomics.compareExchange = function(
-    typedArray, index, expectedValue, replacementValue) {};
+Atomics.compareExchange = function(typedArray, index, expectedValue,
+    replacementValue) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1771,28 +1620,20 @@ Atomics.compareExchange = function(
  * @param {number} value
  * @return {number}
  */
-Atomics.exchange = function(typedArray, index, value) {};
+Atomics.exchange = function(typedArray, index, value) {}
 
 /**
  * @param {number} size
  * @return {boolean}
  */
-Atomics.isLockFree = function(size) {};
+Atomics.isLockFree = function(size) {}
 
 /**
  * @param {!TypedArray} typedArray
  * @param {number} index
  * @return {number}
  */
-Atomics.load = function(typedArray, index) {};
-
-/**
- * @param {!Int32Array} typedArray
- * @param {number} index
- * @param {number=} count
- * @return {number}
- */
-Atomics.notify = function(typedArray, index, count) {};
+Atomics.load = function(typedArray, index) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1800,7 +1641,7 @@ Atomics.notify = function(typedArray, index, count) {};
  * @param {number} value
  * @return {number}
  */
-Atomics.or = function(typedArray, index, value) {};
+Atomics.or = function(typedArray, index, value) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1808,7 +1649,7 @@ Atomics.or = function(typedArray, index, value) {};
  * @param {number} value
  * @return {number}
  */
-Atomics.store = function(typedArray, index, value) {};
+Atomics.store = function(typedArray, index, value) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1816,7 +1657,7 @@ Atomics.store = function(typedArray, index, value) {};
  * @param {number} value
  * @return {number}
  */
-Atomics.sub = function(typedArray, index, value) {};
+Atomics.sub = function(typedArray, index, value) {}
 
 /**
  * @param {!Int32Array} typedArray
@@ -1825,15 +1666,15 @@ Atomics.sub = function(typedArray, index, value) {};
  * @param {number=} timeout
  * @return {String}
  */
-Atomics.wait = function(typedArray, index, value, timeout) {};
+Atomics.wait = function(typedArray, index, value, timeout) {}
 
 /**
  * @param {!Int32Array} typedArray
  * @param {number} index
- * @param {number=} count
+ * @param {number} count
  * @return {number}
  */
-Atomics.wake = function(typedArray, index, count) {};
+Atomics.wake = function(typedArray, index, count) {}
 
 /**
  * @param {!TypedArray} typedArray
@@ -1841,15 +1682,20 @@ Atomics.wake = function(typedArray, index, count) {};
  * @param {number} value
  * @return {number}
  */
-Atomics.xor = function(typedArray, index, value) {};
+Atomics.xor = function(typedArray, index, value) {}
 
 
 /**
- * TODO(b/142881197): UNUSED_RETURN_T and UNUSED_NEXT_T are not yet used for
- * anything.
- * https://github.com/google/closure-compiler/issues/3489
+ * @see https://tc39.github.io/proposal-async-iteration/
+ * @const {symbol}
+ */
+Symbol.asyncIterator;
+
+
+/**
  * @interface
- * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T
+ * @extends {AsyncIterable<VALUE>}
+ * @template VALUE
  * @see https://tc39.github.io/proposal-async-iteration/
  */
 function AsyncIterator() {}
@@ -1869,27 +1715,15 @@ function AsyncIterable() {}
 
 
 /**
- * @return {!AsyncIterator<VALUE, ?, *>}
+ * @return {!AsyncIterator<VALUE>}
  */
 AsyncIterable.prototype[Symbol.asyncIterator] = function() {};
 
-
 /**
  * @interface
- * @extends {AsyncIterator<VALUE, ?, *>}
- * @extends {AsyncIterable<VALUE>}
+ * @see https://tc39.github.io/proposal-async-iteration/
+ * @extends {AsyncIterator<VALUE>}
  * @template VALUE
- * @see https://tc39.github.io/proposal-async-iteration/
- */
-function AsyncIteratorIterable() {}
-
-/**
- * TODO(b/142881197): UNUSED_RETURN_T and UNUSED_NEXT_T are not yet used for
- * anything. https://github.com/google/closure-compiler/issues/3489
- * @interface
- * @see https://tc39.github.io/proposal-async-iteration/
- * @extends {AsyncIteratorIterable<VALUE>}
- * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T
  */
 function AsyncGenerator() {}
 
@@ -1911,8 +1745,3 @@ AsyncGenerator.prototype.return = function(value) {};
  * @return {!Promise<!IIterableResult<VALUE>>}
  */
 AsyncGenerator.prototype.throw = function(exception) {};
-
-/**
- * @type {!Global}
- */
-var globalThis;

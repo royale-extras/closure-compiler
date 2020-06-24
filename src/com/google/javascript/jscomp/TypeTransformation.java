@@ -19,7 +19,6 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.MoreObjects.firstNonNull;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Ascii;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -34,12 +33,15 @@ import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.jstype.ObjectType;
 import com.google.javascript.rhino.jstype.StaticTypedScope;
 import com.google.javascript.rhino.jstype.StaticTypedSlot;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * A class for processing type transformation expressions
+ *
+ * @author lpino@google.com (Luis Fernando Pino Duque)
  */
 class TypeTransformation {
   private static final String VIRTUAL_FILE = "<TypeTransformation.java>";
@@ -128,7 +130,7 @@ class TypeTransformation {
   }
 
   private Keywords nameToKeyword(String s) {
-    return TypeTransformationParser.Keywords.valueOf(Ascii.toUpperCase(s));
+    return TypeTransformationParser.Keywords.valueOf(s.toUpperCase());
   }
 
   private JSType getType(String typeName) {
@@ -171,7 +173,11 @@ class TypeTransformation {
   }
 
   private JSType createUnionType(JSType[] variants) {
-    return registry.createUnionType(variants);
+    return registry.createUnionType(Arrays.asList(variants));
+  }
+
+  private JSType createTemplatizedType(ObjectType baseType, JSType[] params) {
+    return registry.instantiateGenericType(baseType, ImmutableList.copyOf(params));
   }
 
   private JSType createRecordType(ImmutableMap<String, JSType> props) {
@@ -342,7 +348,7 @@ class TypeTransformation {
   private JSType evalTemplatizedType(Node ttlAst, NameResolver nameResolver) {
     ImmutableList<Node> params = getCallParams(ttlAst);
     JSType firstParam = evalInternal(params.get(0), nameResolver);
-    if (!firstParam.isRawTypeOfTemplatizedType()) {
+    if (firstParam.isFullyInstantiated()) {
       reportWarning(ttlAst, BASETYPE_INVALID, firstParam.toString());
       return getUnknownType();
     }
@@ -355,7 +361,7 @@ class TypeTransformation {
       templatizedTypes[i] = evalInternal(params.get(i + 1), nameResolver);
     }
     ObjectType baseType = firstParam.toMaybeObjectType();
-    return registry.createTemplatizedType(baseType, templatizedTypes);
+    return createTemplatizedType(baseType, templatizedTypes);
   }
 
   private JSType evalTypeVar(Node ttlAst, NameResolver nameResolver) {
@@ -420,17 +426,18 @@ class TypeTransformation {
     JSType type = params[0];
     switch (keyword) {
       case EQ:
-        return type.equals(params[1]);
+        return type.isEquivalentTo(params[1]);
       case SUB:
         return type.isSubtypeOf(params[1]);
       case ISCTOR:
         return type.isConstructor();
       case ISTEMPLATIZED:
-        return type.isTemplatizedType();
+        return type.isObjectType() && type.toMaybeObjectType().isGenericObjectType()
+            && type.isPartiallyInstantiated();
       case ISRECORD:
         return type.isRecordType();
       case ISUNKNOWN:
-        return type.isUnknownType();
+        return type.isSomeUnknownType();
       default:
         throw new IllegalStateException(
             "Invalid type predicate in the type transformation");
@@ -557,7 +564,7 @@ class TypeTransformation {
   private JSType evalRawTypeOf(Node ttlAst, NameResolver nameResolver) {
     ImmutableList<Node> params = getCallParams(ttlAst);
     JSType type = evalInternal(params.get(0), nameResolver);
-    if (!type.isTemplatizedType()) {
+    if (!type.isGenericObjectType()) {
       reportWarning(ttlAst, TEMPTYPE_INVALID, "rawTypeOf", type.toString());
       return getUnknownType();
     }
@@ -567,7 +574,7 @@ class TypeTransformation {
   private JSType evalTemplateTypeOf(Node ttlAst, NameResolver nameResolver) {
     ImmutableList<Node> params = getCallParams(ttlAst);
     JSType type = evalInternal(params.get(0), nameResolver);
-    if (!type.isTemplatizedType()) {
+    if (!type.isGenericObjectType()) {
       reportWarning(ttlAst, TEMPTYPE_INVALID, "templateTypeOf", type.toString());
       return getUnknownType();
     }
@@ -627,7 +634,7 @@ class TypeTransformation {
         return getUnknownType();
       }
       JSType recType = this.registry.buildRecordTypeFromObject(objType);
-      if (!recType.equals(getObjectType())) {
+      if (!recType.isEquivalentTo(getObjectType())) {
         recTypesBuilder.add(recType.toMaybeObjectType());
       }
     }
@@ -684,7 +691,7 @@ class TypeTransformation {
     JSType type = evalInternal(recordNode, nameResolver);
 
     // If it is an empty record type (Object) then return
-    if (type.equals(getObjectType())) {
+    if (type.isEquivalentTo(getObjectType())) {
       return getObjectType();
     }
 
@@ -731,7 +738,7 @@ class TypeTransformation {
 
       // Skip the property when the body evaluates to NO_TYPE
       // or the empty record (Object)
-      if (body.isEmptyType() || body.equals(getObjectType())) {
+      if (body.isEmptyType() || body.isEquivalentTo(getObjectType())) {
         continue;
       }
 

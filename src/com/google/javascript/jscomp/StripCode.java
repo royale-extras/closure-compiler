@@ -21,7 +21,6 @@ import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 import javax.annotation.Nullable;
 
@@ -38,6 +37,7 @@ import javax.annotation.Nullable;
  *   - Remove all assignments to 1) field names that are strip names and
  *     2) qualified names that begin with strip types.
  *   - Remove all statements containing calls to static methods of strip types.
+ *
  */
 class StripCode implements CompilerPass {
 
@@ -95,8 +95,6 @@ class StripCode implements CompilerPass {
     }
 
     NodeTraversal.traverse(compiler, root, new Strip());
-    // This pass may remove definitions of getter or setter properties
-    GatherGetterAndSetterProperties.update(compiler, externs, root);
   }
 
   // -------------------------------------------------------------------------
@@ -288,7 +286,8 @@ class StripCode implements CompilerPass {
           ancestorParent.replaceChild(ancestor, ancestor.getLastChild().detach());
           break;
         }
-        if (!NodeUtil.isNormalGet(ancestor) && !ancestor.isCall()) {
+        if (!NodeUtil.isGet(ancestor)
+            && !ancestor.isCall()) {
           replaceWithNull(ancestorChild, ancestor);
           break;
         }
@@ -630,15 +629,15 @@ class StripCode implements CompilerPass {
         return false;
       }
 
-      String lcName = name.toLowerCase(Locale.ROOT);
+      String lcName = name.toLowerCase();
       for (String stripName : stripNamePrefixes) {
-        if (lcName.startsWith(stripName.toLowerCase(Locale.ROOT))) {
+        if (lcName.startsWith(stripName.toLowerCase())) {
           return true;
         }
       }
 
       for (String stripName : stripNameSuffixes) {
-        if (lcName.endsWith(stripName.toLowerCase(Locale.ROOT))) {
+        if (lcName.endsWith(stripName.toLowerCase())) {
           return true;
         }
       }

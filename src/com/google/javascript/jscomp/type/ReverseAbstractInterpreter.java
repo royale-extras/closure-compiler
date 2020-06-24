@@ -17,7 +17,6 @@
 package com.google.javascript.jscomp.type;
 
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Outcome;
 
 /**
  * This interface defines what reversed abstract interpreters provide.
@@ -27,15 +26,18 @@ import com.google.javascript.rhino.Outcome;
  * abstract interpretation process by knowing the outcome of some computation
  * and calculating a preciser view of the world than the view without knowing
  * the outcome of the computation.</p>
+ *
  */
 public interface ReverseAbstractInterpreter {
   /**
-   * Calculates a precise version of the scope knowing the outcome of the condition.
+   * Calculates a precise version of the scope knowing the outcome of the
+   * condition.
    *
-   * @param condition the condition's expression
-   * @param blindScope the scope without knowledge about the outcome of the condition
-   * @param outcome the outcome of the condition
+   *  @param condition the condition's expression
+   *  @param blindScope the scope without knowledge about the outcome of the
+   *  condition
+   *  @param outcome the outcome of the condition
    */
-  FlowScope getPreciserScopeKnowingConditionOutcome(
-      Node condition, FlowScope blindScope, Outcome outcome);
+  FlowScope getPreciserScopeKnowingConditionOutcome(Node condition,
+      FlowScope blindScope, boolean outcome);
 }

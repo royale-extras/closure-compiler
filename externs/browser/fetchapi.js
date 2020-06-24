@@ -38,7 +38,7 @@ var ReferrerPolicy;
 
 /**
  * @typedef {!Headers|!Array<!Array<string>>|!Object<string,string>}
- * @see https://fetch.spec.whatwg.org/#typedefdef-headersinit
+ * @see https://fetch.spec.whatwg.org/#headersinit
  */
 var HeadersInit;
 
@@ -103,8 +103,7 @@ Headers.prototype[Symbol.iterator] = function() {};
 
 
 /**
- * @typedef {
- *     !Blob|!BufferSource|!FormData|!URLSearchParams|!ReadableStream|string}
+ * @typedef {!Blob|!BufferSource|!FormData|string}
  * @see https://fetch.spec.whatwg.org/#bodyinit
  */
 var BodyInit;

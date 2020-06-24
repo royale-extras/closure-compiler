@@ -18,6 +18,8 @@
 /**
  * @fileoverview The base namespace for code injected by the compiler
  * at compile-time.
+ *
+ * @author nicksantos@google.com (Nick Santos)
  */
 
 /** @const */

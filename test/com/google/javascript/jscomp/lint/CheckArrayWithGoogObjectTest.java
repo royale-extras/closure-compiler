@@ -47,8 +47,8 @@ public final class CheckArrayWithGoogObjectTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
+  protected CompilerOptions getOptions(CompilerOptions options) {
+    super.getOptions(options);
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
     return options;
   }

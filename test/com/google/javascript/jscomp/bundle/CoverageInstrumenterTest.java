@@ -22,9 +22,6 @@ import static org.mockito.Mockito.when;
 
 import com.google.common.annotations.GwtIncompatible;
 import com.google.common.base.Joiner;
-import com.google.common.collect.ImmutableList;
-import com.google.debugging.sourcemap.SourceMapConsumerV3;
-import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 import com.google.javascript.jscomp.JSError;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -37,6 +34,7 @@ import org.mockito.MockitoAnnotations;
 
 /** Tests for {@link CoverageInstrumenter}. */
 @GwtIncompatible
+
 @RunWith(JUnit4.class)
 public final class CoverageInstrumenterTest {
 
@@ -48,7 +46,7 @@ public final class CoverageInstrumenterTest {
 
   private static final Path FOO_JS = Paths.get("foo.js");
   private static final Path SOURCE_JS = Paths.get("source.js");
-  private static final ImmutableList<JSError> NO_ERRORS = ImmutableList.of();
+  private static final JSError[] NO_ERRORS = new JSError[] {};
 
   @Before
   public void setUp() {
@@ -87,7 +85,7 @@ public final class CoverageInstrumenterTest {
   // Tests for CompilerSupplier
 
   @Test
-  public void testCompilerSupplier_instruments() throws Exception {
+  public void testCompilerSupplier_instruments() {
     CoverageInstrumenter.CompileResult result = compiler.compile(SOURCE_JS, "var x = 42;");
     String[] expected =
         new String[] {
@@ -104,18 +102,8 @@ public final class CoverageInstrumenterTest {
     assertThat(result.source).isEqualTo(Joiner.on("").join(expected));
     assertThat(result.errors).isEmpty();
     assertThat(result.transformed).isTrue();
-
-    // Ensure that source map for "x" is correct.
-    SourceMapConsumerV3 sourceMap = new SourceMapConsumerV3();
-    sourceMap.parse(result.sourceMap);
-    OriginalMapping mappingFoX = sourceMap.getMappingForLine(1, result.source.indexOf("x=42") + 1);
-    assertThat(mappingFoX)
-        .isEqualTo(
-            OriginalMapping.newBuilder()
-                .setOriginalFile(SOURCE_JS.toString())
-                .setLineNumber(1)
-                .setColumnPosition(5)
-                .setIdentifier("x")
-                .build());
+    assertThat(result.sourceMap)
+        .contains("\"mappings\":\"AAAA,GAAI,CAAC,IAAA,OAAL,CAAkB,CAAE,IAAA,OAAA,CAAc,IAAM,");
   }
+
 }

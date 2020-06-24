@@ -18,18 +18,14 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.javascript.jscomp.ScopeSubject.assertScope;
 import static com.google.javascript.jscomp.VarCheck.BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR;
-import static com.google.javascript.jscomp.VarCheck.UNDEFINED_EXTERN_VAR_ERROR;
-import static com.google.javascript.jscomp.VarCheck.UNDEFINED_VAR_ERROR;
 import static com.google.javascript.jscomp.VarCheck.VAR_MULTIPLY_DECLARED_ERROR;
-import static com.google.javascript.jscomp.testing.ScopeSubject.assertScope;
 
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
-import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
@@ -67,8 +63,6 @@ public final class VarCheckTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    options.setClosurePass(true);
-    options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
     options.setWarningLevel(DiagnosticGroups.STRICT_MODULE_DEP_CHECK,
         strictModuleDepErrorLevel);
     if (externValidationErrorLevel != null) {
@@ -154,13 +148,6 @@ public final class VarCheckTest extends CompilerTestCase {
   @Test
   public void testReferencedLetDefined1() {
     testSame("let x; x = 1;");
-  }
-
-  @Test
-  public void testNullishCoalesce() {
-    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
-    testSame("let x; x = 0 ?? true");
-    testError("let x; x = a ?? \"hi\"", VarCheck.UNDEFINED_VAR_ERROR);
   }
 
   @Test
@@ -296,17 +283,6 @@ public final class VarCheckTest extends CompilerTestCase {
   }
 
   @Test
-  public void testVarReferenceInExterns2() {
-    testSame(
-        externs("asdf;"),
-        srcs(
-            lines(
-                "(function() { var asdf; })()", //
-                "var /** @suppress {duplicate} */ asdf;")),
-        warning(VarCheck.NAME_REFERENCE_IN_EXTERNS_ERROR));
-  }
-
-  @Test
   public void testNamespaceDeclarationInExterns() {
     testSame(externs("/** @const */ var $jscomp = $jscomp || {};"), srcs(""));
   }
@@ -379,12 +355,10 @@ public final class VarCheckTest extends CompilerTestCase {
 
   @Test
   public void testDuplicateNamespaceInExterns() {
-    // Compare as tree does not allow multiple externs, but VarCheck forcibly inserts them.
-    disableCompareAsTree();
     testExternChanges(
         "/** @const */ var ns = {}; /** @const */ var ns = {};",
         "",
-        VAR_CHECK_EXTERNS + "/** @const */ var ns = {};");
+        "/** @const */ var ns = {};");
   }
 
   @Test
@@ -601,12 +575,8 @@ public final class VarCheckTest extends CompilerTestCase {
   @Test
   public void testStarStrictModuleDependencyCheck() {
     strictModuleDepErrorLevel = CheckLevel.WARNING;
-    testSame(
-        JSChunkGraphBuilder.forStar()
-            .addChunk("function a() {}")
-            .addChunk("function b() { a(); c(); }")
-            .addChunk("function c() { a(); }")
-            .build(),
+    testSame(createModuleStar("function a() {}", "function b() { a(); c(); }",
+        "function c() { a(); }"),
         VarCheck.STRICT_MODULE_DEP_ERROR);
   }
 
@@ -663,8 +633,8 @@ public final class VarCheckTest extends CompilerTestCase {
 
   @Test
   public void testSimple() {
-    checkSynthesizedExtern("x", "var x;" + VAR_CHECK_EXTERNS);
-    checkSynthesizedExtern("var x", VAR_CHECK_EXTERNS);
+    checkSynthesizedExtern("x", "var x;");
+    checkSynthesizedExtern("var x", "");
   }
 
   @Test
@@ -680,47 +650,51 @@ public final class VarCheckTest extends CompilerTestCase {
 
   @Test
   public void testParameter() {
-    checkSynthesizedExtern("function f(x){}", VAR_CHECK_EXTERNS);
+    checkSynthesizedExtern("function f(x){}", "");
   }
 
   @Test
   public void testLocalVar() {
-    checkSynthesizedExtern("function f(){x}", "var x;" + VAR_CHECK_EXTERNS);
+    checkSynthesizedExtern("function f(){x}", "var x");
   }
 
   @Test
   public void testTwoLocalVars() {
-    checkSynthesizedExtern("function f(){x}function g() {x}", "var x;" + VAR_CHECK_EXTERNS);
+    checkSynthesizedExtern("function f(){x}function g() {x}", "var x");
   }
 
   @Test
   public void testInnerFunctionLocalVar() {
-    checkSynthesizedExtern("function f(){function g() {x}}", "var x;" + VAR_CHECK_EXTERNS);
+    checkSynthesizedExtern("function f(){function g() {x}}", "var x");
   }
 
   @Test
   public void testNoCreateVarsForLabels() {
-    checkSynthesizedExtern("x:var y", VAR_CHECK_EXTERNS);
+    checkSynthesizedExtern("x:var y", "");
   }
 
   @Test
   public void testVariableInNormalCodeUsedInExterns1() {
-    checkSynthesizedExtern("x.foo;", "var x;", "var x; " + VAR_CHECK_EXTERNS + " x.foo;");
+    checkSynthesizedExtern(
+        "x.foo;", "var x;", "var x; x.foo;");
   }
 
   @Test
   public void testVariableInNormalCodeUsedInExterns2() {
-    checkSynthesizedExtern("x;", "var x;", "var x; " + VAR_CHECK_EXTERNS + " x;");
+    checkSynthesizedExtern(
+        "x;", "var x;", "var x; x;");
   }
 
   @Test
   public void testVariableInNormalCodeUsedInExterns3() {
-    checkSynthesizedExtern("x.foo;", "function x() {}", "var x; " + VAR_CHECK_EXTERNS + " x.foo;");
+    checkSynthesizedExtern(
+        "x.foo;", "function x() {}", "var x; x.foo; ");
   }
 
   @Test
   public void testVariableInNormalCodeUsedInExterns4() {
-    checkSynthesizedExtern("x;", "function x() {}", "var x; " + VAR_CHECK_EXTERNS + " x;");
+    checkSynthesizedExtern(
+        "x;", "function x() {}", "var x; x; ");
   }
 
   @Test
@@ -869,10 +843,9 @@ public final class VarCheckTest extends CompilerTestCase {
   @Test
   public void testNoUndeclaredVarWhenUsingClosurePass() {
     enableClosurePass();
-    enableRewriteClosureCode();
     // We don't want to get goog as an undeclared var here.
-    testError(
-        "goog.require('namespace.Class1');\n", ClosurePrimitiveErrors.MISSING_MODULE_OR_PROVIDE);
+    testError("goog.require('namespace.Class1');\n",
+        ProcessClosurePrimitives.MISSING_PROVIDE_ERROR);
   }
 
   // ES6 Module Tests
@@ -888,7 +861,9 @@ public final class VarCheckTest extends CompilerTestCase {
     CompilerOptions options = new CompilerOptions();
     CompilationLevel.ADVANCED_OPTIMIZATIONS.setOptionsForCompilationLevel(options);
     options.setLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2017);
-    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(entryPoints));
+    options.dependencyOptions.setDependencyPruning(true);
+    options.dependencyOptions.setDependencySorting(true);
+    options.dependencyOptions.setEntryPoints(entryPoints);
 
     List<SourceFile> externs =
         AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
@@ -927,229 +902,6 @@ public final class VarCheckTest extends CompilerTestCase {
     testSame("import {b as a} from './foo.js'; let c = a;");
     testError("import {b as a} from './foo.js'; let c = b;", VarCheck.UNDEFINED_VAR_ERROR);
     testSame("import {a} from './foo.js'; let c = a;");
-  }
-
-  @Test
-  public void testComputedPropertyWithNamedFunction() {
-    testSame("({[0]: function f() {}})");
-  }
-
-  @Test
-  public void testEsModule_withUndefinedExportsRef() {
-    testError("exports = function() {}; export {exports};", VarCheck.UNDEFINED_VAR_ERROR);
-  }
-
-  @Test
-  public void testGoogModule_withDefaultExports() {
-    testSame(srcs(CLOSURE_DEFS, "goog.module('a.b'); exports = function() {};"));
-  }
-
-  @Test
-  public void testGoogModule_withExportsRefInFunction() {
-    testSame(
-        srcs(
-            // Referencing 'exports' inside a function is strange but allowed.
-            CLOSURE_DEFS, "goog.module('a.b'); exports.f = function() { exports.f(); };"));
-  }
-
-  @Test
-  public void testGoogModule_withNamedExports() {
-    testSame(srcs(CLOSURE_DEFS, "goog.module('a.b'); exports.f = function() {}; exports.x = 0;"));
-  }
-
-  @Test
-  public void testGoogProvide_simpleName() {
-    testSame(CLOSURE_DEFS + "goog.provide('A'); var A = class {};");
-    testSame(CLOSURE_DEFS + "goog.provide('A'); A = class {};");
-  }
-
-  @Test
-  public void testGoogProvide_simpleName_earlyReference() {
-    testSame(CLOSURE_DEFS + "A.B = class {}; goog.provide('A');");
-    testSame(CLOSURE_DEFS + "A.B = class {}; goog.provide('A'); var A = class {};");
-  }
-
-  @Test
-  public void testGoogProvide_multipleRootsInSameFile() {
-    testSame(
-        CLOSURE_DEFS + "goog.provide('A'); goog.provide('B'); var A = class {}; var B = class {};");
-    testSame(CLOSURE_DEFS + "goog.provide('A.a'); goog.provide('B.b'); A.a = 0; B.b = 1");
-  }
-
-  @Test
-  public void testGoogProvide_complexName() {
-    testSame(CLOSURE_DEFS + "goog.provide('foo.A'); foo.A = class {};");
-    testSame(CLOSURE_DEFS + "goog.provide('foo.bar.A'); foo.bar.A = class {};");
-  }
-
-  @Test
-  public void testGoogLegacyModule() {
-    testSame(
-        srcs(
-            CLOSURE_DEFS,
-            "goog.module('foo.A'); goog.module.declareLegacyNamespace(); exports = class {};",
-            "new foo.A();"));
-  }
-
-  @Test
-  public void testGoogNonLegacyModule() {
-    testError(srcs(CLOSURE_DEFS, "goog.module('foo.A');", "foo.A();"), error(UNDEFINED_VAR_ERROR));
-
-    testError(
-        srcs(CLOSURE_DEFS, "goog.module('foo.A'); exports = class {};", "new foo.A();"),
-        error(UNDEFINED_VAR_ERROR));
-  }
-
-  @Test
-  public void testGoogLegacyModule_inLoadModule() {
-    testSame(
-        new String[] {
-          CLOSURE_DEFS,
-          lines(
-              "goog.loadModule(function(exports) {", //
-              "  goog.module('foo.A');",
-              "  goog.module.declareLegacyNamespace();",
-              "  exports = class {};",
-              "  return exports;",
-              "});"),
-          "new foo.A();"
-        });
-  }
-
-  @Test
-  public void testGoogNonLegacyModule_inLoadModule() {
-    testError(
-        srcs(
-            CLOSURE_DEFS,
-            lines(
-                "goog.loadModule(function(exports) {", //
-                "  goog.module('foo.A');",
-                "  exports = class {};",
-                "  return exports;",
-                "});"),
-            "new foo.A();"),
-        error(UNDEFINED_VAR_ERROR));
-  }
-
-  @Test
-  public void testGoogProvide_externs_addsDeclForNamespace() {
-    checkSynthesizedExtern(
-        "var goog; goog.provide('a.b'); a.b.C = class {};",
-        "",
-        "var a;" + VAR_CHECK_EXTERNS + "var goog;goog.provide('a.b');a.b.C = class {};");
-  }
-
-  @Test
-  public void testGoogForwardDeclare_canBeReferencedInExternsIfInCode() {
-    testNoWarning(
-        // Allow referencing `goog` in externs even though it is actually only defined in code.
-        "goog.forwardDeclare('a.b.C');", "var /** !a.b.C */ c; var goog;");
-    checkSynthesizedExtern(
-        // Don't synthesize an extern for 'goog'.
-        "goog.forwardDeclare('a.b.C');",
-        "var goog;",
-        VAR_CHECK_EXTERNS + "goog.forwardDeclare('a.b.C');");
-  }
-
-  @Test
-  public void testArbitraryPropertyNamedForwardDeclare_cannotBeReferencedInExterns() {
-    testWarning(
-        externs("notGoog.forwardDeclare('a.b.C');"),
-        srcs("var notGoog;"),
-        warning(UNDEFINED_EXTERN_VAR_ERROR));
-  }
-
-  @Test
-  public void testGoogProvide_cannotBeReferencedInExterns() {
-    testWarning(
-        externs("goog.provide('a.b');"), srcs("var goog;"), warning(UNDEFINED_EXTERN_VAR_ERROR));
-  }
-
-  @Test
-  public void testGoogModule_cannotBeReferencedInExterns() {
-    testWarning(
-        externs("goog.module('a.b');"), srcs("var goog;"), warning(UNDEFINED_EXTERN_VAR_ERROR));
-  }
-
-  @Test
-  public void testReferenceToWeakVar_fromStrongFile() {
-    JSModule weakModule = new JSModule(JSModule.WEAK_MODULE_NAME);
-    JSModule strongModule = new JSModule(JSModule.STRONG_MODULE_NAME);
-    weakModule.addDependency(strongModule);
-
-    weakModule.add(SourceFile.fromCode("weak.js", lines("var weakVar = 0;"), SourceKind.WEAK));
-
-    strongModule.add(SourceFile.fromCode("strong.js", lines("weakVar();"), SourceKind.STRONG));
-
-    test(
-        srcs(
-            new JSModule[] {
-              strongModule, weakModule,
-            }),
-        error(VarCheck.VIOLATED_MODULE_DEP_ERROR),
-        error(VarCheck.UNDEFINED_VAR_ERROR));
-  }
-
-  @Test
-  public void testReferenceToWeakVar_fromWeakFile() {
-    JSModule weakModule = new JSModule(JSModule.WEAK_MODULE_NAME);
-    weakModule.add(
-        SourceFile.fromCode(
-            "weak.js",
-            lines(
-                "var weakVar = 0;", //
-                "weakVar();"),
-            SourceKind.WEAK));
-
-    testSame(
-        new JSModule[] {
-          weakModule,
-        });
-  }
-
-  @Test
-  public void testReferenceToWeakNamespaceRoot_fromStrongFile() {
-    JSModule weakModule = new JSModule(JSModule.WEAK_MODULE_NAME);
-    JSModule strongModule = new JSModule(JSModule.STRONG_MODULE_NAME);
-    weakModule.addDependency(strongModule);
-
-    weakModule.add(
-        SourceFile.fromCode(
-            "weak.js",
-            lines(
-                CLOSURE_DEFS, //
-                "goog.provide('foo.bar');"),
-            SourceKind.WEAK));
-
-    strongModule.add(SourceFile.fromCode("strong.js", lines("foo();"), SourceKind.STRONG));
-
-    test(
-        srcs(
-            new JSModule[] {
-              strongModule, weakModule,
-            }),
-        error(VarCheck.UNDEFINED_VAR_ERROR));
-  }
-
-  @Test
-  public void testReferenceToStrongNamespaceRoot_withAdditionalWeakProvide_fromStrongFile() {
-    JSModule weakModule = new JSModule(JSModule.WEAK_MODULE_NAME);
-    JSModule strongModule = new JSModule(JSModule.STRONG_MODULE_NAME);
-    weakModule.addDependency(strongModule);
-
-    weakModule.add(
-        SourceFile.fromCode("weak.js", lines("goog.provide('foo.bar');"), SourceKind.WEAK));
-
-    strongModule.add(
-        SourceFile.fromCode(
-            "strong0.js", lines(CLOSURE_DEFS, "goog.provide('foo.qux');"), SourceKind.STRONG));
-    strongModule.add(SourceFile.fromCode("strong1.js", lines("foo();"), SourceKind.STRONG));
-
-    testSame(
-        srcs(
-            new JSModule[] {
-              strongModule, weakModule,
-            }));
   }
 
   private static final class VariableTestCheck implements CompilerPass {

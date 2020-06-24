@@ -19,7 +19,6 @@
  * @suppress {uselessCode}
  */
 'require util/polyfill';
-'require es6/reflect/reflect';
 'require es6/util/setprototypeof';
 
 

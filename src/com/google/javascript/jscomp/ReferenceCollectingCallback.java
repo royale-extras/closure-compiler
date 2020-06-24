@@ -37,6 +37,8 @@ import java.util.Set;
  * referenced and declared at once and then make a decision as to how it should be handled, possibly
  * inlining, reordering, or generating warnings. Callers do this by providing {@link Behavior} and
  * then calling {@link #process(Node, Node)}.
+ *
+ * @author kushal@google.com (Kushal Dave)
  */
 public final class ReferenceCollectingCallback
     implements ScopedCallback, HotSwapCompilerPass, StaticSymbolTable<Var, Reference> {
@@ -150,7 +152,7 @@ public final class ReferenceCollectingCallback
 
   @Override
   public Scope getScope(Var var) {
-    return var.getScope();
+    return var.scope;
   }
 
   /**
@@ -167,7 +169,7 @@ public final class ReferenceCollectingCallback
    */
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
-    if (n.isName() || n.isImportStar()) {
+    if (n.isName() || n.isImportStar() || (n.isStringKey() && !n.hasChildren())) {
       if ((parent.isImportSpec() && n != parent.getLastChild())
           || (parent.isExportSpec() && n != parent.getFirstChild())) {
         // The n in `import {n as x}` or `export {x as n}` are not references, even though
@@ -316,7 +318,6 @@ public final class ReferenceCollectingCallback
         case FOR:
         case FOR_IN:
         case FOR_OF:
-        case FOR_AWAIT_OF:
         case TRY:
         case WHILE:
         case WITH:
@@ -336,7 +337,6 @@ public final class ReferenceCollectingCallback
         case IF:
         case OR:
         case SWITCH:
-        case COALESCE:
           // The first child of a conditional is not a boundary,
           // but all the rest of the children are.
           return n != parent.getFirstChild();

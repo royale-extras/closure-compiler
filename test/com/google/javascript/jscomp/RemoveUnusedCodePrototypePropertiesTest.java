@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,11 +40,7 @@ public final class RemoveUnusedCodePrototypePropertiesTest extends CompilerTestC
           "externFunction.prototype.externPropName;",
           "var mExtern;",
           "mExtern.bExtern;",
-          "mExtern['cExtern'];",
-          "",
-          "/** @const */",
-          "var goog = {};",
-          "goog.reflect.objectProperty = function(name) { };");
+          "mExtern['cExtern'];");
 
   private boolean keepLocals = true;
   private boolean keepGlobals = false;
@@ -75,19 +72,12 @@ public final class RemoveUnusedCodePrototypePropertiesTest extends CompilerTestC
   }
 
   @Override
-  public CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
-    return options;
-  }
-
-  @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     enableNormalize();
     enableGatherExternProperties();
-    onlyValidateNoNewGettersAndSetters();
     keepLocals = true;
     keepGlobals = false;
     allowRemovalOfExternProperties = false;
@@ -803,19 +793,7 @@ public final class RemoveUnusedCodePrototypePropertiesTest extends CompilerTestC
             "function Foo() {}",
             "Foo.prototype.a = function() {};",
             "const { a : { b : { c : d = '' }}} = new Foo();"));
-  }
 
-  @Test
-  public void testDestructuringRest() {
-    // Makes the cases below shorter because we don't have to add references
-    // to globals to keep them around and just test prototype property removal.
-    keepGlobals = true;
-
-    testSame(
-        lines(
-            "function Foo() {}",
-            "Foo.prototype.a = function() {};",
-            "({ ...new Foo().a.b } = 0);"));
   }
 
   @Test
@@ -869,11 +847,10 @@ public final class RemoveUnusedCodePrototypePropertiesTest extends CompilerTestC
             "new C;"),
         lines(
             "class C {",
-            "  constructor() {", // constructor is not removable
+            "  constructor() {",  // constructor is not removable
             "    this.x = 1;",
             "  }",
-            // TODO(b/139319709): Remove this. static method removal is disabled.
-            "  static foo() {}",
+            "  static foo() {}",  // static method removal is disabled
             "}",
             "new C();"));
 
@@ -1060,55 +1037,7 @@ public final class RemoveUnusedCodePrototypePropertiesTest extends CompilerTestC
     testSame("export class C {};");
     testSame("class Bar {} export {Bar}");
 
-    testSame("import { square, diag } from '/lib';");
-    testSame("import * as lib from '/lib';");
-  }
-
-  @Test
-  public void testReflection_reflectProperty_pinsReflectedName() {
-    testSame(
-        lines(
-            "/** @constructor */",
-            "function Foo() {}",
-            "Foo.prototype.handle = function(x, y) { alert(y); };",
-            "",
-            "goog.reflect.objectProperty('handle');",
-            "alert(new Foo());"));
-  }
-
-  @Test
-  public void testReflection_reflectProperty_onlyPinsReflectedName() {
-    test(
-        lines(
-            "/** @constructor */",
-            "function Foo() {}",
-            "Foo.prototype.handle = function(x, y) { alert(y); };",
-            "",
-            "goog.reflect.objectProperty('not_handle');",
-            "alert(new Foo());"),
-        lines(
-            "/** @constructor */",
-            "function Foo() {}",
-            "",
-            "goog.reflect.objectProperty('not_handle');",
-            "alert(new Foo());"));
-  }
-
-  @Test
-  public void testReflection_reflectProperty_onlyPinsReflectedName_whenNameMissing() {
-    test(
-        lines(
-            "/** @constructor */",
-            "function Foo() {}",
-            "Foo.prototype.handle = function(x, y) { alert(y); };",
-            "",
-            "goog.reflect.objectProperty();",
-            "alert(new Foo());"),
-        lines(
-            "/** @constructor */",
-            "function Foo() {}",
-            "",
-            "goog.reflect.objectProperty();",
-            "alert(new Foo());"));
+    testSame("import { square, diag } from 'lib';");
+    testSame("import * as lib from 'lib';");
   }
 }

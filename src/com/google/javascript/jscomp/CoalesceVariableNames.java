@@ -61,6 +61,7 @@ import javax.annotation.Nullable;
  * {@link LiveVariablesAnalysis} and a variable interference graph. Then it uses
  * graph coloring in {@link GraphColoring} to determine which two variables can
  * be merge together safely.
+ *
  */
 class CoalesceVariableNames extends AbstractPostOrderCallback implements
     CompilerPass, ScopedCallback {
@@ -134,7 +135,8 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
     ControlFlowGraph<Node> cfg = t.getControlFlowGraph();
 
     liveness =
-        new LiveVariablesAnalysis(cfg, scope, null, compiler, new SyntacticScopeCreator(compiler));
+        new LiveVariablesAnalysis(
+            cfg, scope, null, compiler, new Es6SyntacticScopeCreator(compiler));
 
     if (FeatureSet.ES3.contains(compiler.getOptions().getOutputFeatureSet())) {
       // If the function has exactly 2 params, mark them as escaped. This is a work-around for a
@@ -196,12 +198,11 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
       }
 
       // Rename.
-      n.setString(coalescedVar.getName());
+      n.setString(coalescedVar.name);
       compiler.reportChangeToEnclosingScope(n);
 
       if (NodeUtil.isNameDeclaration(parent)
-          || (NodeUtil.getEnclosingType(n, Token.DESTRUCTURING_LHS) != null
-              && NodeUtil.isLhsByDestructuring(n))) {
+          || NodeUtil.getEnclosingType(n, Token.DESTRUCTURING_LHS) != null) {
         makeDeclarationVar(coalescedVar);
         removeVarDeclaration(n);
       }
@@ -216,7 +217,7 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
         // and it is merged with the current coalescedVar.
         if (colorings.peek().getGraph().getNode(iVar) != null
             && coalescedVar.equals(colorings.peek().getPartitionSuperNode(iVar))) {
-          allMergedNames.add(iVar.getName());
+          allMergedNames.add(iVar.name);
         }
       }
 
@@ -237,8 +238,7 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
 
       if (!vNode.getValue().equals(coalescedVar)
           && (NodeUtil.isNameDeclaration(parent)
-              || (NodeUtil.getEnclosingType(n, Token.DESTRUCTURING_LHS) != null
-                  && NodeUtil.isLhsByDestructuring(n)))) {
+              || NodeUtil.getEnclosingType(n, Token.DESTRUCTURING_LHS) != null)) {
         makeDeclarationVar(coalescedVar);
         removeVarDeclaration(n);
       }
@@ -293,10 +293,11 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
 
       // Skip lets and consts that have multiple variables declared in them, otherwise this produces
       // incorrect semantics. See test case "testCapture".
-      // Skipping vars technically isn't needed for correct semantics, but works around a Safari
-      // bug for var redeclarations (https://github.com/google/closure-compiler/issues/3164)
-      if (isInMultipleLvalueDecl(v)) {
-        continue;
+      if (v.isLet() || v.isConst()) {
+        Node nameDecl = NodeUtil.getEnclosingNode(v.getNode(), NodeUtil::isNameDeclaration);
+        if (NodeUtil.findLhsNodesInNode(nameDecl).size() > 1) {
+          continue;
+        }
       }
 
       interferenceGraph.createNode(v);
@@ -331,7 +332,7 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
         // this variable pair. If they are both live at the same
         // time, add an edge between them and continue to the next pair.
         NEXT_CROSS_CFG_NODE:
-        for (DiGraphNode<Node, Branch> cfgNode : cfg.getNodes()) {
+        for (DiGraphNode<Node, Branch> cfgNode : cfg.getDirectedGraphNodes()) {
           if (cfg.isImplicitReturn(cfgNode)) {
             continue NEXT_CROSS_CFG_NODE;
           }
@@ -351,7 +352,7 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
         // one last sanity check that we have to do: we have to check
         // if there's a collision *within* the cfg node.
         NEXT_INTRA_CFG_NODE:
-        for (DiGraphNode<Node, Branch> cfgNode : cfg.getNodes()) {
+        for (DiGraphNode<Node, Branch> cfgNode : cfg.getDirectedGraphNodes()) {
           if (cfg.isImplicitReturn(cfgNode)) {
             continue NEXT_INTRA_CFG_NODE;
           }
@@ -371,24 +372,6 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
       }
     }
     return interferenceGraph;
-  }
-
-  /**
-   * Returns whether this variable's declaration also declares other names.
-   *
-   * <p>For example, this would return true for `x` in `let [x, y, z] = []`;
-   */
-  private boolean isInMultipleLvalueDecl(Var v) {
-    Token declarationType = v.declarationType();
-    switch (declarationType) {
-      case LET:
-      case CONST:
-      case VAR:
-        Node nameDecl = NodeUtil.getEnclosingNode(v.getNode(), NodeUtil::isNameDeclaration);
-        return NodeUtil.findLhsNodesInNode(nameDecl).size() > 1;
-      default:
-        return false;
-    }
   }
 
   /**
@@ -447,13 +430,10 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
   }
 
   /**
-   * Remove variable declaration if the variable has been coalesced with another variable that has
-   * already been declared.
-   *
-   * <p>A precondition is that if the variable has already been declared, it must be the only lvalue
-   * in said declaration. For example, this method will not accept `var x = 1, y = 2`. In theory we
-   * could leave in the `var` declaration, but var shadowing of params triggers a Safari bug:
-   * https://bugs.webkit.org/show_bug.cgi?id=182414 Another
+   * Tries to remove variable declaration if the variable has been coalesced with another variable
+   * that has already been declared. Any lets or consts are redeclared as vars because at this point
+   * in the compilation, the code is normalized, so we can safely hoist variables without worrying
+   * about shadowing.
    *
    * @param name name node of the variable being coalesced
    */
@@ -461,25 +441,18 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
     Node var = NodeUtil.getEnclosingNode(name, NodeUtil::isNameDeclaration);
     Node parent = var.getParent();
 
-    if (var.getFirstChild().isDestructuringLhs()) {
-      // convert `const [x] = arr` to `[x] = arr`
-      // a precondition for this method is that `x` is the only lvalue in the destructuring pattern
-      Node destructuringLhs = var.getFirstChild();
-      Node pattern = destructuringLhs.removeFirstChild();
-      if (NodeUtil.isEnhancedFor(parent)) {
-        var.replaceWith(pattern);
-      } else {
-        Node rvalue = var.getFirstFirstChild().detach();
-        var.replaceWith(NodeUtil.newExpr(IR.assign(pattern, rvalue).srcref(var)));
-      }
-    } else if (NodeUtil.isEnhancedFor(parent)) {
-      // convert `for (let x of ...` to `for (x of ...`
-      parent.replaceChild(var, name.detach());
-    } else {
-      // either `var x = 0;` or `var x;`
-      checkState(var.hasOneChild() && var.getFirstChild() == name, var);
+    if (!var.isVar()) {
+      var.setToken(Token.VAR);
+    }
+    checkState(var.isVar(), var);
+
+    // Special case for enhanced for-loops
+    if (NodeUtil.isEnhancedFor(parent)) {
+      var.removeChild(name);
+      parent.replaceChild(var, name);
+    } else if (var.hasOneChild() && var.getFirstChild() == name) {
+      // The removal is easy when there is only one variable in the VAR node.
       if (name.hasChildren()) {
-        // convert `let x = 0;` to `x = 0;`
         Node value = name.removeFirstChild();
         var.removeChild(name);
         Node assign = IR.assign(name, value).srcref(name);
@@ -491,76 +464,28 @@ class CoalesceVariableNames extends AbstractPostOrderCallback implements
         parent.replaceChild(var, assign);
 
       } else {
-        // convert `let x;` to ``
-        // and `for (let x;;) {}` to `for (;;) {}`
+        // In a FOR( ; ; ) node, we must replace it with an EMPTY or else it
+        // becomes a FOR-IN node.
         NodeUtil.removeChild(parent, var);
       }
+    } else {
+      if (var.getFirstChild() == name && !name.hasChildren()) {
+        name.detach();
+      }
+      // We are going to leave duplicated declaration otherwise.
     }
   }
 
   /**
-   * Convert `const` or `let` declarations to `var` declarations.
-   *
-   * <p>This method should be called on the first declared variable of a group that are being
-   * coalesced.
-   *
-   * <p>Because the code has already been normalized by the time this pass runs, we can safely
+   * Because the code has already been normalized by the time this pass runs, we can safely
    * redeclare any let and const coalesced variables as vars
    */
-  private void makeDeclarationVar(Var coalescedName) {
-    if (coalescedName.isConst() || coalescedName.isLet()) {
-      Node nameNode = checkNotNull(coalescedName.getNameNode(), coalescedName);
-      if (isUninitializedLetNameInLoopBody(nameNode)) {
-        // We need to make sure that within a loop:
-        //
-        // `let x;`
-        // becomes
-        // `var x = void 0;`
-        //
-        // If we don't we won't be correctly resetting the variable to undefined on each loop
-        // iteration once we turn it into a var declaration.
-        //
-        // Note that all other cases will already have an initializer.
-        // const x = 1; // constant requires an initializer
-        // let {x, y} = obj; // destructuring requires an initializer
-        // let [x, y] = iterable; // destructuring requires an initializer
-        Node undefinedValue =
-            compiler.createAstFactory().createUndefinedValue().srcrefTree(nameNode);
-        nameNode.addChildToFront(undefinedValue);
-      }
-      // find the declaration node in a way that works normal and destructuring declarations.
-      Node declNode = NodeUtil.getEnclosingNode(nameNode.getParent(), NodeUtil::isNameDeclaration);
-      // normalization ensures that all variables in a function are uniquely named, so it's OK
-      // to turn a `const` or `let` into a `var`.
+  private static void makeDeclarationVar(Var coalescedName) {
+    if (coalescedName.isLet() || coalescedName.isConst()) {
+      Node declNode =
+          NodeUtil.getEnclosingNode(coalescedName.getParentNode(), NodeUtil::isNameDeclaration);
       declNode.setToken(Token.VAR);
     }
-  }
-
-  private static boolean isUninitializedLetNameInLoopBody(Node nameNode) {
-    checkState(nameNode.isName(), nameNode);
-    Node letNode = nameNode.getParent();
-    if (!letNode.isLet()) {
-      // We're looking for `let name;`
-      // Note that in the case of destructuring an initializer always exists.
-      // `let {name} = initializerRequiredHere;
-      return false;
-    }
-    if (nameNode.hasOneChild()) {
-      // `let name = child;` has an initializer
-      return false;
-    }
-
-    Node letParent = letNode.getParent();
-    if (NodeUtil.isLoopStructure(letParent)) {
-      // `for (let x; ...`
-      // `for (let x in ...`
-      // `for (let x of ...`
-      // `for await (let x of ...`
-      // In all these cases the variable gets initialized on each loop iteration
-      return false;
-    }
-    // Inside a loop body, but not the loop control node itself
-    return NodeUtil.isWithinLoop(letParent);
   }
 
   private static class LiveRangeChecker {

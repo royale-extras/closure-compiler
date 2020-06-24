@@ -25,6 +25,8 @@ import java.util.List;
 /**
  * A compiler pass to run various peephole optimizations (e.g. constant folding,
  * some useless code removal, some minimizations).
+ *
+ * @author dcc@google.com (Devin Coughlin)
  */
 class PeepholeOptimizationsPass implements CompilerPass {
 

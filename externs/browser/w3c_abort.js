@@ -46,5 +46,5 @@ function AbortController() {}
 /** @const {!AbortSignal} */
 AbortController.prototype.signal;
 
-/** @return {void} */
-AbortController.prototype.abort = function() {};
+/** @const {function()} */
+AbortController.prototype.abort;

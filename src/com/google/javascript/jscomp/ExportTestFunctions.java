@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
 /**
  * Generates goog.exportSymbol for test functions, so they can be recognized
  * by the test runner, even if the code is compiled.
+ *
  */
 public class ExportTestFunctions implements CompilerPass {
 
@@ -32,7 +33,6 @@ public class ExportTestFunctions implements CompilerPass {
       Pattern.compile(
           "^(?:((\\w+\\.)+prototype\\.||window\\.)*"
               + "(setUpPage|setUp|shouldRunTests|tearDown|tearDownPage|test[\\w\\$]+))$");
-  private static final String GOOG_TESTING_TEST_SUITE = "goog.testing.testSuite";
 
   private final AbstractCompiler compiler;
   private final String exportSymbolFunction;
@@ -61,7 +61,7 @@ public class ExportTestFunctions implements CompilerPass {
         return;
       }
 
-      if (parent.isScript() || parent.isModuleBody()) {
+      if (parent.isScript()) {
         if (NodeUtil.isFunctionDeclaration(n)) {
           // Check for a test function statement.
           String functionName = NodeUtil.getName(n);
@@ -82,10 +82,10 @@ public class ExportTestFunctions implements CompilerPass {
         } else if (n.isClass()) {
           exportClass(parent, n);
         }
-      } else if (NodeUtil.isExprAssign(parent)) {
+      } else if (NodeUtil.isExprAssign(parent) && !n.getLastChild().isAssign()) {
         // Check for a test method assignment.
         Node grandparent = parent.getParent();
-        if (grandparent != null && (grandparent.isScript() || grandparent.isModuleBody())) {
+        if (grandparent != null && grandparent.isScript()) {
           //                                    NAME/(GETPROP -> ... -> NAME)
           // SCRIPT -> EXPR_RESULT -> ASSIGN ->
           //                                    FUNCTION/CLASS
@@ -105,7 +105,8 @@ public class ExportTestFunctions implements CompilerPass {
             exportClass(grandparent, lastChild, nodeName, parent);
           }
         }
-      } else if (isTestSuiteArgument(n, t)) {
+      } else if (n.isObjectLit()
+          && isCallTargetQName(n.getParent(), "goog.testing.testSuite")) {
         for (Node c : n.children()) {
           if (c.isStringKey() && !c.isQuotedString()) {
             c.setQuotedString();
@@ -158,11 +159,17 @@ public class ExportTestFunctions implements CompilerPass {
     /** Converts a member function into a quoted string key to avoid property renaming */
     private void rewriteMemberDefInObjLit(Node memberDef, Node objLit) {
       String name = memberDef.getString();
-      Node stringKey = IR.stringKey(name, memberDef.removeFirstChild());
+      Node stringKey = IR.stringKey(name, memberDef.getFirstChild().detach());
       objLit.replaceChild(memberDef, stringKey);
       stringKey.setQuotedString();
       stringKey.setJSDocInfo(memberDef.getJSDocInfo());
       compiler.reportChangeToEnclosingScope(objLit);
+    }
+
+    // TODO(johnlenz): move test suite declaration into the
+    // coding convention class.
+    private boolean isCallTargetQName(Node n, String qname) {
+      return (n.isCall() && n.getFirstChild().matchesQualifiedName(qname));
     }
 
     /**
@@ -259,44 +266,6 @@ public class ExportTestFunctions implements CompilerPass {
     compiler.reportChangeToEnclosingScope(exportCall);
   }
 
-  /**
-   * Whether this is an object literal containing test methods passed to goog.testing.testSuite
-   *
-   * @param t We only need the scope from this NodeTraversal but want to lazily create the scope.
-   */
-  private static boolean isTestSuiteArgument(Node n, NodeTraversal t) {
-    return n.isObjectLit()
-        && n.getParent().isCall()
-        && n.isSecondChildOf(n.getParent())
-        && isGoogTestingTestSuite(t, n.getPrevious());
-  }
-
-  /**
-   * Whether this node is a reference to goog.testing.testSuite, either through a goog.require or by
-   * its fully qualified name.
-   *
-   * <p>If this becomes more broadly useful consider branching it into its own class and making more
-   * robust to handle forwardDeclares, destructuring requires, etc.
-   */
-  private static boolean isGoogTestingTestSuite(NodeTraversal t, Node qname) {
-    if (!qname.isQualifiedName()) {
-      return false;
-    }
-    Node root = NodeUtil.getRootOfQualifiedName(qname);
-    String rootName = root.getString();
-    Var rootVar = t.getScope().getSlot(rootName);
-    if (rootVar == null || rootVar.isGlobal()) {
-      return qname.matchesQualifiedName(GOOG_TESTING_TEST_SUITE);
-    } else if (rootVar.getScope().isModuleScope()) {
-      Node originalValue = rootVar.getInitialValue();
-      return originalValue != null
-          && originalValue.isCall()
-          && originalValue.getFirstChild().matchesQualifiedName("goog.require")
-          && originalValue.hasTwoChildren()
-          && originalValue.getSecondChild().getString().equals(GOOG_TESTING_TEST_SUITE);
-    }
-    return false;
-  }
 
   /**
    * Whether a function is recognized as a test function. We follow the JsUnit

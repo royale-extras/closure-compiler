@@ -36,11 +36,13 @@ Event.prototype.wheelDeltaY;
 function WebKitAnimationEvent() {}
 
 /**
- * @const {string}
+ * @type {string}
+ * @const
  */
 WebKitAnimationEvent.prototype.animationName;
 
 /**
- * @const {number}
+ * @type {number}
+ * @const
  */
 WebKitAnimationEvent.prototype.elapsedTime;

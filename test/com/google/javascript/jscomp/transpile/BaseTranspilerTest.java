@@ -32,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 /** Tests for {@link BaseTranspiler}. */
+
 @RunWith(JUnit4.class)
 public final class BaseTranspilerTest {
 

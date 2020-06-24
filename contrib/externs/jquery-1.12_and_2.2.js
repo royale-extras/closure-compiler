@@ -1265,10 +1265,9 @@ jQuery.map = function(arg1, callback) {};
 jQuery.prototype.map = function(callback) {};
 
 /**
- * @template T, U
- * @param {!Array<T>} first
- * @param {!Array<U>} second
- * @return {!Array<(T|U)>}
+ * @param {Array<*>} first
+ * @param {Array<*>} second
+ * @return {Array<*>}
  */
 jQuery.merge = function(first, second) {};
 

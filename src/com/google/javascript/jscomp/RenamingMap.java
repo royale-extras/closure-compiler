@@ -19,6 +19,7 @@ import java.io.Serializable;
 
 /**
  * Interface used by to substitute names.
+ * @author johnlenz@google.com (John Lenz)
  */
 public interface RenamingMap extends Serializable {
   String get(String value);

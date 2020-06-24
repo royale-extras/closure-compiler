@@ -40,7 +40,6 @@ import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Node.TypeDeclarationNode;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.TypeDeclarationsIR;
-import com.google.javascript.rhino.testing.NodeSubject;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -861,7 +860,8 @@ public final class TypeSyntaxTest {
   }
 
   private static void assertTreeEquals(String message, Node expected, Node actual) {
-    assertWithMessage(message).about(NodeSubject.nodes()).that(actual).isEqualTo(expected);
+    String treeDiff = expected.checkTreeEquals(actual);
+    assertWithMessage(message + ": " + treeDiff).that(treeDiff).isNull();
   }
 
   private Node parse(String source, String expected, LanguageMode languageIn) {

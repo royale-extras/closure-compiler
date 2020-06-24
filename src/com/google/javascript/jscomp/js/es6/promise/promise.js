@@ -69,15 +69,25 @@ $jscomp.polyfill('Promise',
    *     rethrown when it cannot interrupt any other code. This class provides
    *     no way to catch such exceptions.
    * @param {function():?} f
+   * @return {!AsyncExecutor} this object
    */
   AsyncExecutor.prototype.asyncExecute = function(f) {
     if (this.batch_ == null) {
       // no batch created yet, or last batch was fully executed
       this.batch_ = [];
-      var self = this;
-      this.asyncExecuteFunction(function() { self.executeBatch_(); });
+      this.asyncExecuteBatch_();
     }
     this.batch_.push(f);
+    return this;
+  };
+
+  /**
+   * Schedule execution of the jobs in `this.batch_`.
+   * @private
+   */
+  AsyncExecutor.prototype.asyncExecuteBatch_ = function() {
+    var self = this;
+    this.asyncExecuteFunction(function() { self.executeBatch_(); });
   };
 
   // NOTE: We want to make sure AsyncExecutor will work as expected even if
@@ -196,12 +206,12 @@ $jscomp.polyfill('Promise',
     var thisPromise = this;
     var alreadyCalled = false;
     /**
-     * @param {function(this:PolyfillPromise<TYPE>, T=)} method
-     * @return {function(T=)}
+     * @param {function(this:PolyfillPromise<TYPE>, T)} method
+     * @return {function(T)}
      * @template T
      */
     function firstCallWins(method) {
-      return function(/** T= */ x) {
+      return function(x) {
         if (!alreadyCalled) {
           alreadyCalled = true;
           method.call(thisPromise, x);
@@ -217,7 +227,7 @@ $jscomp.polyfill('Promise',
 
   /**
    * @private
-   * @param {*=} value
+   * @param {*} value
    */
   PolyfillPromise.prototype.resolveTo_ = function(value) {
     if (value === this) {
@@ -272,7 +282,7 @@ $jscomp.polyfill('Promise',
   /**
    * Reject this promise for the given reason.
    * @private
-   * @param {*=} reason
+   * @param {*} reason
    * @throws {!Error} if this promise is already fulfilled or rejected.
    */
   PolyfillPromise.prototype.reject_ = function(reason) {

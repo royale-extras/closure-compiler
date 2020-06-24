@@ -41,9 +41,6 @@ BaseAudioContext.prototype.currentTime;
 /** @type {!AudioListener} */
 BaseAudioContext.prototype.listener;
 
-/** @type {!AudioWorklet} */
-BaseAudioContext.prototype.audioWorklet;
-
 /**
  * @type {string}
  * See https://www.w3.org/TR/webaudio/#BaseAudioContext for valid values
@@ -110,6 +107,7 @@ BaseAudioContext.prototype.createBiquadFilter = function() {};
 BaseAudioContext.prototype.createWaveShaper = function() {};
 
 /**
+ * @deprecated Use BaseAudioContext#createSpatialPanner or BaseAudioContext#createStereoPanner
  * @return {!PannerNode}
  */
 BaseAudioContext.prototype.createPanner = function() {};
@@ -135,11 +133,6 @@ BaseAudioContext.prototype.createChannelSplitter = function(numberOfOutputs) {};
  * @return {!ChannelMergerNode}
  */
 BaseAudioContext.prototype.createChannelMerger = function(numberOfInputs) {};
-
-/**
- * @return {!ConstantSourceNode}
- */
-BaseAudioContext.prototype.createConstantSource = function() {};
 
 /**
  * @return {!DynamicsCompressorNode}
@@ -375,13 +368,6 @@ function AudioParam() {}
 AudioParam.prototype.value;
 
 /**
- * @type {string}
- * See https://www.w3.org/TR/webaudio/#dom-audioparam-automationrate for valid
- * values.
- */
-AudioParam.prototype.automationRate;
-
-/**
  * @deprecated
  * @type {number}
  */
@@ -590,7 +576,7 @@ AudioBufferSourceNode.prototype.loopStart;
 /** @type {number} */
 AudioBufferSourceNode.prototype.loopEnd;
 
-/** @type {?function(!Event): void} */
+/** @type {?function(!Event)} */
 AudioBufferSourceNode.prototype.onended;
 
 /** @type {!AudioParam} */
@@ -1427,37 +1413,6 @@ OscillatorNode.prototype.onended;
 function PeriodicWave() {}
 
 /**
- * @record
- * @see https://www.w3.org/TR/webaudio/#dictdef-constantsourceoptions
- */
-function ConstantSourceOptions() {};
-
-/** @const {(number|undefined)} */
-ConstantSourceOptions.offset;
-
-/**
- * @param {!BaseAudioContext} context
- * @param {!ConstantSourceOptions=} options
- * @constructor
- * @extends {AudioNode}
- * @see https://www.w3.org/TR/webaudio/#ConstantSourceNode
- */
-function ConstantSourceNode(context, options) {}
-
-/**
- * @param {number=} when
- */
-ConstantSourceNode.prototype.start = function(when) {};
-
-/**
- * @param {number=} when
- */
-ConstantSourceNode.prototype.stop = function(when) {};
-
-/** @type {!AudioParam} */
-ConstantSourceNode.prototype.offset;
-
-/**
  * @constructor
  * @extends {AudioNode}
  */
@@ -1473,115 +1428,62 @@ function MediaStreamAudioDestinationNode() {}
 MediaStreamAudioDestinationNode.prototype.stream;
 
 /**
- * @constructor
- * @see https://www.w3.org/TR/webaudio/#audioworklet
- * @implements {Worklet}
+ * Definitions for the Web Audio API with webkit prefix.
  */
-function AudioWorklet() {}
 
 /**
  * @constructor
- * @see https://www.w3.org/TR/webaudio/#audioworkletglobalscope
- * @implements {WorkletGlobalScope}
+ * @extends {AudioContext}
  */
-function AudioWorkletGlobalScope() {}
-
-/** @type {number} */
-AudioWorkletGlobalScope.prototype.currentFrame;
-
-/** @type {number} */
-AudioWorkletGlobalScope.prototype.currentTime;
-
-/** @type {number} */
-AudioWorkletGlobalScope.prototype.sampleRate;
+function webkitAudioContext() {}
 
 /**
- * @param {!string} name
- * @param {!function()} processorCtor
+ * @param {number} numberOfChannels
+ * @param {number} length
+ * @param {number} sampleRate
+ * @constructor
+ * @extends {OfflineAudioContext}
  */
-AudioWorkletGlobalScope.prototype.registerProcessor = function(
-    name, processorCtor) {};
+function webkitOfflineAudioContext(numberOfChannels, length, sampleRate) {}
 
 /**
  * @constructor
- * @extends {AudioNode}
- * @param {!BaseAudioContext} context
- * @param {string} name
- * @param {!AudioWorkletNodeOptions=} options
- * @see https://www.w3.org/TR/webaudio/#audioworkletnode
+ * @extends {AudioPannerNode}
  */
-function AudioWorkletNode(context, name, options) {}
-
-/** @type {!EventListener|function()} */
-AudioWorkletNode.prototype.onprocesserror;
-
-/** @type {!Object<string, !AudioParam>} */
-AudioWorkletNode.prototype.parameters;
-
-/** @type {!MessagePort} */
-AudioWorkletNode.prototype.port;
-
-/**
- * @record
- * @see https://webaudio.github.io/web-audio-api/#dictdef-audioworkletnodeoptions
- */
-function AudioWorkletNodeOptions() {};
-
-/** @type {number} */
-AudioWorkletNodeOptions.prototype.numberOfInputs;
-
-/** @type {number} */
-AudioWorkletNodeOptions.prototype.numberOfOutputs;
-
-/** @type {!Array<number>} */
-AudioWorkletNodeOptions.prototype.outputChannelCount;
-
-/** @type {!Object<string, number>} */
-AudioWorkletNodeOptions.prototype.parameterData;
-
-/** @type {?Object} */
-AudioWorkletNodeOptions.prototype.processorOptions;
+function webkitAudioPannerNode() {}
 
 /**
  * @constructor
- * @param {!AudioWorkletNodeOptions=} options
- * @see https://www.w3.org/TR/webaudio/#audioworkletprocessor
+ * @extends {PannerNode}
  */
-function AudioWorkletProcessor(options) {}
-
-/** @type {!MessagePort} */
-AudioWorkletProcessor.prototype.port;
+function webkitPannerNode() {}
 
 /**
- * @param {!Array<!Array<!Float32Array>>} inputs
- * @param {!Array<!Array<!Float32Array>>} outputs
- * @param {!Object<string, !Float32Array>} parameters
- * @return {boolean}
+ * Definitions for the Audio API as implemented in Firefox.
+ *   Please note that this document describes a non-standard experimental API.
+ *   This API is considered deprecated.
+ * @see https://developer.mozilla.org/en/DOM/HTMLAudioElement
  */
-AudioWorkletProcessor.prototype.process = function(
-    inputs, outputs, parameters) {};
 
 /**
- * @record
- * @see https://www.w3.org/TR/webaudio/#dictdef-audioparamdescriptor
+ * @param {string=} src
+ * @constructor
+ * @extends {HTMLAudioElement}
  */
-function AudioParamDescriptor() {};
+function Audio(src) {}
 
 /**
- * @type {string}
- * See https://www.w3.org/TR/webaudio/#dom-audioparam-automationrate for valid
- * values.
+ * @param {number} channels
+ * @param {number} rate
  */
-AudioParamDescriptor.prototype.automationRate;
+Audio.prototype.mozSetup = function(channels, rate) {};
 
-/** @type {number} */
-AudioParamDescriptor.prototype.defaultValue;
+/**
+ * @param {Array|Float32Array} buffer
+ */
+Audio.prototype.mozWriteAudio = function(buffer) {};
 
-/** @type {number} */
-AudioParamDescriptor.prototype.maxValue;
-
-/** @type {number} */
-AudioParamDescriptor.prototype.minValue;
-
-/** @type {string} */
-AudioParamDescriptor.prototype.name;
+/**
+ * @return {number}
+ */
+Audio.prototype.mozCurrentSampleOffset = function() {};

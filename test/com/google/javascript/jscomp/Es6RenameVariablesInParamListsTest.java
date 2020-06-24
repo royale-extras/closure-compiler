@@ -50,6 +50,11 @@ public final class Es6RenameVariablesInParamListsTest extends CompilerTestCase {
     return new Es6RenameVariablesInParamLists(compiler);
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testRenameVar() {
     test("var x = 5; function f(y=x) { var x; }",

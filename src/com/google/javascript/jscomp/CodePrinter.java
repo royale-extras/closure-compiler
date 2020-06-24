@@ -18,6 +18,8 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.base.CharMatcher;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.debugging.sourcemap.FilePosition;
 import com.google.javascript.jscomp.CodePrinter.Builder.CodeGeneratorFactory;
@@ -48,11 +50,6 @@ public final class CodePrinter {
   private abstract static class MappedCodePrinter extends CodeConsumer {
     private final Deque<Mapping> mappings;
     private final List<Mapping> allMappings;
-    // The ordered list of finalized mappings since the last line break. See #reportLineCut.
-    private final List<Mapping> completeMappings;
-    // The index into allMappings to find the mappings added since the last line
-    // break. See #reportLineCut.
-    private int firstCandidateMappingForCut = 0;
     private final boolean createSrcMap;
     private final SourceMap.DetailLevel sourceMapDetailLevel;
     protected final StringBuilder code = new StringBuilder(1024);
@@ -71,7 +68,6 @@ public final class CodePrinter {
       this.sourceMapDetailLevel = sourceMapDetailLevel;
       this.mappings = createSrcMap ? new ArrayDeque<Mapping>() : null;
       this.allMappings = createSrcMap ? new ArrayList<Mapping>() : null;
-      this.completeMappings = createSrcMap ? new ArrayList<Mapping>() : null;
     }
 
     /**
@@ -93,13 +89,6 @@ public final class CodePrinter {
         // This toString() representation is used for debugging purposes only.
         return "Mapping: start " + start + ", end " + end + ", node " + node;
       }
-    }
-
-    /** Appends a string to the code, keeping track of the current line length. */
-    @Override
-    void append(String str) {
-      code.append(str);
-      lineLength += str.length();
     }
 
     /**
@@ -137,7 +126,6 @@ public final class CodePrinter {
         int index = getCurrentCharIndex();
         checkState(line >= 0);
         mapping.end = new FilePosition(line, index);
-        completeMappings.add(mapping);
       }
     }
 
@@ -157,55 +145,67 @@ public final class CodePrinter {
     }
 
     /**
-     * Reports to the code consumer that the given line has been cut at the given position, i.e. a
-     * \n has been inserted there. All mappings in the source maps after that position will be
-     * renormalized as needed.
+     * Reports to the code consumer that the given line has been cut at the
+     * given position, i.e. a \n has been inserted there. Or that a cut has
+     * been undone, i.e. a previously inserted \n has been removed.
+     * All mappings in the source maps after that position will be renormalized
+     * as needed.
      */
-    void reportLineCut(int lineIndex, int charIndex) {
+    void reportLineCut(int lineIndex, int charIndex, boolean insertion) {
       if (createSrcMap) {
-        // To avoid iterating over every mapping, every time we cut a line (which can get
-        // excessively expensive for large files), we keep track of mappings that must be
-        // before the next cut. For the start of mappings, we can use the order in allMappings.
-        // However, mapping ends do not have their own entry in the list so we must track those
-        // separately.
+        for (Mapping mapping : allMappings) {
+          mapping.start = convertPosition(mapping.start, lineIndex, charIndex,
+              insertion);
 
-        int mappingCount = allMappings.size();
-        for (int i = firstCandidateMappingForCut; i < mappingCount; i++) {
-          Mapping mapping = allMappings.get(i);
-          mapping.start = convertPositionAfterLineCut(mapping.start, lineIndex, charIndex);
+          if (mapping.end != null) {
+            mapping.end = convertPosition(mapping.end, lineIndex, charIndex,
+                insertion);
+          }
         }
-        firstCandidateMappingForCut = mappingCount;
-
-        for (Mapping mapping : completeMappings) {
-          mapping.end = convertPositionAfterLineCut(mapping.end, lineIndex, charIndex);
-        }
-        // To avoid iterating over every mapping, every time we cut a line, keep track of
-        // mappings that must end before the next cut.
-        completeMappings.clear();
       }
     }
 
     /**
-     * Converts the given position by normalizing it against the insertion at the given line and
-     * character position.
+     * Converts the given position by normalizing it against the insertion
+     * or removal of a newline at the given line and character position.
      *
      * @param position The existing position before the newline was inserted.
      * @param lineIndex The index of the line at which the newline was inserted.
-     * @param characterPosition The position on the line at which the newline was inserted.
+     * @param characterPosition The position on the line at which the newline
+     *     was inserted.
+     * @param insertion True if a newline was inserted, false if a newline was
+     *     removed.
+     *
      * @return The normalized position.
-     * @throws IllegalStateException if an attempt to reverse a line cut is made on a previous line
-     *     rather than the current line.
+     * @throws IllegalStateException if an attempt to reverse a line cut is
+     *     made on a previous line rather than the current line.
      */
-    private static FilePosition convertPositionAfterLineCut(
-        FilePosition position, int lineIndex, int characterPosition) {
+    private static FilePosition convertPosition(FilePosition position, int lineIndex,
+                                                int characterPosition, boolean insertion) {
       int originalLine = position.getLine();
       int originalChar = position.getColumn();
-      if (originalLine == lineIndex && originalChar >= characterPosition) {
-        // If the position falls on the line itself, then normalize it
-        // if it falls at or after the place the newline was inserted.
-        return new FilePosition(originalLine + 1, originalChar - characterPosition);
+      if (insertion) {
+        if (originalLine == lineIndex && originalChar >= characterPosition) {
+          // If the position falls on the line itself, then normalize it
+          // if it falls at or after the place the newline was inserted.
+          return new FilePosition(
+              originalLine + 1, originalChar - characterPosition);
+        } else {
+          return position;
+        }
       } else {
-        return position;
+        if (originalLine == lineIndex) {
+          return new FilePosition(
+              originalLine - 1, originalChar + characterPosition);
+        } else if (originalLine > lineIndex) {
+            // Not supported, can only undo a cut on the most recent line. To
+            // do this on a previous lines would require reevaluating the cut
+            // positions on all subsequent lines.
+            throw new IllegalStateException(
+                "Cannot undo line cut on a previous line.");
+        } else {
+          return position;
+        }
       }
     }
 
@@ -262,7 +262,7 @@ public final class CodePrinter {
         return endPosition;
       }
 
-      checkState(
+      Preconditions.checkState(
           endPosition.getColumn() <= lineLengths.get(line),
           "End position %s points to a column larger than line length %s",
           endPosition,
@@ -297,20 +297,25 @@ public final class CodePrinter {
     }
 
     /**
-     * Appends an appropriately indented string to the code, keeping track of the current line count
-     * and line length.
+     * Appends a string to the code, keeping track of the current line length.
      */
     @Override
     void append(String str) {
-      // For pretty printing: indent at the beginning of the line, except template literal lines.
-      if (lineLength == 0 && !isInTemplateLiteral()) {
+      // For pretty printing: indent at the beginning of the line
+      if (lineLength == 0) {
         for (int i = 0; i < indent; i++) {
           code.append(INDENT);
           lineLength += INDENT.length();
         }
       }
-
-      super.append(str);
+      code.append(str);
+      lineLength += str.length();
+      // Correct lineIndex and lineLength if there were newlines in the string.
+      int newlines = CharMatcher.is('\n').countIn(str);
+      if (newlines > 0) {
+        lineIndex += newlines;
+        lineLength = str.length() - str.lastIndexOf('\n');
+      }
     }
 
     /**
@@ -359,13 +364,11 @@ public final class CodePrinter {
      */
     @Override
     void startNewLine() {
-      if (lineLength <= 0 && !this.isInTemplateLiteral()) {
-        return;
+      if (lineLength > 0) {
+        code.append('\n');
+        lineIndex++;
+        lineLength = 0;
       }
-
-      code.append('\n');
-      lineIndex++;
-      lineLength = 0;
     }
 
     @Override
@@ -392,7 +395,7 @@ public final class CodePrinter {
     @Override
     void appendBlockStart() {
       maybeInsertSpace();
-      add("{");
+      append("{");
       indent++;
     }
 
@@ -401,7 +404,7 @@ public final class CodePrinter {
       maybeEndStatement();
       endLine();
       indent--;
-      add("}");
+      append("}");
     }
 
     @Override
@@ -434,11 +437,11 @@ public final class CodePrinter {
     @Override
     void appendOp(String op, boolean binOp) {
       if (getLastChar() != ' ' && binOp && op.charAt(0) != ',') {
-        add(" ");
+        append(" ");
       }
-      add(op);
+      append(op);
       if (binOp) {
-        add(" ");
+        append(" ");
       }
     }
 
@@ -502,7 +505,7 @@ public final class CodePrinter {
 
     @Override
     void endStatement(boolean needsSemicolon) {
-      add(";");
+      append(";");
       endLine();
       statementNeedsEnded = false;
     }
@@ -557,12 +560,11 @@ public final class CodePrinter {
     // probably require explicit modeling of the gzip algorithm.
 
     private final boolean lineBreak;
-    // Sometimes we'd like for the file to end in a line break. That way, if multiple files are
-    // concatentated, the sourcemaps of later files are still valid.
     private final boolean preferLineBreakAtEndOfFile;
-
     private int lineStartPosition = 0;
     private int preferredBreakPosition = 0;
+    private int prevCutPosition = 0;
+    private int prevLineStartPosition = 0;
 
   /**
    * @param lineBreak break the lines a bit more aggressively
@@ -582,18 +584,33 @@ public final class CodePrinter {
     }
 
     /**
+     * Appends a string to the code, keeping track of the current line length.
+     */
+    @Override
+    void append(String str) {
+      code.append(str);
+      lineLength += str.length();
+      // Correct lineIndex and lineLength if there were newlines in the string.
+      int newlines = CharMatcher.is('\n').countIn(str);
+      if (newlines > 0) {
+        lineIndex += newlines;
+        lineLength = str.length() - str.lastIndexOf('\n');
+      }
+    }
+
+    /**
      * Adds a newline to the code, resetting the line length.
      */
     @Override
     void startNewLine() {
-      if (lineLength <= 0 && !this.isInTemplateLiteral()) {
-        return;
+      if (lineLength > 0) {
+        prevCutPosition = code.length();
+        prevLineStartPosition = lineStartPosition;
+        code.append('\n');
+        lineLength = 0;
+        lineIndex++;
+        lineStartPosition = code.length();
       }
-
-      code.append('\n');
-      lineLength = 0;
-      lineIndex++;
-      lineStartPosition = code.length();
     }
 
     @Override
@@ -624,21 +641,21 @@ public final class CodePrinter {
      */
     @Override
     void maybeCutLine() {
-      if (lineLength <= lineLengthThreshold) {
-        return;
-      }
-
-      // Use the preferred position provided it will break the line.
-      if (preferredBreakPosition > lineStartPosition
-          && preferredBreakPosition < lineStartPosition + lineLength) {
-        // If the preferred break position is on the current line.
-        code.insert(preferredBreakPosition, '\n');
-        reportLineCut(lineIndex, preferredBreakPosition - lineStartPosition);
-        lineIndex++;
-        lineLength -= (preferredBreakPosition - lineStartPosition);
-        lineStartPosition = preferredBreakPosition + 1; // Jump over the inserted newline.
-      } else {
-        startNewLine();
+      if (lineLength > lineLengthThreshold) {
+        // Use the preferred position provided it will break the line.
+        if (preferredBreakPosition > lineStartPosition &&
+            preferredBreakPosition < lineStartPosition + lineLength) {
+          int position = preferredBreakPosition;
+          code.insert(position, '\n');
+          prevCutPosition = position;
+          reportLineCut(lineIndex, position - lineStartPosition, true);
+          lineIndex++;
+          lineLength -= (position - lineStartPosition);
+          prevLineStartPosition = lineStartPosition;
+          lineStartPosition = position + 1;
+        } else {
+          startNewLine();
+        }
       }
     }
 
@@ -653,9 +670,30 @@ public final class CodePrinter {
       if (!preferLineBreakAtEndOfFile) {
         return;
       }
-
-      maybeEndStatement();
-      startNewLine();
+      if (lineLength > lineLengthThreshold / 2) {
+        // Add an extra break at end of file.
+        append(";");
+        startNewLine();
+      } else if (prevCutPosition > 0) {
+        // Shift the previous break to end of file by replacing it with a
+        // <space> and adding a new break at end of file. Adding the space
+        // handles cases like instanceof\nfoo. (it would be nice to avoid this)
+        code.setCharAt(prevCutPosition, ' ');
+        lineStartPosition = prevLineStartPosition;
+        lineLength = code.length() - lineStartPosition;
+        // We need +1 to account for the space added few lines above.
+        int prevLineEndPosition = prevCutPosition - prevLineStartPosition + 1;
+        reportLineCut(lineIndex, prevLineEndPosition, false);
+        lineIndex--;
+        prevCutPosition = 0;
+        prevLineStartPosition = 0;
+        append(";");
+        startNewLine();
+      } else {
+        // A small file with no line breaks. We do nothing in this case to
+        // avoid excessive line breaks. It's not ideal if a lot of these pile
+        // up, but that is reasonably unlikely.
+      }
     }
 
   }

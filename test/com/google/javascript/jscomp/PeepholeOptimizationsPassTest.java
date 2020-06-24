@@ -138,7 +138,7 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
         }
 
         for (Node childToRemove : nodesToRemove) {
-          reportChangeToEnclosingScope(node);
+          compiler.reportChangeToEnclosingScope(node);
           node.removeChild(childToRemove);
         }
       }
@@ -156,7 +156,7 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
     @Override
     public Node optimizeSubtree(Node node) {
       if (node.isName() && "x".equals(node.getString())) {
-        reportChangeToEnclosingScope(node);
+        compiler.reportChangeToEnclosingScope(node);
         node.detach();
 
         return null;
@@ -177,7 +177,7 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
       if (node.isName() && "x".equals(node.getString())) {
         Node parent = node.getParent();
         if (parent.isVar()) {
-          reportChangeToEnclosingScope(parent);
+          compiler.reportChangeToEnclosingScope(parent);
           parent.detach();
           return null;
         }
@@ -197,7 +197,7 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
         Node replacement = Node.newString(Token.NAME, "x");
 
         node.replaceWith(replacement);
-        reportChangeToEnclosingScope(replacement);
+        compiler.reportChangeToEnclosingScope(replacement);
 
         return replacement;
       }

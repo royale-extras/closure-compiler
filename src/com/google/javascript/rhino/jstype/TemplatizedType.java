@@ -43,7 +43,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.annotations.GwtIncompatible;
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.rhino.ErrorReporter;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 
@@ -55,14 +54,12 @@ import java.util.Objects;
 public final class TemplatizedType extends ProxyObjectType {
   private static final long serialVersionUID = 1L;
 
-  private static final JSTypeClass TYPE_CLASS = JSTypeClass.TEMPLATIZED;
-
   /** A cache of the type parameter values for this specialization. */
   private final ImmutableList<JSType> templateTypes;
   /** Whether all type parameter values for this specialization are `?`. */
   private final boolean isSpecializedOnlyWithUnknown;
 
-  private transient TemplateTypeReplacer replacer;
+  private transient TemplateTypeMapReplacer replacer;
 
   TemplatizedType(
       JSTypeRegistry registry, ObjectType objectType,
@@ -72,7 +69,8 @@ public final class TemplatizedType extends ProxyObjectType {
 
     ImmutableList.Builder<JSType> builder = ImmutableList.builder();
     boolean maybeIsSpecializedOnlyWithUnknown = true;
-    for (TemplateType newlyFilledTemplateKey : objectType.getTypeParameters()) {
+    for (TemplateType newlyFilledTemplateKey :
+        objectType.getTemplateTypeMap().getUnfilledTemplateKeys()) {
       JSType resolvedType = getTemplateTypeMap().getResolvedTemplateType(newlyFilledTemplateKey);
 
       builder.add(resolvedType);
@@ -82,14 +80,7 @@ public final class TemplatizedType extends ProxyObjectType {
     this.templateTypes = builder.build();
     this.isSpecializedOnlyWithUnknown = maybeIsSpecializedOnlyWithUnknown;
 
-    this.replacer = TemplateTypeReplacer.forPartialReplacement(registry, getTemplateTypeMap());
-
-    registry.getResolver().resolveIfClosed(this, TYPE_CLASS);
-  }
-
-  @Override
-  JSTypeClass getTypeClass() {
-    return TYPE_CLASS;
+    this.replacer = new TemplateTypeMapReplacer(registry, getTemplateTypeMap());
   }
 
   // NOTE(dimvar): If getCtorImplementedInterfaces is implemented here, this is the
@@ -116,11 +107,19 @@ public final class TemplatizedType extends ProxyObjectType {
   }
 
   @Override
-  void appendTo(TypeStringBuilder sb) {
-    super.appendTo(sb);
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
+    super.appendTo(sb, forAnnotations);
     if (!this.templateTypes.isEmpty()) {
-      sb.append("<").appendAll(this.templateTypes, ",").append(">");
+      sb.append("<");
+      int lastIndex = this.templateTypes.size() - 1;
+      for (int i = 0; i < lastIndex; i++) {
+        this.templateTypes.get(i).appendTo(sb, forAnnotations);
+        sb.append(",");
+      }
+      this.templateTypes.get(lastIndex).appendTo(sb, forAnnotations);
+      sb.append(">");
     }
+    return sb;
   }
 
   @Override
@@ -159,9 +158,20 @@ public final class TemplatizedType extends ProxyObjectType {
     return result == null ? null : result.visit(replacer);
   }
 
+  @Override
+  public boolean isSubtype(JSType that) {
+    return isSubtype(that, ImplCache.create(), SubtypingMode.NORMAL);
+  }
+
+  @Override
+  protected boolean isSubtype(JSType that,
+      ImplCache implicitImplCache, SubtypingMode subtypingMode) {
+    return isSubtypeHelper(this, that, implicitImplCache, subtypingMode);
+  }
+
   boolean wrapsSameRawType(JSType that) {
     return that.isTemplatizedType() && this.getReferencedTypeInternal()
-        .equals(
+        .isEquivalentTo(
             that.toMaybeTemplatizedType().getReferencedTypeInternal());
   }
 
@@ -189,7 +199,8 @@ public final class TemplatizedType extends ProxyObjectType {
     TemplatizedType that = rawThat.toMaybeTemplatizedType();
     checkNotNull(that);
 
-    if (this.equals(that)) {
+    if (getTemplateTypeMap().checkEquivalenceHelper(
+        that.getTemplateTypeMap(), EquivalenceMethod.INVARIANT, SubtypingMode.NORMAL)) {
       return this;
     }
 
@@ -219,27 +230,6 @@ public final class TemplatizedType extends ProxyObjectType {
   @GwtIncompatible("ObjectInputStream")
   private void readObject(java.io.ObjectInputStream in) throws Exception {
     in.defaultReadObject();
-    replacer = TemplateTypeReplacer.forPartialReplacement(registry, templateTypeMap);
-  }
-
-  @SuppressWarnings("ReferenceEquality")
-  @Override
-  JSType resolveInternal(ErrorReporter reporter) {
-    JSType baseTypeBefore = getReferencedType();
-    super.resolveInternal(reporter);
-
-    boolean rebuild = baseTypeBefore != getReferencedType();
-    ImmutableList.Builder<JSType> builder = ImmutableList.builder();
-    for (JSType type : templateTypes) {
-      JSType resolved = type.resolve(reporter);
-      rebuild |= resolved != type;
-      builder.add(resolved);
-    }
-
-    if (rebuild) {
-      return new TemplatizedType(registry, getReferencedType(), builder.build());
-    } else {
-      return this;
-    }
+    replacer = new TemplateTypeMapReplacer(registry, templateTypeMap);
   }
 }

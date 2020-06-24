@@ -157,11 +157,8 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
         visitEnum(t, n, parent);
         break;
       case NAME:
+      case REST:
         maybeVisitColonType(t, n, n);
-        break;
-      case ITER_REST:
-      case OBJECT_REST:
-        maybeVisitColonType(t, n, n.getOnlyChild());
         break;
       case FUNCTION:
         visitFunction(t, n, parent);
@@ -236,8 +233,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     if (interfaces != null) {
       for (Node child : interfaces.children()) {
         Node type = convertWithLocation(child);
-        doc.recordImplementedInterface(
-            new JSTypeExpression(type.srcrefTree(n), n.getSourceFileName()));
+        doc.recordImplementedInterface(new JSTypeExpression(type, n.getSourceFileName()));
       }
       n.removeProp(Node.IMPLEMENTS);
     }
@@ -291,8 +287,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     if (!superTypes.isEmpty()) {
       for (Node child : superTypes.children()) {
         Node type = convertWithLocation(child);
-        doc.recordExtendedInterface(
-            new JSTypeExpression(type.srcrefTree(n), n.getSourceFileName()));
+        doc.recordExtendedInterface(new JSTypeExpression(type, n.getSourceFileName()));
       }
     }
 
@@ -330,7 +325,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     Node empty = new Node(Token.EMPTY).useSourceInfoIfMissingFrom(n);
     n.replaceChild(superTypes, empty);
     members.setToken(Token.CLASS_MEMBERS);
-    NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.CLASSES, compiler);
+    NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CLASSES);
 
     maybeCreateQualifiedDeclaration(t, n, parent);
     t.reportCodeChange();
@@ -404,7 +399,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     String qName = maybePrependCurrNamespace(oldName);
     JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(n.getJSDocInfo());
     builder.recordEnumParameterType(
-        new JSTypeExpression(IR.string("number").srcref(n), n.getSourceFileName()));
+        new JSTypeExpression(IR.string("number"), n.getSourceFileName()));
     Node newDec = NodeUtil.newQNameDeclaration(
         compiler,
         qName,
@@ -442,10 +437,8 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       Node originalJsDocNode = originalParent.isMemberFunctionDef() || originalParent.isAssign()
           ? originalParent : original;
       JSDocInfoBuilder builder = new JSDocInfoBuilder(false);
-      builder.recordType(
-          new JSTypeExpression(
-              convertWithLocation(TypeDeclarationsIR.namedType("Function")).srcrefTree(n),
-              n.getSourceFileName()));
+      builder.recordType(new JSTypeExpression(
+          convertWithLocation(TypeDeclarationsIR.namedType("Function")), n.getSourceFileName()));
       originalJsDocNode.setJSDocInfo(builder.build());
       return;
     }
@@ -483,7 +476,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     Node type = n.getDeclaredTypeExpression();
     boolean hasColonType = type != null;
     if (n.isRest() && hasColonType) {
-      type = new Node(Token.ITER_REST, convertWithLocation(type.removeFirstChild()));
+      type = new Node(Token.ELLIPSIS, convertWithLocation(type.removeFirstChild()));
     } else if (n.isMemberVariableDef()) {
       if (type != null) {
         type = maybeProcessOptionalProperty(n, type);
@@ -496,8 +489,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     }
 
     JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(jsDocNode.getJSDocInfo());
-    JSTypeExpression typeExpression =
-        new JSTypeExpression(type.srcrefTree(n), n.getSourceFileName());
+    JSTypeExpression typeExpression = new JSTypeExpression(type, n.getSourceFileName());
     switch (n.getToken()) {
       case FUNCTION:
         builder.recordReturnType(typeExpression);
@@ -525,9 +517,8 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
           JSError.make(n, TYPE_ALIAS_ALREADY_DECLARED, alias));
     }
     JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(n.getJSDocInfo());
-    builder.recordTypedef(
-        new JSTypeExpression(
-            convertWithLocation(n.getFirstChild()).srcrefTree(n), n.getSourceFileName()));
+    builder.recordTypedef(new JSTypeExpression(
+        convertWithLocation(n.getFirstChild()), n.getSourceFileName()));
 
     Node newName =
         maybeGetQualifiedNameNode(IR.name(n.getString())).useSourceInfoIfMissingFromForTree(n);
@@ -707,10 +698,10 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
           Node paramType = param.getDeclaredTypeExpression();
           if (param.isRest()) {
             if (paramType == null) {
-                paramType = new Node(Token.ITER_REST, new Node(Token.QMARK));
+              paramType = new Node(Token.ELLIPSIS, new Node(Token.QMARK));
             } else {
-                paramType =
-                    new Node(Token.ITER_REST, convertWithLocation(paramType.getFirstChild()));
+              paramType = new Node(Token.ELLIPSIS,
+                  convertWithLocation(paramType.getFirstChild()));
             }
           } else {
             paramType = maybeProcessOptionalParameter(param,

@@ -39,23 +39,21 @@
 
 package com.google.javascript.rhino.jstype;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.javascript.rhino.jstype.TernaryValue.FALSE;
 import static com.google.javascript.rhino.jstype.TernaryValue.UNKNOWN;
 
-import com.google.common.collect.AbstractIterator;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.Property.OwnedProperty;
 import java.io.Serializable;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import javax.annotation.Nullable;
 
 /**
@@ -111,8 +109,7 @@ public abstract class ObjectType extends JSType implements Serializable {
    * for lazily-resolved prototypes.
    */
   public Property getSlot(String name) {
-    OwnedProperty property = getPropertyMap().findClosest(name);
-    return property == null ? null : property.getValue();
+    return getPropertyMap().getSlot(name);
   }
 
   public final Property getOwnSlot(String name) {
@@ -200,7 +197,7 @@ public abstract class ObjectType extends JSType implements Serializable {
    *
    * <p>Returning an empty string means something different than returning null. An empty string may
    * indicate an anonymous constructor, which we treat differently than a literal type without a
-   * reference name. e.g. in {@link InstanceObjectType#appendTo(TypeStringBuilder)}
+   * reference name. e.g. in {@link InstanceObjectType#appendTo(StringBuilder, boolean)}
    *
    * @return the object's name or {@code null} if this is an anonymous object
    */
@@ -264,6 +261,10 @@ public abstract class ObjectType extends JSType implements Serializable {
     return t == null ? this : t.getReferencedType();
   }
 
+  public final ObjectType instantiateGenericsWithUnknown() {
+    return this.registry.instantiateGenericsWithUnknown(this);
+  }
+
   @Override
   public TernaryValue testForEquality(JSType that) {
     // super
@@ -276,15 +277,10 @@ public abstract class ObjectType extends JSType implements Serializable {
     // are not related we don't want to allow "==" on them (similiarly we should disallow
     // number == for non-number context values, etc).
 
-    if (that.isUnknownType()
-        || that.isSubtypeOf(getNativeType(JSTypeNative.OBJECT_TYPE))
-        || that.isSubtypeOf(getNativeType(JSTypeNative.NUMBER_TYPE))
-        || that.isSubtypeOf(getNativeType(JSTypeNative.STRING_TYPE))
-        || that.isSubtypeOf(getNativeType(JSTypeNative.BOOLEAN_TYPE))
-        || that.isSubtypeOf(getNativeType(JSTypeNative.SYMBOL_TYPE))
-        || that.isSubtypeOf(getNativeType(JSTypeNative.BIGINT_TYPE))) {
+    if (that.isSubtypeOf(getNativeType(JSTypeNative.OBJECT_NUMBER_STRING_BOOLEAN_SYMBOL))) {
       return UNKNOWN;
     }
+
     return FALSE;
   }
 
@@ -304,59 +300,23 @@ public abstract class ObjectType extends JSType implements Serializable {
     return iproto == null ? null : iproto.getConstructor();
   }
 
-  /**
-   * Returns the top most type that defines the property.
-   *
-   * <p>Note: if you are doing type validation, you are probably looking for the closest definition
-   * of the property which could be resolved by {@link #getClosestDefiningType}.
-   */
-  public final ObjectType getTopMostDefiningType(String propertyName) {
-    OwnedProperty property = getPropertyMap().findTopMost(propertyName);
-    return property == null ? null : property.getOwner();
-  }
-
-  /** Returns the closest ancestor that defines the property including this type itself. */
-  public final ObjectType getClosestDefiningType(String propertyName) {
-    OwnedProperty property = getPropertyMap().findClosest(propertyName);
-    return property == null ? null : property.getOwner();
-  }
-
-  /** Returns the closest definition of the property including this type itself. */
-  public final OwnedProperty findClosestDefinition(String propertyName) {
-    return getPropertyMap().findClosest(propertyName);
+  public final ObjectType getTopDefiningInterface(String propertyName) {
+    ObjectType foundType = null;
+    if (hasProperty(propertyName)) {
+      foundType = this;
+    }
+    for (ObjectType interfaceType : getCtorExtendedInterfaces()) {
+      if (interfaceType.hasProperty(propertyName)) {
+        foundType = interfaceType.getTopDefiningInterface(propertyName);
+      }
+    }
+    return foundType;
   }
 
   /**
    * Gets the implicit prototype (a.k.a. the {@code [[Prototype]]} property).
    */
   public abstract ObjectType getImplicitPrototype();
-
-  /**
-   * Returns a lazy, dynamic {@link Iterable} for the types forming the implicit prototype chain of
-   * this type.
-   *
-   * <p>The chain is iterated bottom to top; from the nearest ancestor to the most distant.
-   * Iteration stops when the next ancestor would be a {@code null} reference.
-   *
-   * <p>The created {@link Iterator}s will not reflect changes to the prototype chain of elements it
-   * has already iterated past, but will reflect those of upcoming elements. Neither the {@link
-   * Iterable} nor its {@link Iterator} support mutation.
-   */
-  public final Iterable<ObjectType> getImplicitPrototypeChain() {
-    final ObjectType self = this;
-
-    return () ->
-        new AbstractIterator<ObjectType>() {
-
-          private ObjectType next = self; // We increment past this type before first access.
-
-          @Override
-          public ObjectType computeNext() {
-            next = next.getImplicitPrototype();
-            return (next != null) ? next : endOfData();
-          }
-        };
-  }
 
   /**
    * Defines a property whose type is explicitly declared by the programmer.
@@ -400,14 +360,12 @@ public abstract class ObjectType extends JSType implements Serializable {
         // We never want to hide a declared property with an inferred property.
         return true;
       }
-      JSType originalType = checkNotNull(getPropertyType(propertyName));
-      type = originalType.getLeastSupertype(type);
+      JSType originalType = getPropertyType(propertyName);
+      type = originalType == null ? type : originalType.getLeastSupertype(type);
     }
-    // TODO(b/140764208): verify that if isResolved() then type.isResolved().
-    // Defining unresolved properties on resolved types is dangerous because the property type
-    // may never be resolved.
 
-    boolean result = defineProperty(propertyName, type, true, propertyNode);
+    boolean result = defineProperty(propertyName, type, true,
+        propertyNode);
 
     // All property definitions go through this method
     // or defineDeclaredProperty. Because the properties defined an an
@@ -505,7 +463,7 @@ public abstract class ObjectType extends JSType implements Serializable {
   }
 
   @Override
-  protected JSType findPropertyTypeWithoutConsideringTemplateTypes(String propertyName) {
+  public JSType findPropertyType(String propertyName) {
     return hasProperty(propertyName) ? getPropertyType(propertyName) : null;
   }
 
@@ -611,9 +569,101 @@ public abstract class ObjectType extends JSType implements Serializable {
     return getPropertyMap().getPropertiesCount();
   }
 
-  /** Returns a list of properties defined or inferred on this type and any of its supertypes. */
-  public final ImmutableSortedSet<String> getPropertyNames() {
-    return getPropertyMap().keySet();
+  /**
+   * Check for structural equivalence with {@code that}.
+   * (e.g. two @record types with the same prototype properties)
+   */
+  final boolean checkStructuralEquivalenceHelper(
+      ObjectType otherObject, EquivalenceMethod eqMethod, EqCache eqCache) {
+    if (this.isTemplatizedType() && this.toMaybeTemplatizedType().wrapsSameRawType(otherObject)) {
+      return this.getTemplateTypeMap().checkEquivalenceHelper(
+          otherObject.getTemplateTypeMap(), eqMethod, eqCache, SubtypingMode.NORMAL);
+    }
+
+    MatchStatus result = eqCache.checkCache(this, otherObject);
+    if (result != null) {
+      return result.subtypeValue();
+    }
+    Set<String> keySet = getPropertyNames();
+    Set<String> otherKeySet = otherObject.getPropertyNames();
+    if (!otherKeySet.equals(keySet)) {
+      eqCache.updateCache(this, otherObject, MatchStatus.NOT_MATCH);
+      return false;
+    }
+    for (String key : keySet) {
+      if (!otherObject.getPropertyType(key).checkEquivalenceHelper(
+              getPropertyType(key), eqMethod, eqCache)) {
+        eqCache.updateCache(this, otherObject, MatchStatus.NOT_MATCH);
+        return false;
+      }
+    }
+    eqCache.updateCache(this, otherObject, MatchStatus.MATCH);
+    return true;
+  }
+
+  private static boolean isStructuralSubtypeHelper(
+      ObjectType typeA, ObjectType typeB,
+      ImplCache implicitImplCache, SubtypingMode subtypingMode) {
+
+    // typeA is a subtype of record type typeB iff:
+    // 1) typeA has all the non-optional properties declared in typeB.
+    // 2) And for each property of typeB, its type must be
+    //    a super type of the corresponding property of typeA.
+    for (String property : typeB.getPropertyNames()) {
+      JSType propB = typeB.getPropertyType(property);
+      if (!typeA.hasProperty(property)) {
+        // Currently, any type that explicitly includes undefined (eg, `?|undefined`) is optional.
+        if (propB.isExplicitlyVoidable()) {
+          continue;
+        }
+        return false;
+      }
+      JSType propA = typeA.getPropertyType(property);
+      if (!propA.isSubtype(propB, implicitImplCache, subtypingMode)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Determine if {@code this} is a an implicit subtype of {@code superType}.
+   */
+  final boolean isStructuralSubtype(ObjectType superType,
+      ImplCache implicitImplCache, SubtypingMode subtypingMode) {
+    // Union types should be handled by isSubtype already
+    checkArgument(!this.isUnionType());
+    checkArgument(!superType.isUnionType());
+    Preconditions.checkArgument(superType.isStructuralType(),
+        "isStructuralSubtype should be called with structural supertype. Found %s", superType);
+
+    MatchStatus cachedResult = implicitImplCache.checkCache(this, superType);
+    if (cachedResult != null) {
+      return cachedResult.subtypeValue();
+    }
+
+    boolean result = isStructuralSubtypeHelper(
+        this, superType, implicitImplCache, subtypingMode);
+    implicitImplCache.updateCache(
+        this, superType, result ? MatchStatus.MATCH : MatchStatus.NOT_MATCH);
+    return result;
+  }
+
+  /**
+   * Returns a list of properties defined or inferred on this type and any of
+   * its supertypes.
+   */
+  public final Set<String> getPropertyNames() {
+    Set<String> props = new TreeSet<>();
+    collectPropertyNames(props);
+    return props;
+  }
+
+  /**
+   * Adds any properties defined on this type or its supertypes to the set.
+   */
+  final void collectPropertyNames(Set<String> props) {
+    getPropertyMap().collectPropertyNames(props);
   }
 
   @Override
@@ -626,51 +676,27 @@ public abstract class ObjectType extends JSType implements Serializable {
   }
 
   /**
-   * Returns whether {@code this} is on the implicit prototype chain of {@code other}.
+   * Checks that the prototype is an implicit prototype of this object. Since
+   * each object has an implicit prototype, an implicit prototype's
+   * implicit prototype is also this implicit prototype's.
    *
-   * <p>{@code this} need not be the immediate prototype of {@code other}.
+   * @param prototype any prototype based object
+   *
+   * @return {@code true} if {@code prototype} is {@code equal} to any
+   *         object in this object's implicit prototype chain.
    */
-  final boolean isImplicitPrototypeOf(ObjectType other) {
-    ObjectType unwrappedThis = deeplyUnwrap(this);
-
-    for (other = deeplyUnwrap(other);
-        other != null;
-        other = deeplyUnwrap(other.getImplicitPrototype())) {
-      // The prototype should match exactly.
-      // NOTE: the use of "==" here rather than equals is deliberate.  This method
-      // is very hot in the type checker and relying on identity improves performance of both
-      // type checking/type inferrence and property disambiguation.
-      if (JSType.areIdentical(unwrappedThis, other)) {
+  final boolean isImplicitPrototype(ObjectType prototype) {
+    for (ObjectType current = this;
+         current != null;
+         current = current.getImplicitPrototype()) {
+      if (current.isTemplatizedType()) {
+        current = current.toMaybeTemplatizedType().getReferencedType();
+      }
+      if (current.isEquivalentTo(prototype)) {
         return true;
       }
     }
-
     return false;
-  }
-
-  /**
-   * Recursively unwraps all {@link ProxyObjectType}s, including unwrapping the raw type out of a
-   * templatized type.
-   *
-   * <p>Guaranteed to return a non-proxy type (exception: will return an unresolved NamedType).
-   */
-  static ObjectType deeplyUnwrap(ObjectType original) {
-    ObjectType current = original;
-    while (current instanceof ProxyObjectType) {
-      if (current.isTemplatizedType()) {
-        current = current.toMaybeTemplatizedType().getReferencedType();
-      } else if (current.isNamedType()) {
-        if (!current.isSuccessfullyResolved()) {
-          break;
-        }
-        current = current.toMaybeNamedType().getReferencedObjTypeInternal();
-      } else {
-        // TODO(lharker): remove this case and instead fail. Only the Rhino unit tests are
-        // triggering this by creating new ProxyObjectTypes.
-        current = ((ProxyObjectType) current).getReferencedObjTypeInternal();
-      }
-    }
-    return current;
   }
 
   @Override
@@ -728,6 +754,10 @@ public abstract class ObjectType extends JSType implements Serializable {
   /** Whether this is a built-in object. */
   public boolean isNativeObjectType() {
     return false;
+  }
+
+  public final JSType getLegacyResolvedType() {
+    return toMaybeNamedType().getReferencedType();
   }
 
   /**

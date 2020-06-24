@@ -15,15 +15,15 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.javascript.jscomp.Es6ToEs3Util.createGenericType;
 import static com.google.javascript.jscomp.Es6ToEs3Util.createType;
 import static com.google.javascript.jscomp.Es6ToEs3Util.withType;
 
+import com.google.javascript.jscomp.parsing.JsDocInfoParser;
 import com.google.javascript.rhino.IR;
-import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfoBuilder;
+import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
@@ -31,33 +31,27 @@ import com.google.javascript.rhino.jstype.JSTypeRegistry;
 
 /**
  * Helper class for transpiling ES6 template literals.
+ *
+ * @author moz@google.com (Michael Zhou)
  */
 class Es6TemplateLiterals {
   private static final String TEMPLATELIT_VAR = "$jscomp$templatelit$";
-
-  private final AstFactory astFactory;
-  private final AbstractCompiler compiler;
-  private final JSTypeRegistry registry;
-
-  Es6TemplateLiterals(AbstractCompiler compiler) {
-    this.compiler = compiler;
-    this.astFactory = compiler.createAstFactory();
-    this.registry = compiler.getTypeRegistry();
-  }
 
   /**
    * Converts `${a} b ${c} d ${e}` to (a + " b " + c + " d " + e)
    *
    * @param n A TEMPLATELIT node that is not prefixed with a tag
    */
-  void visitTemplateLiteral(NodeTraversal t, Node n) {
+  static void visitTemplateLiteral(NodeTraversal t, Node n, boolean addTypes) {
+    JSTypeRegistry registry = t.getCompiler().getTypeRegistry();
+    JSType stringType = createType(addTypes, registry, JSTypeNative.STRING_TYPE);
     int length = n.getChildCount();
     if (length == 0) {
-      n.replaceWith(astFactory.createString("\"\""));
+      n.replaceWith(withType(IR.string("\"\""), stringType));
     } else {
       Node first = n.removeFirstChild();
       checkState(first.isTemplateLitString() && first.getCookedString() != null);
-      Node firstStr = astFactory.createString(first.getCookedString());
+      Node firstStr = withType(IR.string(first.getCookedString()), stringType);
       if (length == 1) {
         n.replaceWith(firstStr);
       } else {
@@ -82,7 +76,7 @@ class Es6TemplateLiterals {
                   IR.add(
                       add,
                       child.isTemplateLitString()
-                          ? astFactory.createString(child.getCookedString())
+                          ? withType(IR.string(child.getCookedString()), stringType)
                           : child.removeFirstChild()),
                   n.getJSType());
         }
@@ -93,83 +87,66 @@ class Es6TemplateLiterals {
   }
 
   /**
-   * Converts a tagged template into a call to the tag.
+   * Converts tag`a\tb${bar}` to:
+   *   // A global (module) scoped variable
+   *   var $jscomp$templatelit$0 = ["a\tb"];   // cooked string array
+   *   $jscomp$templatelit$0.raw = ["a\\tb"];  // raw string array
+   *   ...
+   *   // A call to the tagging function
+   *   tag($jscomp$templatelit$0, bar);
    *
-   * <p>If the cooked and raw strings of the template literal are same, this will create a call to
-   * createtemplatetagfirstarg that simply calls slice() on the cooked array at runtime to make the
-   * raw array a copy of the cooked array, and returns the cooked array. For example, tag`ab${bar}`
-   * will change to:
-   *
-   * <p><code>
-   *    // A call to the tagging function:
-   *    tag($jscomp$templatelit$createTemplateTagFirstArg(['ab'], bar);
-   * </code>
-   *
-   * <p>If the cooked and raw strings of the template literal are not same, this will construct the
-   * raw strings array, and call {@code createtemplatetagfirstargwithraw} with it, which assigns the
-   * raw strings array to the property 'raw' of the cooked array at runtime, and returns the cooked
-   * array. For example, tag`a\tb${bar}` will change to:
-   *
-   * <p><code>
-   *   // A call to the tagging function:
-   *   tag($jscomp$templatelit$createTemplateTagFirstArgWithRaw(['a\tb'] /, ['a\\tb']), bar);
-   * </code>
-   *
-   * <p>See template_literal_test.js for more examples.
+   *   See template_literal_test.js for more examples.
    *
    * @param n A TAGGED_TEMPLATELIT node
    */
-  void visitTaggedTemplateLiteral(NodeTraversal t, Node n, boolean addTypes) {
+  static void visitTaggedTemplateLiteral(NodeTraversal t, Node n, boolean addTypes) {
+    JSTypeRegistry registry = t.getCompiler().getTypeRegistry();
     JSType stringType = createType(addTypes, registry, JSTypeNative.STRING_TYPE);
     JSType arrayType = createGenericType(addTypes, registry, JSTypeNative.ARRAY_TYPE, stringType);
     JSType templateArrayType =
         createType(addTypes, registry, JSTypeNative.I_TEMPLATE_ARRAY_TYPE);
+    JSType voidType = createType(addTypes, registry, JSTypeNative.VOID_TYPE);
+    JSType numberType = createType(addTypes, registry, JSTypeNative.NUMBER_TYPE);
 
     Node templateLit = n.getLastChild();
-    Node cooked = createCookedStringArray(templateLit, templateArrayType);
-    Node siteObject = withType(cooked, templateArrayType);
+    // Prepare the raw and cooked string arrays.
+    Node raw = createRawStringArray(templateLit, arrayType, stringType);
+    Node cooked =
+        createCookedStringArray(templateLit, templateArrayType, stringType, voidType, numberType);
 
-    // Node holding the function call to the runtime injected function
-    Node callTemplateTagArgCreator;
-    if (cookedAndRawStringsSame(templateLit)) {
-      // The cooked and raw versions of the array are the same, so just call slice() on the
-      // cooked array at runtime to make the raw array a copy of the cooked array.
-      callTemplateTagArgCreator =
-          astFactory.createCall(
-              astFactory.createQName(t.getScope(), "$jscomp.createTemplateTagFirstArg"),
-              siteObject.cloneTree());
-    } else {
-      // The raw string array is different, so we need to construct it.
-      Node raw = createRawStringArray(templateLit, arrayType);
-      callTemplateTagArgCreator =
-          astFactory.createCall(
-              astFactory.createQName(t.getScope(), "$jscomp.createTemplateTagFirstArgWithRaw"),
-              siteObject.cloneTree(),
-              raw);
-    }
-    JSDocInfoBuilder jsDocInfoBuilder = new JSDocInfoBuilder(false);
-    jsDocInfoBuilder.recordNoInline();
-    JSDocInfo info = jsDocInfoBuilder.build();
+    // Specify the type of the first argument to be ITemplateArray.
+    JSTypeExpression nonNullSiteObject = new JSTypeExpression(
+        JsDocInfoParser.parseTypeString("!ITemplateArray"), "<Es6TemplateLiterals.java>");
+    JSDocInfoBuilder info = new JSDocInfoBuilder(false);
+    info.recordType(nonNullSiteObject);
+    Node siteObject = withType(IR.cast(cooked, info.build()), templateArrayType);
 
-    CompilerInput input = t.getInput();
-    String uniqueId = compiler.getUniqueIdSupplier().getUniqueId(input);
-    // var tagFnFirstArg = $jscomp.createTemplateTagFirstArg...
-    Node tagFnFirstArgDeclaration =
-        astFactory
-            .createSingleVarNameDeclaration(TEMPLATELIT_VAR + uniqueId, callTemplateTagArgCreator)
-            .setJSDocInfo(info)
+    // Create a variable representing the template literal.
+    Node callsiteId =
+        withType(
+            IR.name(TEMPLATELIT_VAR + t.getCompiler().getUniqueNameIdSupplier().get()),
+            templateArrayType);
+    Node var = IR.var(callsiteId, siteObject).useSourceInfoIfMissingFromForTree(n);
+    Node script = NodeUtil.getEnclosingScript(n);
+    script.addChildToFront(var);
+    t.reportCodeChange(var);
+
+    // Define the "raw" property on the introduced variable.
+    Node defineRaw =
+        IR.exprResult(
+                withType(
+                    IR.assign(
+                        withType(
+                            IR.getprop(
+                                callsiteId.cloneNode(), withType(IR.string("raw"), stringType)),
+                            arrayType),
+                        raw),
+                    arrayType))
             .useSourceInfoIfMissingFromForTree(n);
-
-    // Get the nearest SCRIPT-scoped node as insertion point for this assignment as injecting to the
-    // top of the script causes runtime errors
-    // https://github.com/google/closure-compiler/issues/3589
-    Node insertionPoint = findInsertionPoint(n);
-    insertionPoint.getParent().addChildBefore(tagFnFirstArgDeclaration, insertionPoint);
-    t.reportCodeChange(tagFnFirstArgDeclaration);
+    script.addChildAfter(defineRaw, var);
 
     // Generate the call expression.
-    Node tagFnFirstArg = tagFnFirstArgDeclaration.getFirstChild().cloneNode();
-    Node call = withType(IR.call(n.removeFirstChild(), tagFnFirstArg), n.getJSType());
+    Node call = withType(IR.call(n.removeFirstChild(), callsiteId.cloneNode()), n.getJSType());
     for (Node child = templateLit.getFirstChild(); child != null; child = child.getNext()) {
       if (!child.isTemplateLitString()) {
         call.addChildToBack(child.removeFirstChild());
@@ -181,57 +158,29 @@ class Es6TemplateLiterals {
     t.reportCodeChange();
   }
 
-  private Node createRawStringArray(Node n, JSType arrayType) {
+  private static Node createRawStringArray(Node n, JSType arrayType, JSType stringType) {
     Node array = withType(IR.arraylit(), arrayType);
     for (Node child = n.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isTemplateLitString()) {
-        array.addChildToBack(astFactory.createString(child.getRawString()));
+        array.addChildToBack(withType(IR.string(child.getRawString()), stringType));
       }
     }
     return array;
   }
 
-  /**
-   * Finds the closest enclosing node whose parent is a SCRIPT. We'll want to insert the call to
-   * `var tagFnFirstArg = $jscomp.createTemplateTagFirstArg...` just before that one.
-   */
-  private static Node findInsertionPoint(Node n) {
-    Node insertionPoint = n;
-    Node insertionParent = checkNotNull(insertionPoint.getParent(), n);
-    while (!insertionParent.isScript()) {
-      insertionPoint = insertionParent;
-      insertionParent = checkNotNull(insertionPoint.getParent(), insertionPoint);
-    }
-    checkState(insertionParent.isScript(), insertionParent);
-    return insertionPoint;
-  }
-
-  private Node createCookedStringArray(Node n, JSType templateArrayType) {
+  private static Node createCookedStringArray(
+      Node n, JSType templateArrayType, JSType stringType, JSType voidType, JSType numberType) {
     Node array = withType(IR.arraylit(), templateArrayType);
     for (Node child = n.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isTemplateLitString()) {
         if (child.getCookedString() != null) {
-          array.addChildToBack(astFactory.createString(child.getCookedString()));
+          array.addChildToBack(withType(IR.string(child.getCookedString()), stringType));
         } else {
           // undefined cooked string due to exception in template escapes
-          array.addChildToBack(astFactory.createVoid(astFactory.createNumber(0)));
+          array.addChildToBack(withType(IR.voidNode(withType(IR.number(0), numberType)), voidType));
         }
       }
     }
     return array;
-  }
-
-  private static boolean cookedAndRawStringsSame(Node n) {
-    for (Node child = n.getFirstChild(); child != null; child = child.getNext()) {
-      if (!child.isTemplateLitString()) {
-        continue;
-      }
-      // getCookedString() returns null when the template literal has an illegal escape sequence.
-      if (child.getCookedString() == null
-          || !child.getCookedString().equals(child.getRawString())) {
-        return false;
-      }
-    }
-    return true;
   }
 }

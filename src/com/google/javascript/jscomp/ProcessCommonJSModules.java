@@ -46,9 +46,6 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
   private static final String MODULE = "module";
   private static final String REQUIRE = "require";
   private static final String WEBPACK_REQUIRE = "__webpack_require__";
-  // Webpack transpiles import() statements to __webpack_require__.t(modulePath)
-  // Always imports the module namespace regardless of module type
-  private static final String WEBPACK_REQUIRE_NAMESPACE = "__webpack_require__.t";
   private static final String EXPORT_PROPERTY_NAME = "default";
 
   public static final DiagnosticType UNKNOWN_REQUIRE_ENSURE =
@@ -76,7 +73,6 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
   @Override
   public void process(Node externs, Node root) {
     NodeTraversal.traverse(compiler, root, this);
-    NodeTraversal.traverse(compiler, externs, this);
   }
 
   @Override
@@ -149,16 +145,6 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
     return input.toModuleName();
   }
 
-  String getBasePropertyImport(String moduleName, Node requireCall) {
-    checkArgument(requireCall.isCall());
-    if (compiler.getOptions().getModuleResolutionMode() == ModuleLoader.ResolutionMode.WEBPACK
-        && requireCall.getFirstChild().matchesQualifiedName(WEBPACK_REQUIRE_NAMESPACE)) {
-      return moduleName;
-    }
-
-    return getBasePropertyImport(moduleName);
-  }
-
   public String getBasePropertyImport(String moduleName) {
     CompilerInput.ModuleType moduleType = compiler.getModuleTypeByName(moduleName);
     if (moduleType != null && moduleType != CompilerInput.ModuleType.COMMONJS) {
@@ -178,15 +164,13 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
    * <ul>
    *   <li>require("something");
    *   <li>__webpack_require__(4); // only when the module resolution is WEBPACK
-   *   <li>__webpack_require__.t(4); // only when the module resolution is WEBPACK
    * </ul>
    */
   public static boolean isCommonJsImport(
       Node requireCall, ModuleLoader.ResolutionMode resolutionMode) {
     if (requireCall.isCall() && requireCall.hasTwoChildren()) {
       if (resolutionMode == ModuleLoader.ResolutionMode.WEBPACK
-          && (requireCall.getFirstChild().matchesQualifiedName(WEBPACK_REQUIRE)
-              || requireCall.getFirstChild().matchesQualifiedName(WEBPACK_REQUIRE_NAMESPACE))
+          && requireCall.getFirstChild().matchesQualifiedName(WEBPACK_REQUIRE)
           && (requireCall.getSecondChild().isNumber() || requireCall.getSecondChild().isString())) {
         return true;
       } else if (requireCall.getFirstChild().matchesQualifiedName(REQUIRE)
@@ -194,7 +178,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         return true;
       }
     } else if (requireCall.isCall()
-        && requireCall.hasXChildren(3)
+        && requireCall.getChildCount() == 3
         && resolutionMode == ModuleLoader.ResolutionMode.WEBPACK
         && requireCall.getFirstChild().matchesQualifiedName(WEBPACK_REQUIRE + ".bind")
         && requireCall.getSecondChild().isNull()
@@ -283,14 +267,12 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
    * recognized:
    *
    * <ul>
-   *   <li>__webpack_require__.e(0).then(function() { return __webpack_require__(4);})
-   *   <li>Promise.all([__webpack_require__.e(0)]).then(function() { return
-   *       __webpack_require__(4);})
+   *   <li>__webpack_require__.e(0).then(function() { return __webpack_require(4);})
    * </ul>
    */
   public static boolean isCommonJsDynamicImportCallback(
       Node n, ModuleLoader.ResolutionMode resolutionMode) {
-    if (n == null || resolutionMode != ModuleLoader.ResolutionMode.WEBPACK) {
+    if (resolutionMode != ModuleLoader.ResolutionMode.WEBPACK) {
       return false;
     }
     if (n.isFunction() && isWebpackRequireEnsureCallback(n)) {
@@ -304,11 +286,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
    * Recognizes __webpack_require__ calls that are the .then callback of a __webpack_require__.e
    * call. Example:
    *
-   * <ul>
-   *   <li>__webpack_require__.e(0).then(function() { return __webpack_require__(4); })
-   *   <li>Promise.all([__webpack_require__.e(0)]).then(function() { return
-   *       __webpack_require__(4);})
-   * </ul>
+   * <p>__webpack_require__.e(0).then(function() { return __webpack_require__(4); })
    */
   private static boolean isWebpackRequireEnsureCallback(Node fnc) {
     checkArgument(fnc.isFunction());
@@ -321,32 +299,16 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       return false;
     }
 
-    if (!(callParent.hasChildren()
+    if (callParent.hasChildren()
         && callParent.getFirstChild().isGetProp()
-        && callParent.getFirstFirstChild().isCall())) {
-      return false;
-    }
-    Node callParentTarget = callParent.getFirstFirstChild().getFirstChild();
-
-    if (callParentTarget.matchesQualifiedName(WEBPACK_REQUIRE + ".e")
+        && callParent.getFirstFirstChild().isCall()
+        && callParent
+            .getFirstFirstChild()
+            .getFirstChild()
+            .matchesQualifiedName(WEBPACK_REQUIRE + ".e")
         && callParent.getFirstChild().getSecondChild().isString()
         && callParent.getFirstChild().getSecondChild().getString().equals("then")) {
       return true;
-    } else if (callParentTarget.matchesQualifiedName("Promise.all")
-        && callParentTarget.getNext() != null
-        && callParentTarget.getNext().isArrayLit()) {
-      boolean allElementsAreDynamicImports = false;
-      for (Node arrayItem = callParentTarget.getNext().getFirstChild();
-          arrayItem != null;
-          arrayItem = arrayItem.getNext()) {
-        if (!(arrayItem.isCall()
-            && arrayItem.hasTwoChildren()
-            && arrayItem.getFirstChild().matchesQualifiedName(WEBPACK_REQUIRE + ".e"))) {
-          return false;
-        }
-        allElementsAreDynamicImports = true;
-      }
-      return allElementsAreDynamicImports;
     }
     return false;
   }
@@ -415,7 +377,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
     // TODO(ChadKillingsworth):
     //   Expression could also be forced with: + - ~ void
     //   ! ~ void can be repeated any number of times
-    if (n != null && n.hasChildren() && n.getFirstChild().isNot()) {
+    if (n != null && n.getFirstChild() != null && n.getFirstChild().isNot()) {
       n = n.getFirstChild();
     }
 
@@ -493,13 +455,16 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
     }
 
     // Find the IIFE call and function nodes
-
-    Node callTarget = call.getFirstChild();
-    if (!callTarget.isFunction()) {
+    Node fnc;
+    if (call.getFirstChild().isFunction()) {
+      fnc = n.getFirstFirstChild();
+    } else if (call.getFirstChild().isGetProp()
+        && call.getFirstFirstChild().isFunction()
+        && call.getFirstFirstChild().getNext().matchesQualifiedName("call")) {
+      fnc = call.getFirstFirstChild();
+    } else {
       return;
     }
-
-    Node fnc = callTarget;
 
     Node params = NodeUtil.getFunctionParameters(fnc);
     Node moduleParam = null;
@@ -523,12 +488,12 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       return;
     }
 
-    Node argCallTarget = arg.getFirstChild();
     if (arg.isCall()
-        && argCallTarget.isCall()
-        && isCommonJsImport(argCallTarget)
-        && argCallTarget.getNext().matchesName(MODULE)) {
-      String importPath = getCommonJsImportPath(argCallTarget);
+        && arg.getFirstChild().isCall()
+        && isCommonJsImport(arg.getFirstChild())
+        && arg.getSecondChild().isName()
+        && arg.getSecondChild().getString().equals(MODULE)) {
+      String importPath = getCommonJsImportPath(arg.getFirstChild());
 
       ModulePath modulePath =
           compiler
@@ -591,16 +556,18 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      // Check for goog.provide or goog.module statements
-      if (parent == null
-          || NodeUtil.isControlStructure(parent)
-          || NodeUtil.isStatementBlock(parent)) {
-        if (n.isExprResult()) {
-          Node maybeGetProp = n.getFirstFirstChild();
-          if (maybeGetProp != null
-              && (maybeGetProp.matchesQualifiedName("goog.provide")
-                  || maybeGetProp.matchesQualifiedName("goog.module"))) {
-            hasGoogProvideOrModule = true;
+      if (t.inGlobalScope()) {
+        // Check for goog.provide or goog.module statements
+        if (parent == null
+            || NodeUtil.isControlStructure(parent)
+            || NodeUtil.isStatementBlock(parent)) {
+          if (n.isExprResult()) {
+            Node maybeGetProp = n.getFirstFirstChild();
+            if (maybeGetProp != null
+                && (maybeGetProp.matchesQualifiedName("goog.provide")
+                    || maybeGetProp.matchesQualifiedName("goog.module"))) {
+              hasGoogProvideOrModule = true;
+            }
           }
         }
       }
@@ -668,7 +635,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
             } else if (!this.hasGoogProvideOrModule
                 && (v == null
                     || (v.getNameNode() == null && v.getNameNode().getFirstChild() != n))) {
-              errors.add(JSError.make(qNameRoot, SUSPICIOUS_EXPORTS_ASSIGNMENT));
+              errors.add(t.makeError(qNameRoot, SUSPICIOUS_EXPORTS_ASSIGNMENT));
             }
           } else {
             exports.add(new ExportInfo(n, t.getScope()));
@@ -726,9 +693,9 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
      * <p>require.ensure(['module1', ...], function(require) {})
      */
     private void visitRequireEnsureCall(NodeTraversal t, Node call) {
-      if (!call.hasXChildren(3)) {
+      if (call.getChildCount() != 3) {
         compiler.report(
-            JSError.make(
+            t.makeError(
                 call,
                 UNKNOWN_REQUIRE_ENSURE,
                 "Expected the function to have 2 arguments but instead found {0}",
@@ -739,7 +706,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       Node dependencies = call.getSecondChild();
       if (!dependencies.isArrayLit()) {
         compiler.report(
-            JSError.make(
+            t.makeError(
                 dependencies,
                 UNKNOWN_REQUIRE_ENSURE,
                 "The first argument must be an array literal of string literals."));
@@ -749,7 +716,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       for (Node dep : dependencies.children()) {
         if (!dep.isString()) {
           compiler.report(
-              JSError.make(
+              t.makeError(
                   dep,
                   UNKNOWN_REQUIRE_ENSURE,
                   "The first argument must be an array literal of string literals."));
@@ -758,11 +725,11 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       }
       Node callback = dependencies.getNext();
       if (!(callback.isFunction()
-          && callback.getSecondChild().hasOneChild()
+          && callback.getSecondChild().getChildCount() == 1
           && callback.getSecondChild().getFirstChild().isName()
           && "require".equals(callback.getSecondChild().getFirstChild().getString()))) {
         compiler.report(
-            JSError.make(
+            t.makeError(
                 callback,
                 UNKNOWN_REQUIRE_ENSURE,
                 "The second argument must be a function"
@@ -874,7 +841,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         } else if (export.node.isGetElem()) {
           Node prop = export.node.getSecondChild().detach();
           ExportInfo newExport =
-              new ExportInfo(IR.getprop(export.node.removeFirstChild(), prop), export.scope);
+              new ExportInfo(IR.getprop(export.node.getFirstChild().detach(), prop), export.scope);
           export.node.replaceWith(newExport.node);
           compiler.reportChangeToEnclosingScope(newExport.node);
           exportsToReplace.put(export, newExport);
@@ -1047,7 +1014,8 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         }
 
         // Remove redundant block node. Not strictly necessary, but makes tests more legible.
-        if (umdPattern.activeBranch.isBlock() && umdPattern.activeBranch.hasOneChild()) {
+        if (umdPattern.activeBranch.isBlock()
+            && umdPattern.activeBranch.getChildCount() == 1) {
           newNode = umdPattern.activeBranch.removeFirstChild();
         } else {
           newNode.detach();
@@ -1309,10 +1277,8 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         case LET:
         case CONST:
           // Multiple declarations need split apart so that they can be refactored into
-          // property assignments or removed altogether. Don't split declarations for
-          // ES module export calls as it breaks AST and ES modules shouldn't be affected at all
-          // by this pass.
-          if (n.hasMoreThanOneChild() && !NodeUtil.isAnyFor(parent) && !parent.isExport()) {
+          // property assignments or removed altogether.
+          if (n.hasMoreThanOneChild() && !NodeUtil.isAnyFor(parent)) {
             List<Node> vars = splitMultipleDeclarations(n);
             t.reportCodeChange();
             for (Node var : vars) {
@@ -1372,14 +1338,32 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
                 }
               }
               // Replace loose "module" references with an object literal
-            } else if (allowFullRewrite
-                && n.getString().equals(MODULE)
+            } else if (n.getString().equals(MODULE)
                 && !(n.getParent().isGetProp()
                     || n.getParent().isGetElem()
                     || n.getParent().isTypeOf())) {
               Node objectLit = IR.objectlit().useSourceInfoFrom(n);
               n.replaceWith(objectLit);
               t.reportCodeChange(objectLit);
+            }
+            break;
+          }
+
+          // ES6 object literal shorthand notation can refer to renamed variables
+        case STRING_KEY:
+          {
+            if (n.hasChildren() || n.isQuotedString() || NodeUtil.isLhsByDestructuring(n)) {
+              break;
+            }
+            Var nameDeclaration = t.getScope().getVar(n.getString());
+            if (nameDeclaration == null) {
+              break;
+            }
+            String importedName = getModuleImportName(t, nameDeclaration.getNode());
+            if (nameDeclaration.isGlobal() || importedName != null) {
+              Node value = IR.name(n.getString()).useSourceInfoFrom(n);
+              n.addChildToBack(value);
+              maybeUpdateName(t, value, nameDeclaration);
             }
             break;
           }
@@ -1437,7 +1421,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
     private void visitRequireCall(NodeTraversal t, Node require, Node parent) {
       String moduleName = getImportedModuleName(t, require);
       Node moduleRef =
-          NodeUtil.newQName(compiler, getBasePropertyImport(moduleName, require))
+          NodeUtil.newQName(compiler, getBasePropertyImport(moduleName))
               .useSourceInfoFromForTree(require.getSecondChild());
       parent.replaceChild(require, moduleRef);
 
@@ -1465,7 +1449,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         if (rValue != null
             && rValue.isObjectLit()
             && root.getParent().isAssign()
-            && root.getGrandparent().isExprResult()) {
+            && root.getParent().getParent().isExprResult()) {
           if (expandObjectLitAssignment(t, root, export.scope)) {
             return;
           }
@@ -1485,14 +1469,14 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       if (root.getParent().isAssign()
           && root.getGrandparent().isExprResult()
           && (root.getNext() != null && (root.getNext().isName() || root.getNext().isGetProp()))
-          && root.getGrandparent().isExprResult()
+          && root.getParent().getParent().isExprResult()
           && rValueVar != null
-          && (NodeUtil.getEnclosingScript(rValueVar.getNameNode()) == null
-              || (rValueVar.getNameNode().getParent() != null && !rValueVar.isParam()))
+          && (NodeUtil.getEnclosingScript(rValueVar.nameNode) == null
+              || (rValueVar.nameNode.getParent() != null && !rValueVar.isParam()))
           && export.isInSupportedScope
           && (rValueVar.getNameNode().getParent() == null
               || !NodeUtil.isLhsByDestructuring(rValueVar.getNameNode()))) {
-        root.getGrandparent().detach();
+        root.getParent().getParent().detach();
         t.reportCodeChange();
         return;
       }
@@ -1578,7 +1562,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
      */
     private boolean expandObjectLitAssignment(NodeTraversal t, Node export, Scope scope) {
       checkState(export.getParent().isAssign());
-      Node insertionRef = export.getGrandparent();
+      Node insertionRef = export.getParent().getParent();
       checkState(insertionRef.isExprResult());
       Node insertionParent = insertionRef.getParent();
       checkNotNull(insertionParent);
@@ -1597,12 +1581,17 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         lhs = IR.getprop(export.cloneTree(), IR.string(key.getString()));
         Node value = null;
         if (key.isStringKey()) {
-          value = key.removeFirstChild();
+          if (key.hasChildren()) {
+            value = key.removeFirstChild();
+          } else {
+            value = IR.name(key.getString());
+          }
         } else if (key.isMemberFunctionDef()) {
-          value = key.removeFirstChild();
+          value = key.getFirstChild().detach();
         }
 
-        Node expr = IR.exprResult(IR.assign(lhs, value)).useSourceInfoIfMissingFromForTree(key);
+        Node expr = null;
+        expr = IR.exprResult(IR.assign(lhs, value)).useSourceInfoIfMissingFromForTree(key);
         insertionParent.addChildAfter(expr, insertionRef);
         ExportInfo newExport = new ExportInfo(lhs.getFirstChild(), scope);
         visitExport(t, newExport);
@@ -1869,7 +1858,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
             // remove the node. This can occur when the variable which is exported
             // is declared in an outer scope but assigned in an inner one.
             if (!nameRef.hasChildren()) {
-              parent.detach();
+              parent.detachFromParent();
               break;
             }
 
@@ -1965,12 +1954,25 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
                 && !key.isQuotedString()
                 && NodeUtil.isValidPropertyName(
                     compiler.getOptions().getLanguageIn().toFeatureSet(), key.getString())) {
-              if (key.getFirstChild().isQualifiedName()) {
-                if (key.getFirstChild() == n) {
+              if (key.hasChildren()) {
+                if (key.getFirstChild().isQualifiedName()) {
+                  if (key.getFirstChild() == n) {
+                    return null;
+                  }
+
+                  Var valVar = t.getScope().getVar(key.getFirstChild().getQualifiedName());
+                  if (valVar != null && valVar.getNameNode() == var.getNameNode()) {
+                    keyIsExport = true;
+                    break;
+                  }
+                }
+              } else {
+                if (key == n) {
                   return null;
                 }
 
-                Var valVar = t.getScope().getVar(key.getFirstChild().getQualifiedName());
+                // Handle ES6 object lit shorthand assignments
+                Var valVar = t.getScope().getVar(key.getString());
                 if (valVar != null && valVar.getNameNode() == var.getNameNode()) {
                   keyIsExport = true;
                   break;
@@ -2026,11 +2028,7 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
         return rValue.getFirstChild();
       }
 
-      if (!rValue.isName()) {
-        return null;
-      }
-
-      Var var = info.scope.getVar(rValue.getString());
+      Var var = info.scope.getVar(rValue.getQualifiedName());
       if (var == null) {
         return null;
       }
@@ -2063,12 +2061,10 @@ public final class ProcessCommonJSModules extends NodeTraversal.AbstractPreOrder
       }
 
       if (rValue.isCall() && isCommonJsImport(rValue)) {
-        return getBasePropertyImport(getImportedModuleName(t, rValue), rValue) + propSuffix;
+        return getBasePropertyImport(getImportedModuleName(t, rValue)) + propSuffix;
       } else if (rValue.isGetProp() && isCommonJsImport(rValue.getFirstChild())) {
         // var foo = require('bar').foo;
-        String importName =
-            getBasePropertyImport(
-                getImportedModuleName(t, rValue.getFirstChild()), rValue.getFirstChild());
+        String importName = getBasePropertyImport(getImportedModuleName(t, rValue.getFirstChild()));
 
         String suffix =
             rValue.getSecondChild().isGetProp()

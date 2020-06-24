@@ -36,6 +36,7 @@ public final class DefaultExterns {
   // Ordered browser externs. Externs not included in this list are added last.
   private static final ImmutableList<String> BROWSER_EXTERN_DEP_ORDER =
       ImmutableList.of(
+          //-- browser externs --
           "intl.js",
           "w3c_event.js",
           "w3c_event3.js",
@@ -54,11 +55,7 @@ public final class DefaultExterns {
           "gecko_css.js",
           "ie_css.js",
           "webkit_css.js",
-          "w3c_touch_event.js",
-          "whatwg_console.js",
-          "nonstandard_console.js",
-          // w3d_rtc.js must be evaluated before nonstandard_rtc.js
-          "w3c_rtc.js");
+          "w3c_touch_event.js");
 
   /**
    * Filters and orders the passed externs for the specified environment.

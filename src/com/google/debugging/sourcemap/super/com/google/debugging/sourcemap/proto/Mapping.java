@@ -90,10 +90,6 @@ public final class Mapping {
       return identifier;
     }
 
-    public boolean hasIdentifier() {
-      return identifier != null;
-    }
-
     public Builder toBuilder() {
       return new Builder()
           .setOriginalFile(originalFile)

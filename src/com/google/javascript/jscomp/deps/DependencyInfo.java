@@ -34,6 +34,8 @@ import java.util.Map;
 
 /**
  * A data structure for JS dependency information for a single .js file.
+ *
+ * @author agrieve@google.com (Andrew Grieve)
  */
 public interface DependencyInfo extends Serializable {
 
@@ -142,12 +144,6 @@ public interface DependencyInfo extends Serializable {
 
   /** Whether the symbol is provided by a module */
   boolean isModule();
-
-  /** Whether the file '@externs' annotation. */
-  boolean getHasExternsAnnotation();
-
-  /** Whether the file has the '@nocompile' annotation. */
-  boolean getHasNoCompileAnnotation();
 
   /**
    * Abstract base implementation that defines derived accessors such

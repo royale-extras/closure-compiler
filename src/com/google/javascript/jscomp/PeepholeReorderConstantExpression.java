@@ -24,6 +24,7 @@ import com.google.javascript.rhino.Token;
  * ex. x === 0 -> 0 === x
  * After reordering, expressions like 0 === x and 0 === y may have higher
  * compression together than their original counterparts.
+ *
  */
 class PeepholeReorderConstantExpression extends AbstractPeepholeOptimization {
 
@@ -48,12 +49,12 @@ class PeepholeReorderConstantExpression extends AbstractPeepholeOptimization {
         }
 
         // swap them
-        Node firstNode = subtree.removeFirstChild();
+        Node firstNode = subtree.getFirstChild().detach();
         Node lastNode = subtree.getLastChild().detach();
 
         subtree.addChildToFront(lastNode);
         subtree.addChildToBack(firstNode);
-        reportChangeToEnclosingScope(subtree);
+        compiler.reportChangeToEnclosingScope(subtree);
       }
     }
     return subtree;

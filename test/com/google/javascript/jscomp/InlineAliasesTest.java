@@ -35,8 +35,6 @@ public class InlineAliasesTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    enableTypeInfoValidation();
-    enableTypeCheck();
     options.setLanguage(LanguageMode.ECMASCRIPT_2015);
     return options;
   }
@@ -47,78 +45,76 @@ public class InlineAliasesTest extends CompilerTestCase {
    *
    * This pass is not idempotent so we only run it once.
    */
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
 
   @Test
-  public void testSimpleAliasInJSDoc_isUnchanged() {
-    testSame("/** @constructor */ function Foo(){} const alias = Foo; /** @type {alias} */ var x;");
+  public void testSimpleAliasInJSDoc() {
+    test("function Foo(){}; var /** @const */ alias = Foo; /** @type {alias} */ var x;",
+        "function Foo(){}; var /** @const */ alias = Foo; /** @type {Foo} */ var x;");
 
-    testSame(
+    test(
         lines(
             "var ns={};",
-            "/** @constructor */ function Foo(){};",
+            "function Foo(){};",
             "/** @const */ ns.alias = Foo;",
-            "/** @type {ns.alias} */ var x;"));
-
-    testSame(
+            "/** @type {ns.alias} */ var x;"),
         lines(
-            "/** @const */",
             "var ns={};",
-            "/** @constructor */ function Foo(){};",
-            "Foo.Subfoo = class {};",
+            "function Foo(){};",
             "/** @const */ ns.alias = Foo;",
-            "/** @type {ns.alias.Subfoo} */ var x;"));
+            "/** @type {Foo} */ var x;"));
+
+    test(
+        lines(
+            "var ns={};",
+            "function Foo(){};",
+            "/** @const */ ns.alias = Foo;",
+            "/** @type {ns.alias.Subfoo} */ var x;"),
+        lines(
+            "var ns={};",
+            "function Foo(){};",
+            "/** @const */ ns.alias = Foo;",
+            "/** @type {Foo.Subfoo} */ var x;"));
   }
 
   @Test
   public void testSimpleAliasInCode() {
-    test(
-        lines(
-            "/** @constructor */ function Foo(){}; ",
-            "Foo.Subfoo = class {};",
-            "var /** @const */ alias = Foo; var x = new alias;"),
-        lines(
-            "/** @constructor */ function Foo(){}; ",
-            "Foo.Subfoo = class {};" + "var /** @const */ alias = Foo; var x = new Foo;"));
+    test("function Foo(){}; var /** @const */ alias = Foo; var x = new alias;",
+        "function Foo(){}; var /** @const */ alias = Foo; var x = new Foo;");
 
-    test(
-        "var ns={}; /** @constructor */ function Foo(){}; "
-            + "Foo.Subfoo = class {};"
-            + "/** @const */ ns.alias = Foo; var x = new ns.alias;",
-        "var ns={}; /** @constructor */ function Foo(){}; "
-            + "Foo.Subfoo = class {};"
-            + "/** @const */ ns.alias = Foo; var x = new Foo;");
+    test("var ns={}; function Foo(){}; /** @const */ ns.alias = Foo; var x = new ns.alias;",
+        "var ns={}; function Foo(){}; /** @const */ ns.alias = Foo; var x = new Foo;");
 
-    test(
-        "var ns={}; /** @constructor */ function Foo(){}; "
-            + "Foo.Subfoo = class {};"
-            + "/** @const */ ns.alias = Foo; var x = new ns.alias.Subfoo;",
-        "var ns={}; /** @constructor */ function Foo(){}; "
-            + "Foo.Subfoo = class {};"
-            + "/** @const */ ns.alias = Foo; var x = new Foo.Subfoo;");
+    test("var ns={}; function Foo(){}; /** @const */ ns.alias = Foo; var x = new ns.alias.Subfoo;",
+        "var ns={}; function Foo(){}; /** @const */ ns.alias = Foo; var x = new Foo.Subfoo;");
   }
 
   @Test
   public void testAliasQualifiedName() {
-    testSame(
+    test(
         lines(
-            "/** @const */",
             "var ns = {};",
             "ns.Foo = function(){};",
-            "ns.Foo.Subfoo = class {};",
             "/** @const */ ns.alias = ns.Foo;",
-            "/** @type {ns.alias.Subfoo} */ var x;"));
+            "/** @type {ns.alias.Subfoo} */ var x;"),
+        lines(
+            "var ns = {};",
+            "ns.Foo = function(){};",
+            "/** @const */ ns.alias = ns.Foo;",
+            "/** @type {ns.Foo.Subfoo} */ var x;"));
 
     test(
         lines(
             "var ns = {};",
             "ns.Foo = function(){};",
-            "ns.Foo.Subfoo = class {};",
             "/** @const */ ns.alias = ns.Foo;",
             "var x = new ns.alias.Subfoo;"),
         lines(
             "var ns = {};",
             "ns.Foo = function(){};",
-            "ns.Foo.Subfoo = class {};",
             "/** @const */ ns.alias = ns.Foo;",
             "var x = new ns.Foo.Subfoo;"));
   }
@@ -233,7 +229,7 @@ public class InlineAliasesTest extends CompilerTestCase {
 
   @Test
   public void testDefinesAreNotInlined() {
-    testSame("var ns = {Foo: 0}; var /** @define {number} */ alias = ns.Foo; use(alias);");
+    testSame("var ns = {}; var /** @define {boolean} */ alias = ns.Foo; var x = new alias;");
   }
 
   @Test
@@ -327,9 +323,8 @@ public class InlineAliasesTest extends CompilerTestCase {
     testSame(
         lines(
             "class Foo {",
+            " /** @constructor */",
             " constructor(x) {",
-            "     /** @const */",
-            "     this.x = class {};",
             "     var /** @const */ alias1 = this.x;",
             "     var /** @const */ alias2 = alias1;",
             "     var z = new alias2;",
@@ -454,7 +449,6 @@ public class InlineAliasesTest extends CompilerTestCase {
 
   @Test
   public void testObjectDestructuringDefaultVals() {
-    ignoreWarnings(DiagnosticGroups.MISSING_PROPERTIES);
     test(
         lines(
             "var Foo = class {};",
@@ -473,100 +467,118 @@ public class InlineAliasesTest extends CompilerTestCase {
             "var Foo = class {};",
             "var /** @const */ A = Foo;",
             "function f([name, val]) {",
-            "   alert(name, val);",
+            "   console.log(name, val);",
             "}",
             "f([A, A]);"),
         lines(
             "var Foo = class {};",
             "var /** @const */ A = Foo;",
             "function f([name, val]) {",
-            "   alert(name, val);",
+            "   console.log(name, val);",
             "}",
             "f([Foo, Foo]);"));
   }
 
   @Test
   public void testObjectDestructuringWithParameters() {
-    test(
-        lines(
-            "var Foo = class {};",
-            "var /** @const */ A = Foo;",
-            "function g({",
-            "   name: n,",
-            "   val: v",
-            "}) {",
-            "   alert(n, v);",
-            "}",
-            "g({",
-            "   name: A,",
-            "   val: A",
-            "});"),
-        lines(
-            "var Foo = class {};",
-            "var /** @const */ A = Foo;",
-            "function g({",
-            "   name: n,",
-            "   val: v",
-            "}) {",
-            "   alert(n, v);",
-            "}",
-            "g({",
-            "   name: Foo,",
-            "   val: Foo",
-            "});"));
+   test(
+       lines(
+           "var Foo = class {};",
+           "var /** @const */ A = Foo;",
+           "function g({",
+           "   name: n,",
+           "   val: v",
+           "}) {",
+           "   console.log(n, v);",
+           "}",
+           "g({",
+           "   name: A,",
+           "   val: A",
+           "});"),
+       lines(
+           "var Foo = class {};",
+           "var /** @const */ A = Foo;",
+           "function g({",
+           "   name: n,",
+           "   val: v",
+           "}) {",
+           "   console.log(n, v);",
+           "}",
+           "g({",
+           "   name: Foo,",
+           "   val: Foo",
+           "});"));
   }
 
   @Test
   public void testObjectDestructuringWithParametersAndStyleShortcut() {
+   test(
+       lines(
+           "var Foo = class {};",
+           "var /** @const */ A = Foo;",
+           "function h({",
+           "   name,",
+           "   val",
+           "}) {",
+           "   console.log(name, val);",
+           "}",
+           "h({name: A, val: A});"),
+       lines(
+           "var Foo = class {};",
+           "var /** @const */ A = Foo;",
+           "function h({",
+           "   name,",
+           "   val",
+           "}) {",
+           "   console.log(name, val);",
+           "}",
+           "h({name: Foo, val: Foo});"));
+  }
+
+  @Test
+  public void testSimpleConstAliasInJSDoc() {
     test(
-        lines(
-            "var Foo = class {};",
-            "var /** @const */ A = Foo;",
-            "function h({",
-            "   name,",
-            "   val",
-            "}) {",
-            "   alert(name, val);",
-            "}",
-            "h({name: A, val: A});"),
-        lines(
-            "var Foo = class {};",
-            "var /** @const */ A = Foo;",
-            "function h({",
-            "   name,",
-            "   val",
-            "}) {",
-            "   alert(name, val);",
-            "}",
-            "h({name: Foo, val: Foo});"));
+        "function Foo(){}; const alias = Foo; /** @type {alias} */ var x;",
+        "function Foo(){}; const alias = Foo; /** @type {Foo} */ var x;");
   }
 
   @Test
   public void testSimpleConstAliasInCode() {
     test(
-        "/** @constructor */ function Foo(){}; const alias = Foo; var x = new alias;",
-        "/** @constructor */ function Foo(){}; const alias = Foo; var x = new Foo;");
+        "function Foo(){}; const alias = Foo; var x = new alias;",
+        "function Foo(){}; const alias = Foo; var x = new Foo;");
+  }
+
+  /**
+   * Note: having @const annotating a let is very strange style, but it's very little extra work to
+   * support it.
+   */
+  @Test
+  public void testSimpleLetAliasInJSDoc() {
+    test(
+        "function Foo(){}; let /** @const */ alias = Foo; /** @type {alias} */ var x;",
+        "function Foo(){}; let /** @const */ alias = Foo; /** @type {Foo} */ var x;");
   }
 
   @Test
   public void testSimpleLetAliasInCode() {
     test(
-        "/** @constructor */ function Foo(){}; let /** @const */ alias = Foo; var x = new alias;",
-        "/** @constructor */ function Foo(){}; let /** @const */ alias = Foo; var x = new Foo;");
+        "function Foo(){}; let /** @const */ alias = Foo; var x = new alias;",
+        "function Foo(){}; let /** @const */ alias = Foo; var x = new Foo;");
   }
 
   @Test
   public void testClassExtendsAlias1() {
     test(
-        "class Foo{} const alias = Foo; class Bar extends alias {}",
-        "class Foo {} const alias = Foo; class Bar extends Foo {}");
+        "function Foo() {} const alias = Foo; class Bar extends alias {}",
+        "function Foo() {} const alias = Foo; class Bar extends Foo {}");
   }
 
   @Test
   public void testClassExtendsAlias2() {
     test(
-        "var ns = {}; ns.Foo = class {}; const alias = ns.Foo; class Bar extends alias {}",
-        "var ns = {}; ns.Foo = class {}; const alias = ns.Foo; class Bar extends ns.Foo {}");
+        "var ns = {}; ns.Foo = function () {}; const alias = ns.Foo; class Bar extends alias {}",
+        "var ns = {}; ns.Foo = function () {}; const alias = ns.Foo; class Bar extends ns.Foo {}");
   }
 
   @Test
@@ -617,39 +629,5 @@ public class InlineAliasesTest extends CompilerTestCase {
                 "const alias = Foobar.foo;",
                 "use(Foobar);",
                 "alert(Foobar.foo);")));
-  }
-
-  @Test
-  public void testForwardedExport() {
-    testSame(
-        lines(
-            "const proto = {};",
-            "/** @const */",
-            "proto.google = {};",
-            "/** @const */",
-            "proto.google.type = {};",
-            "proto.google.type.Date = class {};",
-            "const alias = proto;",
-            "function f() {",
-            "  const d = new alias.google.type.Date();",
-            "  const proto = 0;",
-            "}"));
-  }
-
-  @Test
-  public void testForwardedExportNested() {
-    testSame(
-        lines(
-            "const proto = {};",
-            "/** @const */",
-            "proto.google = {};",
-            "/** @const */",
-            "proto.google.type = {};",
-            "proto.google.type.Date = class {};",
-            "const alias = proto.google;",
-            "function f() {",
-            "  const d = new alias.type.Date();",
-            "  const proto = 0;",
-            "}"));
   }
 }

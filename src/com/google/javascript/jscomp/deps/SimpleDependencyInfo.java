@@ -36,9 +36,7 @@ public abstract class SimpleDependencyInfo extends DependencyInfo.Base {
         .setProvides(ImmutableList.of())
         .setRequires(ImmutableList.of())
         .setTypeRequires(ImmutableList.of())
-        .setLoadFlags(ImmutableMap.of())
-        .setHasExternsAnnotation(false)
-        .setHasNoCompileAnnotation(false);
+        .setLoadFlags(ImmutableMap.of());
   }
 
   /**
@@ -54,9 +52,7 @@ public abstract class SimpleDependencyInfo extends DependencyInfo.Base {
           .setProvides(copy.getProvides())
           .setRequires(copy.getRequires())
           .setTypeRequires(copy.getTypeRequires())
-          .setLoadFlags(copy.getLoadFlags())
-          .setHasExternsAnnotation(copy.getHasExternsAnnotation())
-          .setHasNoCompileAnnotation(copy.getHasNoCompileAnnotation());
+          .setLoadFlags(copy.getLoadFlags());
     }
 
     abstract Builder setName(String name);
@@ -74,10 +70,6 @@ public abstract class SimpleDependencyInfo extends DependencyInfo.Base {
     public abstract Builder setTypeRequires(String... typeRequires);
 
     public abstract Builder setLoadFlags(Map<String, String> loadFlags);
-
-    public abstract Builder setHasExternsAnnotation(boolean hasExternsAnnotation);
-
-    public abstract Builder setHasNoCompileAnnotation(boolean hasNoCompileAnnotation);
 
     private static final ImmutableMap<String, String> GOOG_MODULE_FLAGS =
         ImmutableMap.of("module", "goog");

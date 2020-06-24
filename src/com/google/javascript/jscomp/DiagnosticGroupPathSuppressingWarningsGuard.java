@@ -19,6 +19,7 @@ package com.google.javascript.jscomp;
 /**
  * A warnings guard that suppresses warnings for a particular diagnostic group for a file that
  * contains the specified substring.
+ * @author nicksantos@google.com (Nick Santos)
  */
 public class DiagnosticGroupPathSuppressingWarningsGuard extends DiagnosticGroupWarningsGuard {
   private final String part;
@@ -35,12 +36,9 @@ public class DiagnosticGroupPathSuppressingWarningsGuard extends DiagnosticGroup
 
   /** Does not touch warnings in other paths. */
   @Override public CheckLevel level(JSError error) {
-    return error.getSourceName() != null && error.getSourceName().contains(part)
-        ? super.level(error)
-        /** suppress */
-        : null
-    /** proceed */
-    ;
+    return error.sourceName != null && error.sourceName.contains(part)
+        ? super.level(error) /** suppress */
+        : null /** proceed */;
   }
 
   @Override public String toString() {

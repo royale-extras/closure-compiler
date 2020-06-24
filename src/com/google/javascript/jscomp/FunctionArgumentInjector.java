@@ -34,6 +34,8 @@ import java.util.Set;
 /**
  * A nifty set of functions to deal with the issues of replacing function
  * parameters with a set of call argument expressions.
+ *
+ * @author johnlenz@google.com (John Lenz)
  */
 class FunctionArgumentInjector {
 
@@ -47,10 +49,8 @@ class FunctionArgumentInjector {
 
   static final String OBJECT_PATTERN_MARKER = "object pattern";
 
-  private final AstAnalyzer astAnalyzer;
-
-  FunctionArgumentInjector(AstAnalyzer astAnalyzer) {
-    this.astAnalyzer = astAnalyzer;
+  private FunctionArgumentInjector() {
+    // A private constructor to prevent instantiation.
   }
 
   /**
@@ -62,11 +62,12 @@ class FunctionArgumentInjector {
    *     Nodes.
    * @return The root node or its replacement.
    */
-  Node inject(AbstractCompiler compiler, Node node, Node parent, Map<String, Node> replacements) {
+  static Node inject(
+      AbstractCompiler compiler, Node node, Node parent, Map<String, Node> replacements) {
     return inject(compiler, node, parent, replacements, /* replaceThis */ true);
   }
 
-  private Node inject(
+  private static Node inject(
       AbstractCompiler compiler,
       Node node,
       Node parent,
@@ -95,7 +96,7 @@ class FunctionArgumentInjector {
         // Remove the value.  This isn't required but it ensures that we won't
         // inject side-effects multiple times as it will trigger the null
         // check above if we do.
-        if (compiler.getAstAnalyzer().mayHaveSideEffects(replacementTemplate)) {
+        if (NodeUtil.mayHaveSideEffects(replacementTemplate, compiler)) {
           replacements.remove(THIS_MARKER);
         }
 
@@ -116,8 +117,10 @@ class FunctionArgumentInjector {
     return node;
   }
 
-  /** Get a mapping for function parameter names to call arguments. */
-  ImmutableMap<String, Node> getFunctionCallParameterMap(
+  /**
+   * Get a mapping for function parameter names to call arguments.
+   */
+  static ImmutableMap<String, Node> getFunctionCallParameterMap(
       final Node fnNode, Node callNode, Supplier<String> safeNameIdSupplier) {
     checkNotNull(fnNode);
     // Create an argName -> expression map
@@ -186,18 +189,14 @@ class FunctionArgumentInjector {
 
   /**
    * Retrieve a set of names that can not be safely substituted in place.
-   *
-   * <p>Example: <code><pre>
-   *
+   * Example:
    *   function(a) {
    *     a = 0;
    *   }
-   * </pre></code>
-   *
-   * <p>Inlining this without taking precautions would cause the call site value to be modified
-   * (bad).
+   * Inlining this without taking precautions would cause the call site value
+   * to be modified (bad).
    */
-  Set<String> findModifiedParameters(Node fnNode) {
+  static Set<String> findModifiedParameters(Node fnNode) {
     ImmutableSet<String> names = getFunctionParameterSet(fnNode);
     Set<String> unsafeNames = new HashSet<>();
     return findModifiedParameters(fnNode.getLastChild(), names, unsafeNames, false);
@@ -262,18 +261,14 @@ class FunctionArgumentInjector {
   }
 
   /**
-   * Updates the set of parameter names in set unsafe to include any arguments from the call site
-   * that require aliases.
-   *
+   * Updates the set of parameter names in set unsafe to include any
+   * arguments from the call site that require aliases.
    * @param fnNode The FUNCTION node to be inlined.
    * @param argMap The argument list for the call to fnNode.
    * @param namesNeedingTemps The set of names to update.
    */
-  void maybeAddTempsForCallArguments(
-      AbstractCompiler compiler,
-      Node fnNode,
-      ImmutableMap<String, Node> argMap,
-      Set<String> namesNeedingTemps,
+  static void maybeAddTempsForCallArguments(
+      Node fnNode, ImmutableMap<String, Node> argMap, Set<String> namesNeedingTemps,
       CodingConvention convention) {
     if (argMap.isEmpty()) {
       // No arguments to check, we are done.
@@ -305,7 +300,7 @@ class FunctionArgumentInjector {
       boolean safe = true;
       int references = NodeUtil.getNameReferenceCount(block, argName);
 
-      boolean argSideEffects = compiler.getAstAnalyzer().mayHaveSideEffects(cArg);
+      boolean argSideEffects = NodeUtil.mayHaveSideEffects(cArg);
       if (!argSideEffects && references == 0) {
         safe = true;
       } else if (isTrivialBody && hasMinimalParameters
@@ -317,7 +312,7 @@ class FunctionArgumentInjector {
         //
         // This is done to help inline common trivial functions
         safe = true;
-      } else if (compiler.getAstAnalyzer().mayEffectMutableState(cArg) && references > 0) {
+      } else if (NodeUtil.mayEffectMutableState(cArg) && references > 0) {
         // Note: Mutable arguments should be assigned to temps, as the
         // may be within in a loop:
         //   function x(a) {
@@ -360,10 +355,10 @@ class FunctionArgumentInjector {
   }
 
   /**
-   * We consider a return or expression trivial if it doesn't contain a conditional expression or a
-   * function.
+   * We consider a return or expression trivial if it doesn't contain a conditional expression or
+   * a function.
    */
-  boolean bodyMayHaveConditionalCode(Node n) {
+  static boolean bodyMayHaveConditionalCode(Node n) {
     if (!n.isReturn() && !n.isExprResult()) {
       return true;
     }
@@ -371,16 +366,16 @@ class FunctionArgumentInjector {
   }
 
   /**
-   * We consider an expression trivial if it doesn't contain a conditional expression or a function.
+   * We consider an expression trivial if it doesn't contain a conditional expression or
+   * a function.
    */
-  boolean mayHaveConditionalCode(Node n) {
+  static boolean mayHaveConditionalCode(Node n) {
     for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
       switch (c.getToken()) {
         case FUNCTION:
         case AND:
         case OR:
         case HOOK:
-        case COALESCE:
           return true;
         default:
           break;
@@ -395,13 +390,13 @@ class FunctionArgumentInjector {
   /**
    * Bootstrap a traversal to look for parameters referenced after a non-local side-effect.
    *
-   * <p>NOTE: This assumes no-inner functions.
-   *
+   * NOTE: This assumes no-inner functions.
    * @param parameters The set of parameter names.
    * @param root The function code block.
-   * @return The subset of parameters referenced after the first seen non-local side-effect.
+   * @return The subset of parameters referenced after the first
+   *     seen non-local side-effect.
    */
-  private ImmutableSet<String> findParametersReferencedAfterSideEffect(
+  private static ImmutableSet<String> findParametersReferencedAfterSideEffect(
       ImmutableSet<String> parameters, Node root) {
 
     // TODO(johnlenz): Consider using scope for this.
@@ -420,24 +415,24 @@ class FunctionArgumentInjector {
   /**
    * Collect parameter names referenced after a non-local side-effect.
    *
-   * <p>Assumptions:
+   * Assumptions:
+   * - We assume parameters are not modified in the function body
+   * (that is checked separately).
+   * - There are no inner functions (also checked separately).
    *
-   * <ul>
-   *   <li>We assume parameters are not modified in the function body (that is checked separately).
-   *   <li>There are no inner functions (also checked separately).
-   * </ul>
+   * As we are trying to replace parameters with there passed in values
+   * we are interested in anything that may affect those value.  So, ignoring
+   * changes to local variables, we look for things that may affect anything
+   * outside the local-state.  Once such a side-effect is seen any following
+   * reference to the function parameters are collected.  These will need
+   * to be assigned to temporaries to prevent changes to their value as would
+   * have happened during the function call.
    *
-   * <p>As we are trying to replace parameters with there passed in values we are interested in
-   * anything that may affect those value. So, ignoring changes to local variables, we look for
-   * things that may affect anything outside the local-state. Once such a side-effect is seen any
-   * following reference to the function parameters are collected. These will need to be assigned to
-   * temporaries to prevent changes to their value as would have happened during the function call.
-   *
-   * <p>To properly handle loop structures all references to the function parameters are recorded
-   * and the decision to keep or throw away those references is deferred until exiting the loop
-   * structure.
+   * To properly handle loop structures all references to the function
+   * parameters are recorded and the decision to keep or throw away those
+   * references is deferred until exiting the loop structure.
    */
-  private class ReferencedAfterSideEffect implements Visitor, Predicate<Node> {
+  private static class ReferencedAfterSideEffect implements Visitor, Predicate<Node> {
     private final ImmutableSet<String> parameters;
     private final ImmutableSet<String> locals;
     private boolean sideEffectSeen = false;
@@ -521,9 +516,9 @@ class FunctionArgumentInjector {
           sideEffect = true;
         }
       } else if (type == Token.CALL) {
-        sideEffect = astAnalyzer.functionCallHasSideEffects(n);
+        sideEffect = NodeUtil.functionCallHasSideEffects(n);
       } else if (type == Token.NEW) {
-        sideEffect = astAnalyzer.constructorCallHasSideEffects(n);
+        sideEffect = NodeUtil.constructorCallHasSideEffects(n);
       } else if (type == Token.DELPROP) {
         sideEffect = true;
       }

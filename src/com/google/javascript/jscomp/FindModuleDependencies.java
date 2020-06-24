@@ -39,6 +39,8 @@ import com.google.javascript.rhino.Token;
  *
  * <p>The order of dependency references is preserved so that a deterministic depth-first ordering
  * can be achieved.
+ *
+ * @author chadkillingsworth@gmail.com (Chad Killingsworth)
  */
 public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
   private final AbstractCompiler compiler;
@@ -179,8 +181,14 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
 
         if (modulePath != null) {
           if (dynamicImportScope != null
-              || ProcessCommonJSModules.isCommonJsDynamicImportCallback(
-                  NodeUtil.getEnclosingFunction(n), resolutionMode)) {
+              || (n.getParent().isCall()
+                  && n.getPrevious() != null
+                  && n.getPrevious().isGetProp()
+                  && n.getPrevious().getFirstChild().isCall()
+                  && n.getPrevious().getFirstFirstChild().isQualifiedName()
+                  && n.getPrevious()
+                      .getFirstFirstChild()
+                      .matchesQualifiedName("__webpack_require__.e"))) {
             t.getInput().addDynamicRequire(modulePath.toModuleName());
           } else {
             t.getInput().addOrderedRequire(Require.commonJs(modulePath.toModuleName(), path));

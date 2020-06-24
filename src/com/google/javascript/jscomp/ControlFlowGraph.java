@@ -24,6 +24,7 @@ import java.util.Comparator;
 /**
  * Control flow graph.
  *
+ *
  * @param <N> The instruction type of the control flow graph.
  */
 public class ControlFlowGraph<N> extends
@@ -44,8 +45,8 @@ public class ControlFlowGraph<N> extends
   ControlFlowGraph(
       N entry, boolean nodeAnnotations, boolean edgeAnnotations) {
     super(nodeAnnotations, edgeAnnotations);
-    implicitReturn = createNode(null);
-    this.entry = createNode(entry);
+    implicitReturn = createDirectedGraphNode(null);
+    this.entry = createDirectedGraphNode(entry);
   }
 
   /**

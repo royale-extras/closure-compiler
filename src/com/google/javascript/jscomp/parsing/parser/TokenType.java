@@ -110,8 +110,6 @@ public enum TokenType {
   AND("&&"),
   OR("||"),
   QUESTION("?"),
-  QUESTION_QUESTION("??"),
-  QUESTION_DOT("?."),
   COLON(":"),
   EQUAL("="),
   PLUS_EQUAL("+="),
@@ -135,11 +133,10 @@ public enum TokenType {
   FALSE,
   NUMBER("number literal"),
   STRING("string literal"),
-  BIGINT("bigint literal"),
   REGULAR_EXPRESSION("regular expression literal"),
 
   // Harmony extensions
-  ELLIPSIS("..."),
+  SPREAD("..."),
   // 12.2.9 Template Literals
   // Template literal tokens corresponding to different parts of the literal
   // Eg: `hello` is scanned as a single NO_SUBSTITUTION_TEMPLATE: hello

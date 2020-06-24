@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -27,9 +28,21 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class StatementFusionTest extends CompilerTestCase {
 
+  private boolean favorsCommas = false;
+
+  @Override
+  @Before
+  public void setUp() throws Exception {
+    super.setUp();
+    favorsCommas = false;
+  }
+
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    return new PeepholeOptimizationsPass(compiler, getName(), new StatementFusion());
+    PeepholeOptimizationsPass peepholePass =
+        new PeepholeOptimizationsPass(compiler, getName(), new StatementFusion(favorsCommas));
+
+    return peepholePass;
   }
 
   @Test
@@ -146,6 +159,7 @@ public final class StatementFusionTest extends CompilerTestCase {
     fuseSame("a; { b; const a = 1; }");
     fuseSame("a; { b; class a {} }");
     fuseSame("a; { b; function a() {} }");
+    fuseSame("a; { b; label: let a = 1; }");
     fuseSame("a; { b; const otherVariable = 1; }");
 
     enableNormalize();
@@ -155,6 +169,36 @@ public final class StatementFusionTest extends CompilerTestCase {
     test(
         "function f(a) { if (COND) { a; { b; let otherVariable = 1; } } }",
         "function f(a) { if (COND) {  { a,b; let otherVariable = 1; } } }");
+  }
+
+  @Test
+  public void testFavorComma1() {
+    favorsCommas = true;
+    test("a;b;c", "a,b,c");
+  }
+
+  @Test
+  public void testFavorComma2() {
+    favorsCommas = true;
+    test("a;b;c;if(d){}", "if(a,b,c,d){}");
+  }
+
+  @Test
+  public void testFavorComma3() {
+    favorsCommas = true;
+    test("a;b;c;if(d){} d;e;f", "if(a,b,c,d){}d,e,f");
+  }
+
+  @Test
+  public void testFavorComma4() {
+    favorsCommas = true;
+    test("if(d){} d;e;f", "if(d){}d,e,f");
+  }
+
+  @Test
+  public void testFavorComma5() {
+    favorsCommas = true;
+    test("a;b;c;if(d){}d;e;f;if(g){}", "if(a,b,c,d){}if(d,e,f,g){}");
   }
 
   @Test

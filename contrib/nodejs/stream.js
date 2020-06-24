@@ -15,10 +15,7 @@
  */
 
 /**
- * @fileoverview Definitions for node's stream module. Depends on the events
- * module.
- * @externs
- *
+ * @fileoverview Definitions for node's stream module. Depends on the events module.
  * @see http://nodejs.org/api/stream.html
  * @see https://github.com/joyent/node/blob/master/lib/stream.js
  */
@@ -251,3 +248,5 @@ stream.Transform._flush;
  * @extends stream.Transform
  */
 stream.PassThrough = function(options) {};
+
+module.exports = stream;

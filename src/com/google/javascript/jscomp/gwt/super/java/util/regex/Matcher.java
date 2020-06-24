@@ -16,29 +16,32 @@
 
 package java.util.regex;
 
-import elemental2.core.JsRegExp;
+import elemental2.core.RegExp;
 import elemental2.core.JsString;
-import elemental2.core.RegExpResult;
 
-/** GWT-compatible minimal replacement for {@code Matcher} */
+/**
+ * GWT-compatible minimal replacement for {@code Matcher}
+ *
+ * @author moz@google.com (Michael Zhou)
+ */
 public class Matcher {
 
-  private final JsRegExp regExp;
-  private final JsRegExp regExpGlobal;
+  private final RegExp regExp;
+  private final RegExp regExpGlobal;
 
   private String input;
 
-  Matcher(JsRegExp regExp, String input) {
+  Matcher(RegExp regExp, String input) {
     this.regExp = regExp;
-    this.regExpGlobal = new JsRegExp(regExp.source, "g");
+    this.regExpGlobal = new RegExp(regExp.source, "g");
     this.input = input;
   }
 
   public boolean matches() {
-    RegExpResult result = regExp.exec(input);
+    String[] result = regExp.exec(input);
 
     if (result != null) {
-      String match = result.getAt(0);
+      String match = result[0];
       if (match.equals(input)) {
         return true;
       }
@@ -55,7 +58,7 @@ public class Matcher {
   }
 
   public String replaceAll(String replacement) {
-    return new JsString(input).replace(new JsRegExp(regExp.source, "g"), replacement).toString();
+    return new JsString(input).replace(new RegExp(regExp.source, "g"), replacement).toString();
   }
 
   public Matcher reset() {

@@ -363,28 +363,4 @@ public final class CheckGlobalThisTest extends CompilerTestCase {
         "  click() {}",
         "}"));
   }
-
-  @Test
-  public void testFunctionWithThisTypeAnnotated() throws Exception {
-    testSame(
-        lines(
-            "/**",
-            " * @type {function(this:{hello:string})}",
-            " */",
-            "function test() {",
-            "  console.log(this.hello)",
-            "}"));
-  }
-
-  @Test
-  public void testFunctionWithoutThisTypeAnnotated() throws Exception {
-    testFailure(
-        lines(
-            "/**",
-            " * @type {function()}",
-            " */",
-            "function test() {",
-            "  console.log(this.hello)",
-            "}"));
-  }
 }

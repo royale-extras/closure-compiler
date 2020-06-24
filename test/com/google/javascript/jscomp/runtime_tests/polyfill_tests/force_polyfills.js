@@ -30,7 +30,6 @@ delete Array.prototype.find;
 delete Array.prototype.findIndex;
 delete Array.prototype.includes;
 
-// this works here because Map is a property on the global object
 delete Map;
 
 delete Math.acosh;
@@ -62,7 +61,6 @@ delete Object.assign;
 delete Object.entries;
 delete Object.getOwnPropertyDescriptors;
 delete Object.getOwnPropertySymbols;
-delete Object.fromEntries;
 delete Object.is;
 delete Object.setPrototypeOf;
 delete Object.values;
@@ -75,17 +73,12 @@ delete String.fromCodePoint;
 delete String.prototype.codePointAt;
 delete String.prototype.endsWith;
 delete String.prototype.includes;
-delete String.prototype.matchAll;
 delete String.prototype.padEnd;
 delete String.prototype.padStart;
 delete String.prototype.repeat;
 delete String.prototype.startsWith;
-delete String.prototype.trimStart;
-delete String.prototype.trimEnd;
 
 delete Symbol;
 
 delete WeakMap;
 delete WeakSet;
-
-delete globalThis;

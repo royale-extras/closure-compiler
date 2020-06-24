@@ -18,7 +18,6 @@ package com.google.javascript.jscomp;
 
 import static com.google.javascript.jscomp.CompilerOptions.LanguageMode.ECMASCRIPT_NEXT;
 
-import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,6 +29,7 @@ import org.junit.runners.JUnit4;
  *
  * @author kushal@google.com (Kushal Dave)
  */
+
 @RunWith(JUnit4.class)
 public final class InlineVariablesTest extends CompilerTestCase {
 
@@ -42,12 +42,6 @@ public final class InlineVariablesTest extends CompilerTestCase {
     super.setUp();
     enableNormalize();
     setAcceptedLanguage(ECMASCRIPT_NEXT);
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    // TODO(b/33104006): remove this override.
-    return 2;
   }
 
   @Override
@@ -141,13 +135,6 @@ public final class InlineVariablesTest extends CompilerTestCase {
   public void testNoInlineExportedName2() {
     testSame("var f = function() {}; var _x = f;" +
              "var y = function() { _x(); }; var _y = f;");
-  }
-
-  @Test
-  public void testDontTreatLocalVariablesAsExportedByConvention() {
-    // In the GoogleCodingConvention, globals starting with "_" are exported. (see the above two
-    // tests). Verify that we don't accidentally apply the same convention to locals.
-    test("function f() { var _x = 1; var z = _x; }", "function f() { var z = 1; }");
   }
 
   @Test
@@ -245,9 +232,7 @@ public final class InlineVariablesTest extends CompilerTestCase {
   @Test
   public void testInlineAcrossModules() {
     // TODO(kushal): Make decision about overlap with CrossChunkCodeMotion
-    test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var a = 2;").addChunk("var b = a;").build(),
-        new String[] {"", "var b = 2;"});
+    test(createModules("var a = 2;", "var b = a;"), new String[] {"", "var b = 2;"});
   }
 
   @Test

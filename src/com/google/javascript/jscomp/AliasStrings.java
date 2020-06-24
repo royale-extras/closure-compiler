@@ -44,6 +44,7 @@ import java.util.regex.Pattern;
  *     - However, projects that make heavy use of jslayout may need to enable
  *       this pass even for modern browsers, because jslayout generates so many
  *       duplicate strings.
+ *
  */
 class AliasStrings implements CompilerPass, NodeTraversal.Callback {
 
@@ -57,8 +58,8 @@ class AliasStrings implements CompilerPass, NodeTraversal.Callback {
 
   private final JSModuleGraph moduleGraph;
 
-  // Regular expression matcher for a skiplisting strings in aliasing.
-  private Matcher skiplist = null;
+  // Regular expression matcher for a blacklisting strings in aliasing.
+  private Matcher blacklist = null;
 
   /**
    * Strings that can be aliased, or null if all strings except 'undefined'
@@ -88,25 +89,24 @@ class AliasStrings implements CompilerPass, NodeTraversal.Callback {
    *
    * @param compiler The compiler
    * @param moduleGraph The module graph, or null if there are no modules
-   * @param strings Set of strings to be aliased. If null, all strings except 'undefined' will be
-   *     aliased.
-   * @param skiplistRegex The regex to skiplist words in aliasing strings.
-   * @param outputStringUsage Outputs all strings and the number of times they were used in the
-   *     application to the server log.
+   * @param strings Set of strings to be aliased. If null, all strings except
+   *     'undefined' will be aliased.
+   * @param blacklistRegex The regex to blacklist words in aliasing strings.
+   * @param outputStringUsage Outputs all strings and the number of times they
+   * were used in the application to the server log.
    */
-  AliasStrings(
-      AbstractCompiler compiler,
-      JSModuleGraph moduleGraph,
-      Set<String> strings,
-      String skiplistRegex,
-      boolean outputStringUsage) {
+  AliasStrings(AbstractCompiler compiler,
+               JSModuleGraph moduleGraph,
+               Set<String> strings,
+               String blacklistRegex,
+               boolean outputStringUsage) {
     this.compiler = compiler;
     this.moduleGraph = moduleGraph;
     this.aliasableStrings = strings;
-    if (skiplistRegex.length() != 0) {
-      this.skiplist = Pattern.compile(skiplistRegex).matcher("");
+    if (blacklistRegex.length() != 0) {
+      this.blacklist = Pattern.compile(blacklistRegex).matcher("");
     } else {
-      this.skiplist = null;
+      this.blacklist = null;
     }
     this.outputStringUsage = outputStringUsage;
   }
@@ -156,7 +156,7 @@ class AliasStrings implements CompilerPass, NodeTraversal.Callback {
         return;
       }
 
-      if (skiplist != null && skiplist.reset(str).find()) {
+      if (blacklist != null && blacklist.reset(str).find()) {
         return;
       }
 

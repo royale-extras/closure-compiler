@@ -32,6 +32,7 @@ import com.google.javascript.rhino.Node;
  * the tree, you instead should create a central RecoverableJsAst that does the
  * caching across compilations, and create new RecoverableJsAst's that act as
  * copying proxies around the original.
+ *
  */
 public class RecoverableJsAst implements SourceAst {
 

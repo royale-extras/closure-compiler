@@ -55,4 +55,9 @@ class MemoizedScopeCreator implements ScopeCreator {
     }
     return scope;
   }
+
+  @Override
+  public boolean hasBlockScope() {
+    return delegate.hasBlockScope();
+  }
 }

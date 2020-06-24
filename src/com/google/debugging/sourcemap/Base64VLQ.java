@@ -19,11 +19,15 @@ package com.google.debugging.sourcemap;
 import java.io.IOException;
 
 /**
- * We encode our variable length numbers as base64 encoded strings with the least significant digit
- * coming first. Each base64 digit encodes a 5-bit value (0-31) and a continuation bit. Signed
- * values can be represented by using the least significant bit of the value as the sign bit.
+ * We encode our variable length numbers as base64 encoded strings with
+ * the least significant digit coming first.  Each base64 digit encodes
+ * a 5-bit value (0-31) and a continuation bit.  Signed values can be
+ * represented by using the least significant bit of the value as the
+ * sign bit.
+ *
+ * @author johnlenz@google.com (John Lenz)
  */
-public final class Base64VLQ {
+final class Base64VLQ {
   // Utility class.
   private Base64VLQ() {}
 
@@ -59,16 +63,8 @@ public final class Base64VLQ {
    */
   private static int fromVLQSigned(int value) {
     boolean negate = (value & 1) == 1;
-    value = value >>> 1;
-    if (!negate) {
-      return value;
-    }
-    // We need to OR 0x80000000 here to ensure the 32nd bit (the sign bit) is
-    // always set for negative numbers. If `value` were 1, (meaning `negate` is
-    // true and all other bits were zeros), `value` would now be 0. -0 is just
-    // 0, and doesn't flip the 32nd bit as intended. All positive numbers will
-    // successfully flip the 32nd bit without issue, so it's a noop for them.
-    return -value | 0x80000000;
+    value = value >> 1;
+    return negate ? -value : value;
   }
 
   /**
@@ -89,13 +85,12 @@ public final class Base64VLQ {
   }
 
   /**
-   * A simple interface for advancing through a sequence of characters, that communicates that
-   * advance back to the source.
+   * A simple interface for advancing through a sequence of characters, that
+   * communicates that advance back to the source.
    */
-  public interface CharIterator {
-    public boolean hasNext();
-
-    public char next();
+  interface CharIterator {
+    boolean hasNext();
+    char next();
   }
 
   /**

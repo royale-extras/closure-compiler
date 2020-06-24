@@ -19,7 +19,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.testing.NoninjectingCompiler;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -77,12 +76,17 @@ public final class DartSuperAccessorsPassTest extends CompilerTestCase {
     return new DartSuperAccessorsPass(compiler);
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testSuperGetElem() {
     checkConversionWithinMembers(
         "return super['prop']",
         "return $jscomp.superGet(this, 'prop')");
-    assertThat(getLastCompiler().getInjected()).containsExactly("es6_dart_runtime");
+    assertThat(getLastCompiler().injected).containsExactly("es6_dart_runtime");
   }
 
   @Test
@@ -182,13 +186,12 @@ public final class DartSuperAccessorsPassTest extends CompilerTestCase {
         "foo.bar();",
         "this.bar;",
         "this.bar();",
+        "super();",
         "super.bar();");
 
     for (String sig : MEMBER_SIGNATURES) {
       testSame(wrap(sig, body));
     }
-    // Super constructor call is only allowed in the constructor
-    testSame(wrap("constructor()", "super();"));
   }
 
   @Test
@@ -196,6 +199,8 @@ public final class DartSuperAccessorsPassTest extends CompilerTestCase {
     String body = lines(
         "super.x;",
         "super.x = y;");
+
+    testSame(body);
 
     for (String sig : MEMBER_SIGNATURES) {
       testSame(wrap("static " + sig, body));

@@ -65,39 +65,12 @@ public final class DotFormatterTest {
     test(expected, ast);
   }
 
-  /** Tests the formatting (simple tree). */
-  @Test
-  public void testToDotSimpleName() throws Exception {
-    Node ast = Node.newString(Token.NAME, "dummy");
-
-    String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"NAME(dummy)\"];\n"
-            + "}\n";
-    test(expected, ast);
-  }
-
-  /** Tests the formatting (simple tree). */
-  @Test
-  public void testToDotSimpleStringKey() throws Exception {
-    Node ast = Node.newString(Token.STRING_KEY, "key");
-    ;
-
-    String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"STRING_KEY(key)\"];\n"
-            + "}\n";
-    test(expected, ast);
-  }
-
   /** Tests the formatting (3 element tree). */
   @Test
-  public void testToDot3Elements_nodesWithoutNames() throws Exception {
+  public void testToDot3Elements() throws Exception {
     Node ast = new Node(Token.BLOCK);
-    ast.addChildToBack(Node.newString(Token.NAME, ""));
-    ast.addChildToBack(Node.newString(Token.STRING, ""));
+    ast.addChildToBack(new Node(Token.NAME));
+    ast.addChildToBack(new Node(Token.STRING));
 
     String expected = "digraph AST {\n" +
         "  node [color=lightblue2, style=filled];\n" +
@@ -107,47 +80,6 @@ public final class DotFormatterTest {
         "  node2 [label=\"STRING\"];\n" +
         "  node0 -> node2 [weight=1];\n" +
         "}\n";
-    test(expected, ast);
-  }
-
-  /** Tests the formatting (3 element tree). */
-  @Test
-  public void testToDot3Elements_NodesCreatedWithNewString() throws Exception {
-    Node ast = new Node(Token.BLOCK);
-    ast.addChildToBack(Node.newString(Token.NAME, "a"));
-    ast.addChildToBack(Node.newString(Token.STRING, "b"));
-
-    String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"BLOCK\"];\n"
-            + "  node1 [label=\"NAME(a)\"];\n"
-            + "  node0 -> node1 [weight=1];\n"
-            + "  node2 [label=\"STRING(b)\"];\n"
-            + "  node0 -> node2 [weight=1];\n"
-            + "}\n";
-    test(expected, ast);
-  }
-
-  /** Tests the labels for `import * as name from "module-name";` */
-  @Test
-  public void testImportStarLabel() throws Exception {
-    Node ast = new Node(Token.IMPORT);
-    ast.addChildToBack(new Node(Token.EMPTY));
-    ast.addChildToBack(Node.newString(Token.IMPORT_STAR, "name"));
-    ast.addChildToBack(Node.newString(Token.STRING, "module-name"));
-
-    String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"IMPORT\"];\n"
-            + "  node1 [label=\"EMPTY\"];\n"
-            + "  node0 -> node1 [weight=1];\n"
-            + "  node2 [label=\"IMPORT_STAR(name)\"];\n"
-            + "  node0 -> node2 [weight=1];\n"
-            + "  node3 [label=\"STRING(module-nam)\"];\n"
-            + "  node0 -> node3 [weight=1];\n"
-            + "}\n";
     test(expected, ast);
   }
 

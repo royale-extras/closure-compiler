@@ -27,6 +27,7 @@ import com.google.javascript.rhino.StaticSourceFile;
 /**
  * A parser for the type transformation expressions (TTL-Exp) as in
  * {@code @template T := TTL-Exp =:}
+ *
  */
 public final class TypeTransformationParser {
 
@@ -259,10 +260,7 @@ public final class TypeTransformationParser {
         sourceFile, typeTransformationString, config, errorReporter);
     Node ast = result.ast;
     // Check that the expression is a script with an expression result
-    if (ast == null
-        || !ast.isScript()
-        || !ast.hasChildren()
-        || !ast.getFirstChild().isExprResult()) {
+    if (!ast.isScript() || !ast.getFirstChild().isExprResult()) {
       warnInvalidExpression("type transformation", ast);
       return false;
     }

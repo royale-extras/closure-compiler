@@ -34,6 +34,7 @@ import org.junit.runners.JUnit4;
  *
  * @author nicksantos@google.com (Nick Santos)
  */
+
 @RunWith(JUnit4.class)
 public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
 
@@ -53,15 +54,15 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
     super.setUp();
 
     globalScope = TypedScope.createGlobalScope(rootNode);
-    globalScope.declare("globalA", null, null, null, true);
-    globalScope.declare("globalB", null, null, null, true);
+    globalScope.declare("globalA", null, null, null);
+    globalScope.declare("globalB", null, null, null);
 
     localScope = new TypedScope(globalScope, functionNode);
-    localScope.declare("localA", null, null, null, true);
-    localScope.declare("localB", null, null, null, true);
+    localScope.declare("localA", null, null, null);
+    localScope.declare("localB", null, null, null);
 
-    globalEntry = LinkedFlowScope.createEntryLattice(compiler, globalScope);
-    localEntry = LinkedFlowScope.createEntryLattice(compiler, localScope);
+    globalEntry = LinkedFlowScope.createEntryLattice(globalScope);
+    localEntry = LinkedFlowScope.createEntryLattice(localScope);
   }
 
   @Test
@@ -115,8 +116,8 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
 
   @Test
   public void testJoin3() {
-    localScope.declare("localC", null, getNativeStringType(), null, true);
-    localScope.declare("localD", null, getNativeStringType(), null, true);
+    localScope.declare("localC", null, getNativeStringType(), null);
+    localScope.declare("localD", null, getNativeStringType(), null);
 
     FlowScope childA = localEntry.inferSlotType("localC", getNativeNumberType());
     FlowScope childB = localEntry.inferSlotType("localD", getNativeBooleanType());
@@ -148,7 +149,7 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
     FlowScope chainA = localEntry;
     FlowScope chainB = localEntry;
     for (int i = 0; i < LONG_CHAIN_LENGTH; i++) {
-      localScope.declare("local" + i, null, null, null, true);
+      localScope.declare("local" + i, null, null, null);
       chainA =
           chainA.inferSlotType(
               "local" + i, i % 2 == 0 ? getNativeNumberType() : getNativeBooleanType());
@@ -226,6 +227,7 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
 
   @SuppressWarnings("unchecked")
   private FlowScope join(FlowScope a, FlowScope b) {
-    return new LinkedFlowScope.FlowScopeJoinOp(compiler).apply(ImmutableList.of(a, b));
+    return (new LinkedFlowScope.FlowScopeJoinOp()).apply(
+        ImmutableList.of(a, b));
   }
 }

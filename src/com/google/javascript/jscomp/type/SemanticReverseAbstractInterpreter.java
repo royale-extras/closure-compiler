@@ -20,7 +20,6 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.UNKNOWN_TYPE;
 
 import com.google.common.base.Function;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Outcome;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSType;
@@ -40,6 +39,7 @@ import javax.annotation.CheckReturnValue;
  * A reverse abstract interpreter using the semantics of the JavaScript
  * language as a means to reverse interpret computations. This interpreter
  * expects the parse tree inputs to be typed.
+ *
  */
 public final class SemanticReverseAbstractInterpreter
     extends ChainableReverseAbstractInterpreter {
@@ -84,9 +84,7 @@ public final class SemanticReverseAbstractInterpreter
   private final Function<TypePair, TypePair> ineq =
       p ->
           new TypePair(
-              p.typeA != null ? p.typeA.restrictByNotUndefined() : null,
-              p.typeB != null ? p.typeB.restrictByNotUndefined() : null);
-
+              getRestrictedWithoutUndefined(p.typeA), getRestrictedWithoutUndefined(p.typeB));
   /**
    * Creates a semantic reverse abstract interpreter.
    */
@@ -97,7 +95,7 @@ public final class SemanticReverseAbstractInterpreter
   @Override
   @CheckReturnValue
   public FlowScope getPreciserScopeKnowingConditionOutcome(
-      Node condition, FlowScope blindScope, Outcome outcome) {
+      Node condition, FlowScope blindScope, boolean outcome) {
     // Check for the typeof operator.
     Token operatorToken = condition.getToken();
     switch (operatorToken) {
@@ -132,7 +130,7 @@ public final class SemanticReverseAbstractInterpreter
           if (operandType != null) {
             boolean resultEqualsValue = operatorToken == Token.EQ ||
                 operatorToken == Token.SHEQ || operatorToken == Token.CASE;
-            if (!outcome.isTruthy()) {
+            if (!outcome) {
               resultEqualsValue = !resultEqualsValue;
             }
             return caseTypeOf(operandNode, operandType, stringNode.getString(),
@@ -145,46 +143,46 @@ public final class SemanticReverseAbstractInterpreter
     }
     switch (operatorToken) {
       case AND:
-        if (outcome.isTruthy()) {
-          return caseAndOrNotShortCircuiting(
-              condition.getFirstChild(), condition.getLastChild(), blindScope, Outcome.TRUE);
+        if (outcome) {
+          return caseAndOrNotShortCircuiting(condition.getFirstChild(),
+              condition.getLastChild(), blindScope, true);
         } else {
-          return caseAndOrMaybeShortCircuiting(
-              condition.getFirstChild(), condition.getLastChild(), blindScope, Outcome.TRUE);
+          return caseAndOrMaybeShortCircuiting(condition.getFirstChild(),
+              condition.getLastChild(), blindScope, true);
         }
 
       case OR:
-        if (!outcome.isTruthy()) {
-          return caseAndOrNotShortCircuiting(
-              condition.getFirstChild(), condition.getLastChild(), blindScope, Outcome.FALSE);
+        if (!outcome) {
+          return caseAndOrNotShortCircuiting(condition.getFirstChild(),
+              condition.getLastChild(), blindScope, false);
         } else {
-          return caseAndOrMaybeShortCircuiting(
-              condition.getFirstChild(), condition.getLastChild(), blindScope, Outcome.FALSE);
+          return caseAndOrMaybeShortCircuiting(condition.getFirstChild(),
+              condition.getLastChild(), blindScope, false);
         }
 
       case EQ:
-        if (outcome.isTruthy()) {
+        if (outcome) {
           return caseEquality(condition, blindScope, EQ);
         } else {
           return caseEquality(condition, blindScope, NE);
         }
 
       case NE:
-        if (outcome.isTruthy()) {
+        if (outcome) {
           return caseEquality(condition, blindScope, NE);
         } else {
           return caseEquality(condition, blindScope, EQ);
         }
 
       case SHEQ:
-        if (outcome.isTruthy()) {
+        if (outcome) {
           return caseEquality(condition, blindScope, SHEQ);
         } else {
           return caseEquality(condition, blindScope, SHNE);
         }
 
       case SHNE:
-        if (outcome.isTruthy()) {
+        if (outcome) {
           return caseEquality(condition, blindScope, SHNE);
         } else {
           return caseEquality(condition, blindScope, SHEQ);
@@ -203,13 +201,13 @@ public final class SemanticReverseAbstractInterpreter
 
       case NOT:
         return firstPreciserScopeKnowingConditionOutcome(
-            condition.getFirstChild(), blindScope, outcome.not());
+            condition.getFirstChild(), blindScope, !outcome);
 
       case LE:
       case LT:
       case GE:
       case GT:
-        if (outcome.isTruthy()) {
+        if (outcome) {
           return caseEquality(condition, blindScope, ineq);
         }
         break;
@@ -220,7 +218,7 @@ public final class SemanticReverseAbstractInterpreter
             outcome);
 
       case IN:
-        if (outcome.isTruthy() && condition.getFirstChild().isString()) {
+        if (outcome && condition.getFirstChild().isString()) {
           return caseIn(condition.getLastChild(),
               condition.getFirstChild().getString(), blindScope);
         }
@@ -230,7 +228,7 @@ public final class SemanticReverseAbstractInterpreter
         Node left =
             condition.getParent().getFirstChild(); // the switch condition
         Node right = condition.getFirstChild();
-          if (outcome.isTruthy()) {
+        if (outcome) {
           return caseEquality(left, right, blindScope, SHEQ);
         } else {
           return caseEquality(left, right, blindScope, SHNE);
@@ -254,11 +252,10 @@ public final class SemanticReverseAbstractInterpreter
   }
 
   @CheckReturnValue
-  private FlowScope caseIsArray(Node value, FlowScope blindScope, Outcome outcome) {
+  private FlowScope caseIsArray(Node value, FlowScope blindScope, boolean outcome) {
       JSType type = getTypeIfRefinable(value, blindScope);
     if (type != null) {
-      Visitor<JSType> visitor =
-          outcome.isTruthy() ? restrictToArrayVisitor : restrictToNotArrayVisitor;
+      Visitor<JSType> visitor = outcome ? restrictToArrayVisitor : restrictToNotArrayVisitor;
       return maybeRestrictName(blindScope, value, type, type.visit(visitor));
     }
     return blindScope;
@@ -301,19 +298,15 @@ public final class SemanticReverseAbstractInterpreter
     if (merged != null) {
       return maybeRestrictTwoNames(
           blindScope,
-          left,
-          leftType,
-          leftIsRefineable ? merged.typeA : null,
-          right,
-          rightType,
-          rightIsRefineable ? merged.typeB : null);
+          left, leftType, leftIsRefineable ? merged.typeA : null,
+          right, rightType, rightIsRefineable ? merged.typeB : null);
     }
     return blindScope;
   }
 
   @CheckReturnValue
   private FlowScope caseAndOrNotShortCircuiting(
-      Node left, Node right, FlowScope blindScope, Outcome outcome) {
+      Node left, Node right, FlowScope blindScope, boolean outcome) {
     // left type
     JSType leftType = getTypeIfRefinable(left, blindScope);
     boolean leftIsRefineable;
@@ -327,14 +320,14 @@ public final class SemanticReverseAbstractInterpreter
     }
 
     // restricting left type
-    JSType restrictedLeftType =
-        (leftType == null) ? null : leftType.getRestrictedTypeGivenOutcome(outcome);
+    JSType restrictedLeftType = (leftType == null) ? null :
+        leftType.getRestrictedTypeGivenToBooleanOutcome(outcome);
     if (restrictedLeftType == null) {
       return firstPreciserScopeKnowingConditionOutcome(
           right, blindScope, outcome);
     }
-    blindScope =
-        maybeRestrictName(blindScope, left, leftType, leftIsRefineable ? restrictedLeftType : null);
+    blindScope = maybeRestrictName(blindScope, left, leftType,
+        leftIsRefineable ? restrictedLeftType : null);
 
     // right type
     JSType rightType = getTypeIfRefinable(right, blindScope);
@@ -348,19 +341,19 @@ public final class SemanticReverseAbstractInterpreter
           right, blindScope, outcome);
     }
 
-    if (outcome.isTruthy()) {
-      JSType restrictedRightType =
-          (rightType == null) ? null : rightType.getRestrictedTypeGivenOutcome(outcome);
+    if (outcome) {
+      JSType restrictedRightType = (rightType == null) ? null :
+          rightType.getRestrictedTypeGivenToBooleanOutcome(outcome);
       // creating new scope
-      return maybeRestrictName(
-          blindScope, right, rightType, rightIsRefineable ? restrictedRightType : null);
+      return maybeRestrictName(blindScope, right, rightType,
+          rightIsRefineable ? restrictedRightType : null);
     }
     return blindScope;
   }
 
   @CheckReturnValue
   private FlowScope caseAndOrMaybeShortCircuiting(
-      Node left, Node right, FlowScope blindScope, Outcome outcome) {
+      Node left, Node right, FlowScope blindScope, boolean outcome) {
     // Perform two separate refinements, one for if short-circuiting occurred, and one for if it did
     // not.  Because it's not clear whether short-circuiting occurred, we actually have to ignore
     // both separate result flow scopes individually, but if they both refined the same slot, we
@@ -368,8 +361,7 @@ public final class SemanticReverseAbstractInterpreter
     // more efficient, we should just be able to join the scopes unconditionally?
     Set<String> refinements = new HashSet<>();
     blindScope = new RefinementTrackingFlowScope(blindScope, refinements);
-    FlowScope leftScope =
-        firstPreciserScopeKnowingConditionOutcome(left, blindScope, outcome.not());
+    FlowScope leftScope = firstPreciserScopeKnowingConditionOutcome(left, blindScope, !outcome);
     StaticTypedSlot leftVar =
         refinements.size() == 1 ? leftScope.getSlot(refinements.iterator().next()) : null;
     if (leftVar == null) {
@@ -383,7 +375,7 @@ public final class SemanticReverseAbstractInterpreter
     FlowScope rightScope =
         new RefinementTrackingFlowScope(
             firstPreciserScopeKnowingConditionOutcome(left, blindScope, outcome), refinements);
-    rightScope = firstPreciserScopeKnowingConditionOutcome(right, rightScope, outcome.not());
+    rightScope = firstPreciserScopeKnowingConditionOutcome(right, rightScope, !outcome);
     StaticTypedSlot rightVar =
         refinements.size() == 1 ? rightScope.getSlot(refinements.iterator().next()) : null;
     if (rightVar == null || !leftVar.getName().equals(rightVar.getName())) {
@@ -409,7 +401,7 @@ public final class SemanticReverseAbstractInterpreter
   @CheckReturnValue
   private FlowScope maybeRestrictName(
       FlowScope blindScope, Node node, JSType originalType, JSType restrictedType) {
-    if (restrictedType != null && !JSType.areIdentical(restrictedType, originalType)) {
+    if (restrictedType != null && restrictedType != originalType) {
       return declareNameInScope(blindScope, node, restrictedType);
     }
     return blindScope;
@@ -426,9 +418,9 @@ public final class SemanticReverseAbstractInterpreter
       JSType originalRightType,
       JSType restrictedRightType) {
     boolean shouldRefineLeft =
-        restrictedLeftType != null && !JSType.areIdentical(restrictedLeftType, originalLeftType);
+        restrictedLeftType != null && restrictedLeftType != originalLeftType;
     boolean shouldRefineRight =
-        restrictedRightType != null && !JSType.areIdentical(restrictedRightType, originalRightType);
+        restrictedRightType != null && restrictedRightType != originalRightType;
     if (shouldRefineLeft || shouldRefineRight) {
       FlowScope informed = blindScope;
       if (shouldRefineLeft) {
@@ -443,11 +435,12 @@ public final class SemanticReverseAbstractInterpreter
   }
 
   @CheckReturnValue
-  private FlowScope caseNameOrGetProp(Node name, FlowScope blindScope, Outcome outcome) {
+  private FlowScope caseNameOrGetProp(Node name, FlowScope blindScope, boolean outcome) {
     JSType type = getTypeIfRefinable(name, blindScope);
     if (type != null) {
-      JSType restrictedType = type.getRestrictedTypeGivenOutcome(outcome);
-      return maybeRestrictName(blindScope, name, type, restrictedType);
+      return maybeRestrictName(
+          blindScope, name, type,
+          type.getRestrictedTypeGivenToBooleanOutcome(outcome));
     }
     return blindScope;
   }
@@ -461,7 +454,7 @@ public final class SemanticReverseAbstractInterpreter
   }
 
   @CheckReturnValue
-  private FlowScope caseInstanceOf(Node left, Node right, FlowScope blindScope, Outcome outcome) {
+  private FlowScope caseInstanceOf(Node left, Node right, FlowScope blindScope, boolean outcome) {
     JSType leftType = getTypeIfRefinable(left, blindScope);
     if (leftType == null) {
       return blindScope;
@@ -473,12 +466,13 @@ public final class SemanticReverseAbstractInterpreter
       targetType = rightType.toMaybeFunctionType();
     }
     Visitor<JSType> visitor;
-    if (outcome.isTruthy()) {
+    if (outcome) {
       visitor = new RestrictByTrueInstanceOfResultVisitor(targetType);
     } else {
       visitor = new RestrictByFalseInstanceOfResultVisitor(targetType);
     }
-    return maybeRestrictName(blindScope, left, leftType, leftType.visit(visitor));
+    return maybeRestrictName(
+        blindScope, left, leftType, leftType.visit(visitor));
   }
 
   /**
@@ -492,7 +486,8 @@ public final class SemanticReverseAbstractInterpreter
   @CheckReturnValue
   private FlowScope caseIn(Node object, String propertyName, FlowScope blindScope) {
     JSType jsType = object.getJSType();
-    jsType = jsType != null ? jsType.restrictByNotNullOrUndefined() : null;
+    jsType = this.getRestrictedWithoutNull(jsType);
+    jsType = this.getRestrictedWithoutUndefined(jsType);
 
     boolean hasProperty = false;
     ObjectType objectType = ObjectType.cast(jsType);

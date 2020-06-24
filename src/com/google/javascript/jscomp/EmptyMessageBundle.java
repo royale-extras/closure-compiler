@@ -21,6 +21,8 @@ import com.google.javascript.jscomp.JsMessage.IdGenerator;
 
 /**
  * An implementation of MessageBundle that has no translations.
+ *
+ * @author nicksantos@google.com (Nick Santos)
  */
 public final class EmptyMessageBundle implements MessageBundle {
 

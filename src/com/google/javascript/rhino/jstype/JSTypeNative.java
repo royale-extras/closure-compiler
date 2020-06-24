@@ -50,19 +50,6 @@ public enum JSTypeNative {
   ARRAY_TYPE,
   ARRAY_FUNCTION_TYPE,
 
-  ASYNC_ITERABLE_FUNCTION_TYPE,
-  ASYNC_ITERABLE_TYPE,
-
-  ASYNC_ITERATOR_FUNCTION_TYPE,
-  ASYNC_ITERATOR_TYPE,
-
-  ASYNC_GENERATOR_FUNCTION_TYPE,
-  ASYNC_GENERATOR_TYPE,
-
-  BIGINT_TYPE,
-  BIGINT_OBJECT_TYPE,
-  BIGINT_OBJECT_FUNCTION_TYPE,
-
   BOOLEAN_TYPE,
   BOOLEAN_OBJECT_TYPE,
   BOOLEAN_OBJECT_FUNCTION_TYPE,
@@ -94,22 +81,22 @@ public enum JSTypeNative {
   DATE_TYPE,
   DATE_FUNCTION_TYPE,
 
-  FUNCTION_TYPE,
+  EMPTY_OBJECT_LITERAL_TYPE,
+
+  FALSE_TYPE,
+
   FUNCTION_FUNCTION_TYPE,
+  FUNCTION_INSTANCE_TYPE, // equivalent to U2U_CONSTRUCTOR_TYPE
   FUNCTION_PROTOTYPE,
 
   GENERATOR_FUNCTION_TYPE,
   GENERATOR_TYPE,
 
-  I_ITERABLE_RESULT_FUNCTION_TYPE,
   I_ITERABLE_RESULT_TYPE,
   ITERABLE_FUNCTION_TYPE,
   ITERABLE_TYPE,
   ITERATOR_FUNCTION_TYPE,
   ITERATOR_TYPE,
-
-  I_ARRAY_LIKE_FUNCTION_TYPE,
-  I_ARRAY_LIKE_TYPE,
 
   I_TEMPLATE_ARRAY_TYPE,
 
@@ -145,16 +132,27 @@ public enum JSTypeNative {
 
   THENABLE_TYPE,
 
+  TRUE_TYPE,
+
   UNKNOWN_TYPE,
 
   VOID_TYPE,
 
   // Commonly used types
+
+  TOP_LEVEL_PROTOTYPE,
+  STRING_VALUE_OR_OBJECT_TYPE,
+  NUMBER_VALUE_OR_OBJECT_TYPE,
+  SYMBOL_VALUE_OR_OBJECT_TYPE,
   ALL_TYPE,
   NO_TYPE,
   NO_OBJECT_TYPE,
   NO_RESOLVED_TYPE,
   GLOBAL_THIS,
+  // TODO(dimvar): merge these two if possible.
+  U2U_CONSTRUCTOR_TYPE,
+  // unknown function type, i.e. (?...) -> ?
+  U2U_FUNCTION_TYPE,
 
   LEAST_FUNCTION_TYPE,
   GREATEST_FUNCTION_TYPE,
@@ -165,12 +163,34 @@ public enum JSTypeNative {
   NULL_VOID,
 
   /**
+   * (Object,symbol)
+   */
+  OBJECT_SYMBOL,
+
+  /**
+   * (Object,number,string)
+   */
+  OBJECT_NUMBER_STRING,
+
+  /**
+   * (Object,number,string,boolean)
+   */
+  OBJECT_NUMBER_STRING_BOOLEAN,
+
+  /**
+   * (Object,number,string,boolean,symbol)
+   */
+  OBJECT_NUMBER_STRING_BOOLEAN_SYMBOL,
+
+  /**
    * (number,string,boolean)
    */
   NUMBER_STRING_BOOLEAN,
 
-  /** (number,string,boolean,symbol) */
-  VALUE_TYPES,
+  /**
+   * (number,string,boolean,symbol)
+   */
+  NUMBER_STRING_BOOLEAN_SYMBOL,
 
   /**
    * (number,symbol)
@@ -187,9 +207,11 @@ public enum JSTypeNative {
    */
   NUMBER_STRING,
 
-  /** (number,string,symbol) */
+  /**
+   * (number,string,symbol)
+   */
   NUMBER_STRING_SYMBOL,
 
-  /** (bigint, number) */
-  BIGINT_NUMBER;
+  /** Only used in the new type inference */
+  TRUTHY,
 }

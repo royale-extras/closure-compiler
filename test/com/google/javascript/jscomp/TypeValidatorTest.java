@@ -23,12 +23,11 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.NUMBER_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.STRING_TYPE;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.truth.Correspondence;
-import com.google.common.truth.IterableSubject;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -58,12 +57,15 @@ public final class TypeValidatorTest extends CompilerTestCase {
     };
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testBasicMismatch() {
     testWarning("/** @param {number} x */ function f(x) {} f('a');", TYPE_MISMATCH_WARNING);
-    this.assertThatRecordedMismatches()
-        .comparingElementsUsing(HAVE_SAME_TYPES)
-        .containsExactly(fromNatives(STRING_TYPE, NUMBER_TYPE));
+    assertMismatches(ImmutableList.of(fromNatives(STRING_TYPE, NUMBER_TYPE)));
   }
 
   @Test
@@ -82,12 +84,11 @@ public final class TypeValidatorTest extends CompilerTestCase {
     JSType firstFunction = registry.createFunctionType(number, string);
     JSType secondFunction = registry.createFunctionType(string, bool);
 
-    this.assertThatRecordedMismatches()
-        .comparingElementsUsing(HAVE_SAME_TYPES)
-        .containsExactly(
-            TypeMismatch.createForTesting(firstFunction, secondFunction),
+    assertMismatches(
+        ImmutableList.of(
+            new TypeMismatch(firstFunction, secondFunction, null),
             fromNatives(STRING_TYPE, BOOLEAN_TYPE),
-            fromNatives(NUMBER_TYPE, STRING_TYPE));
+            fromNatives(NUMBER_TYPE, STRING_TYPE)));
   }
 
   @Test
@@ -106,11 +107,10 @@ public final class TypeValidatorTest extends CompilerTestCase {
     JSType firstFunction = registry.createFunctionType(number, string);
     JSType secondFunction = registry.createFunctionType(number, bool);
 
-    this.assertThatRecordedMismatches()
-        .comparingElementsUsing(HAVE_SAME_TYPES)
-        .containsExactly(
-            TypeMismatch.createForTesting(firstFunction, secondFunction),
-            fromNatives(STRING_TYPE, BOOLEAN_TYPE));
+    assertMismatches(
+        ImmutableList.of(
+            new TypeMismatch(firstFunction, secondFunction, null),
+            fromNatives(STRING_TYPE, BOOLEAN_TYPE)));
   }
 
   @Test
@@ -206,53 +206,12 @@ public final class TypeValidatorTest extends CompilerTestCase {
   }
 
   @Test
-  public void bug_testMismatchRecursively_throughFields() {
-    testWarning(
-        lines(
-            "class Foo {",
-            "  constructor() {",
-            "    /** @type {number} */ this.x;",
-            "  }",
-            "}",
-            "",
-            "function f(/** {x: string} */ a) {",
-            "  const /** !Foo */ b = a;",
-            "}"),
-        TYPE_MISMATCH_WARNING);
-
-    // TODO(b/148169932): There should be another mismatch {found: string, required: number}.
-    this.assertThatRecordedMismatches().hasSize(1);
-  }
-
-  @Test
-  public void bug_testMismatchRecursively_throughTemplates() {
-    testWarning(
-        lines(
-            "/**",
-            " * @interface",
-            " * @template T",
-            " */",
-            "class Foo { }",
-            "",
-            "/** @implements {Foo<string>} */",
-            "class Bar { }",
-            "",
-            "function f(/** !Bar */ a) {",
-            "  const /** !Foo<number> */ b = a;",
-            "}"),
-        TYPE_MISMATCH_WARNING);
-
-    // TODO(b/148169932): There should be an another mismatch {found: string, required: number}.
-    this.assertThatRecordedMismatches().isEmpty();
-  }
-
-  @Test
   public void testNullUndefined() {
     testWarning(
         "/** @param {string} x */ function f(x) {}\n"
             + "f(/** @type {string|null|undefined} */ ('a'));",
         TYPE_MISMATCH_WARNING);
-    this.assertThatRecordedMismatches().isEmpty();
+    assertMismatches(ImmutableList.of());
   }
 
   @Test
@@ -268,7 +227,7 @@ public final class TypeValidatorTest extends CompilerTestCase {
             + "/** @param {Sub} x */ function f(x) {}\n"
             + "f(/** @type {Super} */ (new Sub));",
         TYPE_MISMATCH_WARNING);
-    this.assertThatRecordedMismatches().isEmpty();
+    assertMismatches(ImmutableList.of());
   }
 
   @Test
@@ -501,21 +460,6 @@ public final class TypeValidatorTest extends CompilerTestCase {
   }
 
   @Test
-  public void testOptionalProperties_dontNeedInitializer_inConstructor() {
-    testSame(
-        lines(
-            "/** @interface */",
-            "function Foo() {}",
-            "/** @type {boolean|undefined} */",
-            "Foo.prototype.prop;",
-            "",
-            "/** @constructor @implements {Foo} */",
-            "function Bar() {",
-            // No initializer here.
-            "}"));
-  }
-
-  @Test
   public void testDuplicateSuppression() {
     testWarning(
         lines(
@@ -698,16 +642,12 @@ public final class TypeValidatorTest extends CompilerTestCase {
 
   private TypeMismatch fromNatives(JSTypeNative a, JSTypeNative b) {
     JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    return TypeMismatch.createForTesting(registry.getNativeType(a), registry.getNativeType(b));
+    return new TypeMismatch(
+        registry.getNativeType(a), registry.getNativeType(b), null);
   }
 
-  private IterableSubject assertThatRecordedMismatches() {
-    return assertThat(getLastCompiler().getTypeMismatches());
+  private void assertMismatches(List<TypeMismatch> expected) {
+    List<TypeMismatch> actual = ImmutableList.copyOf(getLastCompiler().getTypeMismatches());
+    assertThat(actual).isEqualTo(expected);
   }
-
-  private static final Correspondence<TypeMismatch, TypeMismatch> HAVE_SAME_TYPES =
-      Correspondence.transforming(
-          (x) -> ImmutableList.of(x.getFound(), x.getRequired()),
-          (x) -> ImmutableList.of(x.getFound(), x.getRequired()),
-          "has same types as");
 }

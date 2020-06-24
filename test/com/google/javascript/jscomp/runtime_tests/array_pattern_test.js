@@ -90,6 +90,7 @@ function testAssign() {
   assertEquals(3, c);
 }
 
+/** @suppress {newCheckTypes} */
 function testConst() {
   const [a, b, c] = numbers();
   assertEquals(1, callCount);

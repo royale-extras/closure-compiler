@@ -21,6 +21,7 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphEdge;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -28,6 +29,7 @@ import java.util.Set;
  * the edges over the given directed graph until the graph reaches
  * a steady state.
  *
+ * @author nicksantos@google.com (Nick Santos)
  *
  * @param <N> Value type that the graph node stores.
  * @param <E> Value type that the graph edge stores.
@@ -64,7 +66,7 @@ public final class FixedPointGraphTraversal<N, E> {
    */
   public void computeFixedPoint(DiGraph<N, E> graph) {
     Set<N> nodes = new LinkedHashSet<>();
-    for (DiGraphNode<N, E> node : graph.getNodes()) {
+    for (DiGraphNode<N, E> node : graph.getDirectedGraphNodes()) {
       nodes.add(node.getValue());
     }
     computeFixedPoint(graph, nodes);
@@ -97,7 +99,7 @@ public final class FixedPointGraphTraversal<N, E> {
     // Use a LinkedHashSet, so that the traversal is deterministic.
     LinkedHashSet<DiGraphNode<N, E>> workSet = new LinkedHashSet<>();
     for (N n : entrySet) {
-      workSet.add(graph.getNode(n));
+      workSet.add(graph.getDirectedGraphNode(n));
     }
     for (; !workSet.isEmpty() && cycleCount < maxIterations; cycleCount++) {
       // For every out edge in the workSet, traverse that edge. If that
@@ -109,7 +111,8 @@ public final class FixedPointGraphTraversal<N, E> {
 
       workSet.remove(source);
 
-      for (DiGraphEdge<N, E> edge : source.getOutEdges()) {
+      List<DiGraphEdge<N, E>> outEdges = source.getOutEdges();
+      for (DiGraphEdge<N, E> edge : outEdges) {
         N destNode = edge.getDestination().getValue();
         if (callback.traverseEdge(sourceValue, edge.getValue(), destNode)) {
           workSet.add(edge.getDestination());

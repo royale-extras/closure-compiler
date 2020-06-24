@@ -22,7 +22,6 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +35,7 @@ import org.junit.runners.JUnit4;
  * Tests for {@link PeepholeFoldConstants} in isolation. Tests for the interaction of multiple
  * peephole passes are in {@link PeepholeIntegrationTest}.
  */
+
 @RunWith(JUnit4.class)
 public final class PeepholeFoldConstantsTest extends CompilerTestCase {
 
@@ -46,17 +46,12 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
   private boolean late;
   private boolean useTypes = true;
   private int numRepetitions;
-  private boolean assumeGettersPure = false;
 
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
     disableTypeCheck();
-    // This pass will correctly inline some getters / setters. However since this is a peephole pass
-    // it can't really update the entire program's state of getters and setters. Not updating these
-    // is fine for removals like this - it just makes other passes more conservative.
-    onlyValidateNoNewGettersAndSetters();
     late = false;
     useTypes = true;
     // Reduce this to 1 if we get better expression evaluators.
@@ -79,7 +74,6 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    options.setAssumeGettersArePure(assumeGettersPure);
     return options;
   }
 
@@ -600,41 +594,6 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testFoldNullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    // fold if left is null/undefined
-    fold("null ?? 1", "1");
-    fold("undefined ?? false", "false");
-
-    fold("x = [foo()] ?? x", "x = ([foo()],x)");
-
-    // short circuit on all non nullish LHS
-    fold("x = false ?? x", "x = false");
-    fold("x = true ?? x", "x = true");
-    fold("x = 0 ?? x", "x = 0");
-    fold("x = 3 ?? x", "x = 3");
-
-    // unfoldable, because the right-side may be the result
-    foldSame("a = x ?? true");
-    foldSame("a = x ?? false");
-    foldSame("a = x ?? 3");
-    foldSame("a = b ? c : x ?? false");
-    foldSame("a = b ? x ?? false : c");
-
-    // folded, but not here.
-    foldSame("a = x ?? false ? b : c");
-    foldSame("a = x ?? true ? b : c");
-
-    foldSame("x = foo() ?? true ?? bar()");
-    ;
-    fold("x = foo() ?? (true && bar())", "x = foo() ?? bar()");
-    foldSame("x = (foo() || false) ?? bar()");
-
-    fold("a() ?? (1 ?? b())", "a() ?? 1");
-    fold("(a() ?? 1) ?? b()", "a() ?? 1 ?? b()");
-  }
-
-  @Test
   public void testFoldBitwiseOp() {
     fold("x = 1 & 1", "x = 1");
     fold("x = 1 & 2", "x = 0");
@@ -821,42 +780,19 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
 
   @Test
   public void testStringAdd() {
-    fold("x = 'a' + 'bc'", "x = 'abc'");
-    fold("x = 'a' + 5", "x = 'a5'");
-    fold("x = 5 + 'a'", "x = '5a'");
-    fold("x = 'a' + ''", "x = 'a'");
-    fold("x = 'a' + foo()", "x = 'a'+foo()");
-    fold("x = foo() + 'a' + 'b'", "x = foo()+'ab'");
-    fold("x = (foo() + 'a') + 'b'", "x = foo()+'ab'"); // believe it!
-    fold("x = foo() + 'a' + 'b' + 'cd' + bar()", "x = foo()+'abcd'+bar()");
-    fold("x = foo() + 2 + 'b'", "x = foo()+2+\"b\""); // don't fold!
+    fold("x = 'a' + \"bc\"", "x = \"abc\"");
+    fold("x = 'a' + 5", "x = \"a5\"");
+    fold("x = 5 + 'a'", "x = \"5a\"");
+    fold("x = 'a' + ''", "x = \"a\"");
+    fold("x = \"a\" + foo()", "x = \"a\"+foo()");
+    fold("x = foo() + 'a' + 'b'", "x = foo()+\"ab\"");
+    fold("x = (foo() + 'a') + 'b'", "x = foo()+\"ab\"");  // believe it!
+    fold("x = foo() + 'a' + 'b' + 'cd' + bar()", "x = foo()+\"abcd\"+bar()");
+    fold("x = foo() + 2 + 'b'", "x = foo()+2+\"b\"");  // don't fold!
     fold("x = foo() + 'a' + 2", "x = foo()+\"a2\"");
-    fold("x = '' + null", "x = 'null'");
-    fold("x = true + '' + false", "x = 'truefalse'");
-    fold("x = '' + []", "x = ''");
-    fold("x = foo() + 'a' + 1 + 1", "x = foo() + 'a11'");
-    fold("x = 1 + 1 + 'a'", "x = '2a'");
-    fold("x = 1 + 1 + 'a'", "x = '2a'");
-    fold("x = 'a' + (1 + 1)", "x = 'a2'");
-    fold("x = '_' + p1 + '_' + ('' + p2)", "x = '_' + p1 + '_' + p2");
-    fold("x = 'a' + ('_' + 1 + 1)", "x = 'a_11'");
-    fold("x = 'a' + ('_' + 1) + 1", "x = 'a_11'");
-    fold("x = 1 + (p1 + '_') + ('' + p2)", "x = 1 + (p1 + '_') + p2");
-    fold("x = 1 + p1 + '_' + ('' + p2)", "x = 1 + p1 + '_' + p2");
-    fold("x = 1 + 'a' + p1", "x = '1a' + p1");
-    fold("x = (p1 + (p2 + 'a')) + 'b'", "x = (p1 + (p2 + 'ab'))");
-    fold("'a' + ('b' + p1) + 1", "'ab' + p1 + 1");
-    fold("x = 'a' + ('b' + p1 + 'c')", "x = 'ab' + (p1 + 'c')");
-    foldSame("x = 'a' + (4 + p1 + 'a')");
-    foldSame("x = p1 / 3 + 4");
-    foldSame("foo() + 3 + 'a' + foo()");
-    foldSame("x = 'a' + ('b' + p1 + p2)");
-    foldSame("x = 1 + ('a' + p1)");
-    foldSame("x = p1 + '' + p2");
-    foldSame("x = 'a' + (1 + p1)");
-    foldSame("x = (p2 + 'a') + (1 + p1)");
-    foldSame("x = (p2 + 'a') + (1 + p1 + p2)");
-    foldSame("x = (p2 + 'a') + (1 + (p1 + p2))");
+    fold("x = '' + null", "x = \"null\"");
+    fold("x = true + '' + false", "x = \"truefalse\"");
+    fold("x = '' + []", "x = ''");      // cannot fold (but nice if we can)
   }
 
   @Test
@@ -1094,9 +1030,12 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
     fold("x = [10, 20][0]", "x = 10");
     fold("x = [10, 20][1]", "x = 20");
 
-    testSame("x = [10, 20][0.5]", PeepholeFoldConstants.INVALID_GETELEM_INDEX_ERROR);
-    test("x = [10, 20][-1]", "x = void 0;");
-    test("x = [10, 20][2]", "x = void 0;");
+    testSame("x = [10, 20][0.5]",
+        PeepholeFoldConstants.INVALID_GETELEM_INDEX_ERROR);
+    testSame("x = [10, 20][-1]",
+        PeepholeFoldConstants.INDEX_OUT_OF_BOUNDS_ERROR);
+    testSame("x = [10, 20][2]",
+        PeepholeFoldConstants.INDEX_OUT_OF_BOUNDS_ERROR);
 
     foldSame("x = [foo(), 0][1]");
     fold("x = [0, foo()][1]", "x = foo()");
@@ -1115,86 +1054,12 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
     fold("x = 's'[0]", "x = 's'");
     foldSame("x = '\uD83D\uDCA9'[0]");
 
-    testSame("x = 'string'[0.5]", PeepholeFoldConstants.INVALID_GETELEM_INDEX_ERROR);
-    test("x = 'string'[-1]", "x = void 0;");
-    test("x = 'string'[6]", "x = void 0;");
-  }
-
-  @Test
-  public void testFoldArrayLitSpreadGetElem() {
-    numRepetitions = 1;
-    fold("x = [...[0]][0]", "x = 0;");
-    fold("x = [0, 1, ...[2, 3, 4]][3]", "x = 3;");
-    fold("x = [...[0, 1], 2, ...[3, 4]][3]", "x = 3;");
-    fold("x = [...[...[0, 1], 2, 3], 4][0]", "x = 0");
-    fold("x = [...[...[0, 1], 2, 3], 4][3]", "x = 3");
-    test(srcs("x = [...[]][100]"), expected("x = void 0;"));
-    test(srcs("x = [...[0]][100]"), expected("x = void 0;"));
-  }
-
-  @Test
-  public void testDontFoldNonLiteralSpreadGetElem() {
-    foldSame("x = [...iter][0];");
-    foldSame("x = [0, 1, ...iter][2];");
-    //  `...iter` could have side effects, so don't replace `x` with `0`
-    foldSame("x = [0, 1, ...iter][0];");
-  }
-
-  @Test
-  public void testFoldArraySpread() {
-    numRepetitions = 1;
-    fold("x = [...[]]", "x = []");
-    fold("x = [0, ...[], 1]", "x = [0, 1]");
-    fold("x = [...[0, 1], 2, ...[3, 4]]", "x = [0, 1, 2, 3, 4]");
-    fold("x = [...[...[0], 1], 2]", "x = [0, 1, 2]");
-    foldSame("[...[x]] = arr");
-  }
-
-  @Test
-  public void testFoldObjectLitSpreadGetProp() {
-    numRepetitions = 1;
-    fold("x = {...{a}}.a", "x = a;");
-    fold("x = {a, b, ...{c, d, e}}.d", "x = d;");
-    fold("x = {...{a, b}, c, ...{d, e}}.d", "x = d;");
-    fold("x = {...{...{a, b}, c, d}, e}.a", "x = a");
-    fold("x = {...{...{a, b}, c, d}, e}.d", "x = d");
-  }
-
-  @Test
-  public void testDontFoldNonLiteralObjectSpreadGetProp_gettersImpure() {
-    this.assumeGettersPure = false;
-
-    foldSame("x = {...obj}.a;");
-    foldSame("x = {a, ...obj, c}.a;");
-    foldSame("x = {a, ...obj, c}.c;");
-  }
-
-  @Test
-  public void testDontFoldNonLiteralObjectSpreadGetProp_assumeGettersPure() {
-    this.assumeGettersPure = true;
-
-    foldSame("x = {...obj}.a;");
-    foldSame("x = {a, ...obj, c}.a;");
-    fold("x = {a, ...obj, c}.c;", "x = c;"); // We assume object spread has no side-effects.
-  }
-
-  @Test
-  public void testFoldObjectSpread() {
-    numRepetitions = 1;
-    fold("x = {...{}}", "x = {}");
-    fold("x = {a, ...{}, b}", "x = {a, b}");
-    fold("x = {...{a, b}, c, ...{d, e}}", "x = {a, b, c, d, e}");
-    fold("x = {...{...{a}, b}, c}", "x = {a, b, c}");
-    foldSame("({...{x}} = obj)");
-  }
-
-  @Test
-  public void testDontFoldMixedObjectAndArraySpread() {
-    numRepetitions = 1;
-    foldSame("x = [...{}]");
-    foldSame("x = {...[]}");
-    fold("x = [a, ...[...{}]]", "x = [a, ...{}]");
-    fold("x = {a, ...{...[]}}", "x = {a, ...[]}");
+    testSame("x = 'string'[0.5]",
+        PeepholeFoldConstants.INVALID_GETELEM_INDEX_ERROR);
+    testSame("x = 'string'[-1]",
+        PeepholeFoldConstants.INDEX_OUT_OF_BOUNDS_ERROR);
+    testSame("x = 'string'[6]",
+        PeepholeFoldConstants.INDEX_OUT_OF_BOUNDS_ERROR);
   }
 
   @Test
@@ -1571,11 +1436,6 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
     testSame("({set a(b) {return this}}).a");
     testSame("({set a(b) {this._a = b}}).a");
 
-    // Don't inline if there are side-effects.
-    testSame("({[foo()]: 1,   a: 0}).a");
-    testSame("({['x']: foo(), a: 0}).a");
-    testSame("({x: foo(),     a: 0}).a");
-
     // Leave unknown props alone, the might be on the prototype
     testSame("({}).a");
 
@@ -1607,24 +1467,16 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
 
     // try folding string computed properties
     test("var a = {['a']:x}['a']", "var a = x");
-    test("var a = { get ['a']() { return 1; }}['a']", "var a = function() { return 1; }();");
     test("var a = {'a': x, ['a']: y}['a']", "var a = y;");
     testSame("var a = {['foo']: x}.a;");
     // Note: it may be useful to fold symbols in the future.
     testSame("var y = Symbol(); var a = {[y]: 3}[y];");
 
-    /**
-     * We can fold member functions sometimes.
-     *
-     * <p>Even though they're different from fn expressions and arrow fns, extracting them only
-     * causes programs that would have thrown errors to change behaviour.
-     */
-    test("var x = {a() { 1; }}.a;", "var x = function() { 1; };");
-    // Notice `a` isn't invoked, so beahviour didn't change.
-    test("var x = {a() { return this; }}.a;", "var x = function() { return this; };");
-    // `super` is invisibly captures the object that declared the method so we can't fold.
+    // don't fold member functions since they are different from fn expressions and arrow fns
+    testSame("var x = {a() {}}.a;");
+    testSame("var x = {a() { return this; }}.a;");
     testSame("var x = {a() { return super.a; }}.a;");
-    test("var x = {a: 1, a() { 2; }}.a;", "var x = function() { 2; };");
+    testSame("var x = {a: 1, a() {}}.a;");
     test("var x = {a() {}, a: 1}.a;", "var x = 1;");
     testSame("var x = {a() {}}.b");
   }
@@ -1641,33 +1493,8 @@ public final class PeepholeFoldConstantsTest extends CompilerTestCase {
   // It would be incorrect to fold this to "x();" because the 'this' value inside the function
   // will be the global object, instead of the object {a:x} as it should be.
   @Test
-  public void testFoldObjectLiteral_methodCall_nonLiteralFn() {
+  public void testFoldObjectLiteralRefCall() {
     testSame("({a:x}).a()");
-  }
-
-  @Test
-  public void testFoldObjectLiteral_freeMethodCall() {
-    test("({a() { return 1; }}).a()", "(function() { return 1; })()");
-  }
-
-  @Test
-  public void testFoldObjectLiteral_freeArrowCall_usingEnclosingThis() {
-    test("({a: () => this }).a()", "(() => this)()");
-  }
-
-  @Test
-  public void testFoldObjectLiteral_unfreeMethodCall_dueToThis() {
-    testSame("({a() { return this; }}).a()");
-  }
-
-  @Test
-  public void testFoldObjectLiteral_unfreeMethodCall_dueToSuper() {
-    testSame("({a() { return super.toString(); }}).a()");
-  }
-
-  @Test
-  public void testFoldObjectLiteral_paramToInvocation() {
-    test("console.log({a: 1}.a)", "console.log(1)");
   }
 
   @Test

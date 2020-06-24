@@ -87,9 +87,9 @@ Document.prototype.createTreeWalker = function(
 Document.prototype.getElementsByTagNameNS = function(namespace, name) {};
 
 /**
- * @param {!Node} externalNode
- * @param {boolean=} deep
- * @return {!Node}
+ * @param {Node} externalNode
+ * @param {boolean} deep
+ * @return {Node}
  * @see https://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/core.html#Core-Document-importNode
  */
 Document.prototype.importNode = function(externalNode, deep) {};
@@ -251,6 +251,29 @@ HTMLDocument.prototype.cookie;
 HTMLDocument.prototype.open = function(opt_mimeType, opt_replace) {};
 
 /**
+ * @return {undefined}
+ * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-98948567
+ * @override
+ */
+HTMLDocument.prototype.close = function() {};
+
+/**
+ * @param {string} text
+ * @return {undefined}
+ * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-75233634
+ * @override
+ */
+HTMLDocument.prototype.write = function(text) {};
+
+/**
+ * @param {string} text
+ * @return {undefined}
+ * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-35318390
+ * @override
+ */
+HTMLDocument.prototype.writeln = function(text) {};
+
+/**
  * @param {string} elementName
  * @return {!NodeList<!Element>}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-71555259
@@ -404,6 +427,13 @@ TreeWalker.prototype.currentNode;
 function HTMLElement() {}
 
 /**
+ * @implicitCast
+ * @type {string}
+ * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-63534901
+ */
+HTMLElement.prototype.id;
+
+/**
  * @type {string}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-78276800
  */
@@ -488,7 +518,6 @@ HTMLLinkElement.prototype.charset;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-33532588
  */
 HTMLLinkElement.prototype.href;
@@ -585,7 +614,6 @@ function HTMLBaseElement() {}
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-65382887
  */
 HTMLBaseElement.prototype.href;
@@ -703,6 +731,7 @@ function HTMLFormControlsCollection() {}
  * @see https://html.spec.whatwg.org/multipage/infrastructure.html#dom-htmlformcontrolscollection-nameditem
  * @nosideeffects
  * @override
+ * @suppress {newCheckTypes}
  */
 HTMLFormControlsCollection.prototype.namedItem = function(name) {};
 
@@ -739,7 +768,6 @@ HTMLFormElement.prototype.acceptCharset;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-74049184
  */
 HTMLFormElement.prototype.action;
@@ -947,20 +975,6 @@ HTMLOptionElement.prototype.text;
  */
 HTMLOptionElement.prototype.value;
 
-
-
-/**
- * @constructor
- * @extends {HTMLOptionElement}
- * @param {*=} opt_text
- * @param {*=} opt_value
- * @param {*=} opt_defaultSelected
- * @param {*=} opt_selected
- */
-function Option(opt_text, opt_value, opt_defaultSelected, opt_selected) {}
-
-
-
 /**
  * @constructor
  * @extends {HTMLElement}
@@ -1048,7 +1062,6 @@ HTMLInputElement.prototype.size;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-97320704
  */
 HTMLInputElement.prototype.src;
@@ -1626,7 +1639,6 @@ HTMLAnchorElement.prototype.coords;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-88517319
  */
 HTMLAnchorElement.prototype.href;
@@ -1756,6 +1768,12 @@ HTMLImageElement.prototype.name;
 
 /**
  * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement/referrerPolicy
+ */
+HTMLImageElement.prototype.referrerPolicy;
+
+/**
+ * @type {string}
  * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-87762984
  */
@@ -1812,7 +1830,6 @@ HTMLObjectElement.prototype.code;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-25709136
  */
 HTMLObjectElement.prototype.codeBase;
@@ -1831,7 +1848,6 @@ HTMLObjectElement.prototype.contentDocument;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-81766986
  */
 HTMLObjectElement.prototype.data;
@@ -2056,7 +2072,6 @@ HTMLAreaElement.prototype.coords;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-34672936
  */
 HTMLAreaElement.prototype.href;
@@ -2123,14 +2138,12 @@ HTMLScriptElement.prototype.onreadystatechange;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-75147231
  */
 HTMLScriptElement.prototype.src;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-46872999
  */
 HTMLScriptElement.prototype.text;
@@ -2635,7 +2648,6 @@ HTMLFrameElement.prototype.scrolling;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-78799535
  */
 HTMLFrameElement.prototype.src;
@@ -2704,7 +2716,6 @@ HTMLIFrameElement.prototype.scrolling;
 
 /**
  * @type {string}
- * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-43933957
  */
 HTMLIFrameElement.prototype.src;
@@ -2717,254 +2728,31 @@ HTMLIFrameElement.prototype.src;
 HTMLIFrameElement.prototype.width;
 
 /**
- * @const {number}
- * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
- */
-DOMException.INVALID_STATE_ERR;
-
-/**
- * @const {number}
- * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
- */
-DOMException.SYNTAX_ERR;
-
-/**
- * @const {number}
- * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
- */
-DOMException.INVALID_MODIFICATION_ERR;
-
-/**
- * @const {number}
- * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
- */
-DOMException.NAMESPACE_ERR;
-
-/**
- * @const {number}
- * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
- */
-DOMException.INVALID_ACCESS_ERR;
-/**
- * @type {boolean}
- * @see https://developer.mozilla.org/en/DOM/window.closed
- */
-Window.prototype.closed;
-
-/**
- * @type {HTMLObjectElement|HTMLIFrameElement|null}
- * @see https://developer.mozilla.org/en/DOM/window.frameElement
- */
-Window.prototype.frameElement;
-
-/**
- * Allows lookup of frames by index or by name.
- * @type {!Window}
- * @see https://developer.mozilla.org/en/DOM/window.frames
- */
-Window.prototype.frames;
-
-/**
- * @type {!History}
- * @suppress {duplicate}
- * @see https://developer.mozilla.org/en/DOM/window.history
- */
-var history;
-
-/**
- * @type {!History}
- * @see https://developer.mozilla.org/en/DOM/window.history
- */
-Window.prototype.history;
-
-/**
- * Returns the number of frames (either frame or iframe elements) in the
- * window.
- *
  * @type {number}
- * @see https://developer.mozilla.org/en/DOM/window.length
+ * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
  */
-Window.prototype.length;
+DOMException.INVALID_STATE_ERR = 11;
 
 /**
- * Location has an exception in the DeclaredGlobalExternsOnWindow pass
- * so we have to manually include it:
- * https://github.com/google/closure-compiler/blob/master/src/com/google/javascript/jscomp/DeclaredGlobalExternsOnWindow.java#L116
- *
- * @type {!Location}
- * @implicitCast
- * @see https://developer.mozilla.org/en/DOM/window.location
+ * @type {number}
+ * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
  */
-Window.prototype.location;
+DOMException.SYNTAX_ERR = 12;
 
 /**
-
- * @type {string}
- * @see https://developer.mozilla.org/en/DOM/window.name
+ * @type {number}
+ * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
  */
-Window.prototype.name;
+DOMException.INVALID_MODIFICATION_ERR = 13;
 
 /**
- * @type {Navigator}
- * @see https://developer.mozilla.org/en/DOM/window.navigator
+ * @type {number}
+ * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
  */
-Window.prototype.navigator;
+DOMException.NAMESPACE_ERR = 14;
 
 /**
- * @type {?Window}
- * @see https://developer.mozilla.org/en/DOM/window.opener
+ * @type {number}
+ * @see http://www.w3.org/TR/DOM-Level-2-Core/core.html#ID-258A00AF
  */
-Window.prototype.opener;
-
-/**
- * @type {!Window}
- * @see https://developer.mozilla.org/en/DOM/window.parent
- */
-Window.prototype.parent;
-
-/**
- * @type {!Window}
- * @see https://developer.mozilla.org/en/DOM/window.self
- */
-Window.prototype.self;
-
-/**
- * @type {?string}
- * @see https://developer.mozilla.org/en/DOM/window.status
- */
-Window.prototype.status;
-
-/**
- * @interface
- * @see https://html.spec.whatwg.org/multipage/window-object.html#the-status-bar-barprop-object
- */
-function BarProp() {}
-
-/** @const {boolean} */
-BarProp.prototype.visible;
-
-/**
- * @type {!BarProp}
- * @see https://developer.mozilla.org/en/DOM/window.locationbar
- */
-Window.prototype.locationbar;
-
-/**
- * @type {!BarProp}
- * @see https://developer.mozilla.org/en/DOM/window.menubar
- */
-Window.prototype.menubar;
-
-/**
- * @type {!BarProp}
- * @see https://developer.mozilla.org/en/DOM/window.personalbar
- */
-Window.prototype.personalbar;
-
-
-/**
- * @type {!BarProp}
- * @see https://developer.mozilla.org/en/DOM/window.scrollbars
- */
-Window.prototype.scrollbars;
-
-/**
- * @type {!BarProp}
- * @see https://developer.mozilla.org/en/DOM/window.statusbar
- */
-Window.prototype.statusbar;
-
-/**
- * @type {!BarProp}
- * @see https://developer.mozilla.org/en/DOM/window.toolbar
- */
-Window.prototype.toolbar;
-
-/**
- * @type {!Window}
- * @see https://developer.mozilla.org/en/DOM/window.self
- */
-Window.prototype.top;
-
-/**
- * @type {!Window}
- * @see https://developer.mozilla.org/en/DOM/window.self
- */
-Window.prototype.window;
-
-/**
- * @param {*} message
- * @see https://developer.mozilla.org/en/DOM/window.alert
- * @return {undefined}
- */
-Window.prototype.alert = function(message) {};
-
-/**
- * @param {*} message
- * @return {boolean}
- * @see https://developer.mozilla.org/en/DOM/window.confirm
- */
-Window.prototype.confirm = function(message) {};
-
-/**
- * @param {string} message
- * @param {string=} value
- * @return {?string}
- * @see https://developer.mozilla.org/en/DOM/window.prompt
- */
-Window.prototype.prompt = function(message, value) {};
-
-/**
- * @see https://developer.mozilla.org/en/DOM/window.blur
- * @return {undefined}
- */
-Window.prototype.blur = function() {};
-
-/**
- * @see https://developer.mozilla.org/en/DOM/window.close
- * @return {undefined}
- */
-Window.prototype.close = function() {};
-
-/**
- * @see https://developer.mozilla.org/en/DOM/window.focus
- * @return {undefined}
- */
-Window.prototype.focus = function() {};
-
-/**
- * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/print
- * @return {undefined}
- */
-Window.prototype.print = function() {};
-
-/**
- * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/stop
- * @return {undefined}
- */
-Window.prototype.stop = function() {};
-
-/**
- * @param {*=} url
- * @param {string=} windowName
- * @param {string=} windowFeatures
- * @param {boolean=} replace
- * @return {Window}
- * @see http://msdn.microsoft.com/en-us/library/ms536651(VS.85).aspx
- */
-Window.prototype.open = function(url, windowName, windowFeatures, replace) {};
-
-/**
- * @type {string}
- * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
- * @implicitCast
- */
-Element.prototype.innerHTML;
-
-/**
- * @type {string}
- * @implicitCast
- * @see https://w3c.github.io/DOM-Parsing/#extensions-to-the-element-interface
- */
-Element.prototype.outerHTML;
-
+DOMException.INVALID_ACCESS_ERR = 15;

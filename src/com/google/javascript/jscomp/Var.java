@@ -16,7 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticRef;
 import com.google.javascript.rhino.StaticSlot;
@@ -27,24 +26,13 @@ import com.google.javascript.rhino.StaticSlot;
 public class Var extends AbstractVar<Scope, Var> implements StaticSlot, StaticRef {
 
   static final String ARGUMENTS = "arguments";
-  static final String EXPORTS = "exports";
 
   Var(String name, Node nameNode, Scope scope, int index, CompilerInput input) {
     super(name, nameNode, scope, index, input);
-    if (nameNode != null) {
-      switch (nameNode.getToken()) {
-        case MODULE_BODY:
-        case NAME:
-        case IMPORT_STAR:
-          break;
-        default:
-          throw new IllegalArgumentException("Invalid name node " + nameNode);
-      }
-    }
   }
 
   @Override
   public String toString() {
-    return "Var " + getName() + " @ " + getNameNode();
+    return "Var " + name + " @ " + nameNode;
   }
 }

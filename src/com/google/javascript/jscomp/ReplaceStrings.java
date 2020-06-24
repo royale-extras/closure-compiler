@@ -41,22 +41,21 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Replaces JavaScript strings in the list of supplied methods with shortened forms. Useful for
- * replacing debug message such as: throw new Error("Something bad happened"); with generated codes
- * like: throw new Error("a"); This makes the compiled JavaScript smaller and prevents us from
+ * Replaces JavaScript strings in the list of supplied methods with shortened
+ * forms. Useful for replacing debug message such as: throw new
+ * Error("Something bad happened"); with generated codes like: throw new
+ * Error("a"); This makes the compiled JavaScript smaller and prevents us from
  * leaking details about the source code.
  *
- * <p>Based in concept on the work by Jared Jacobs.
+ * Based in concept on the work by Jared Jacobs.
  */
-class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
+class ReplaceStrings extends AbstractPostOrderCallback
+    implements CompilerPass {
 
   static final DiagnosticType BAD_REPLACEMENT_CONFIGURATION =
-      DiagnosticType.warning("JSC_BAD_REPLACEMENT_CONFIGURATION", "Bad replacement configuration.");
-
-  static final DiagnosticType STRING_REPLACEMENT_TAGGED_TEMPLATE =
       DiagnosticType.warning(
-          "JSC_STRING_REPLACEMENT_TAGGED_TEMPLATE",
-          "Cannot string-replace arguments of a template literal tag function.");
+          "JSC_BAD_REPLACEMENT_CONFIGURATION",
+          "Bad replacement configuration.");
 
   private static final String DEFAULT_PLACEHOLDER_TOKEN = "`";
   public static final String EXCLUSION_PREFIX = ":!";
@@ -73,7 +72,9 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   private final DefaultNameGenerator nameGenerator;
   private final Map<String, Result> results = new LinkedHashMap<>();
 
-  /** Describes a function to look for a which parameters to replace. */
+  /**
+   * Describes a function to look for a which parameters to replace.
+   */
   private static class Config {
     // TODO(johnlenz): Support name "groups" so that unrelated strings can
     // reuse strings.  For example, event-id can reuse the names used for logger
@@ -84,10 +85,8 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
 
     static final int REPLACE_ALL_VALUE = 0;
 
-    Config(
-        String name,
-        List<Integer> replacementParameters,
-        ImmutableSet<String> excludedFilenameSuffixes) {
+    Config(String name, List<Integer> replacementParameters, ImmutableSet<String>
+        excludedFilenameSuffixes) {
       this.name = name;
       this.parameters = replacementParameters;
       this.excludedFilenameSuffixes = excludedFilenameSuffixes;
@@ -98,7 +97,9 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     }
   }
 
-  /** Describes a replacement that occurred. */
+  /**
+   * Describes a replacement that occurred.
+   */
   static class Result {
     // The original message with non-static content replaced with
     // {@code placeholderToken}.
@@ -113,33 +114,36 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   }
 
   /**
-   * @param placeholderToken Separator to use between string parts. Used to replace non-static
-   *     string content.
+   * @param placeholderToken Separator to use between string parts. Used to replace
+   *     non-static string content.
    * @param functionsToInspect A list of function configurations in the form of
-   *     function($,,,):exclued_filename_suffix1,excluded_filename_suffix2,... or
+   *     function($,,,):exclued_filename_suffix1,excluded_filename_suffix2,...
+   *   or
    *     class.prototype.method($,,,):exclued_filename_suffix1,excluded_filename_suffix2,...
-   * @param skiplisted A set of names that should not be used as replacement strings. Useful to
-   *     prevent unwanted strings for appearing in the final output. where '$' is used to indicate
-   *     which parameter should be replaced.
-   *     <p>excluded_filename_suffix is a list of files whose callsites for a given function pattern
-   *     should be ignored.
+   * @param blacklisted A set of names that should not be used as replacement
+   *     strings.  Useful to prevent unwanted strings for appearing in the
+   *     final output.
+   * where '$' is used to indicate which parameter should be replaced.
+   *
+   * excluded_filename_suffix is a list of files whose callsites for a given function
+   * pattern should be ignored.
    */
   ReplaceStrings(
-      AbstractCompiler compiler,
-      String placeholderToken,
+      AbstractCompiler compiler, String placeholderToken,
       List<String> functionsToInspect,
-      Set<String> skiplisted,
+      Set<String> blacklisted,
       VariableMap previousMappings) {
     this.compiler = compiler;
-    this.placeholderToken =
-        placeholderToken.isEmpty() ? DEFAULT_PLACEHOLDER_TOKEN : placeholderToken;
+    this.placeholderToken = placeholderToken.isEmpty()
+        ? DEFAULT_PLACEHOLDER_TOKEN : placeholderToken;
     this.registry = compiler.getTypeRegistry();
 
-    Iterable<String> reservedNames = skiplisted;
+    Iterable<String> reservedNames = blacklisted;
     if (previousMappings != null) {
-      Set<String> previous = previousMappings.getOriginalNameToNewNameMap().keySet();
-      reservedNames = Iterables.concat(skiplisted, previous);
-      initMapping(previousMappings, skiplisted);
+      Set<String> previous =
+          previousMappings.getOriginalNameToNewNameMap().keySet();
+      reservedNames = Iterables.concat(blacklisted, previous);
+      initMapping(previousMappings, blacklisted);
     }
     this.nameGenerator = createNameGenerator(reservedNames);
 
@@ -147,7 +151,8 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     parseConfiguration(functionsToInspect);
   }
 
-  private void initMapping(VariableMap previousVarMap, Set<String> reservedNames) {
+  private void initMapping(
+      VariableMap previousVarMap, Set<String> reservedNames) {
     Map<String, String> previous = previousVarMap.getOriginalNameToNewNameMap();
     for (Map.Entry<String, String> entry : previous.entrySet()) {
       String key = entry.getKey();
@@ -158,19 +163,19 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     }
   }
 
-  static final Predicate<Result> USED_RESULTS =
-      new Predicate<Result>() {
-        @Override
-        public boolean apply(Result result) {
-          // The list of locations may be empty if the map
-          // was pre-populated from a previous map.
-          return result.didReplacement;
-        }
-      };
+  static final Predicate<Result> USED_RESULTS = new Predicate<Result>() {
+    @Override
+    public boolean apply(Result result) {
+      // The list of locations may be empty if the map
+      // was pre-populated from a previous map.
+      return result.didReplacement;
+    }
+  };
 
   // Get the list of all replacements performed.
   List<Result> getResult() {
-    return ImmutableList.copyOf(Iterables.filter(results.values(), USED_RESULTS));
+    return ImmutableList.copyOf(
+        Iterables.filter(results.values(), USED_RESULTS));
   }
 
   // Get the list of replaces as a VariableMap
@@ -195,7 +200,6 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     switch (n.getToken()) {
       case NEW: // e.g. new Error('msg');
       case CALL: // e.g. Error('msg');
-      case TAGGED_TEMPLATELIT: // e.g. Error`msg` - not supported!
         Node calledFn = n.getFirstChild();
 
         // Look for calls to static functions.
@@ -209,7 +213,7 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
         }
 
         // Look for calls to class methods.
-        if (NodeUtil.isNormalGet(calledFn)) {
+        if (NodeUtil.isGet(calledFn)) {
           Node rhs = calledFn.getLastChild();
           if (rhs.isName() || rhs.isString()) {
             String methodName = rhs.getString();
@@ -261,14 +265,17 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   }
 
   /**
-   * @return The Config object for the class match the specified type or null if no match was found.
+   * @return The Config object for the class match the specified type or null
+   * if no match was found.
    */
-  private Config findMatchingClass(JSType callClassType, Collection<String> declarationNames) {
-    if (!callClassType.isEmptyType() && !callClassType.isUnknownType()) {
+  private Config findMatchingClass(
+      JSType callClassType, Collection<String> declarationNames) {
+    if (!callClassType.isEmptyType() && !callClassType.isSomeUnknownType()) {
       for (String declarationName : declarationNames) {
         String className = getClassFromDeclarationName(declarationName);
         JSType methodClassType = registry.getGlobalType(className);
-        if (methodClassType != null && callClassType.isSubtypeOf(methodClassType)) {
+        if (methodClassType != null
+            && callClassType.isSubtypeOf(methodClassType)) {
           return functions.get(declarationName);
         }
       }
@@ -276,16 +283,10 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     return null;
   }
 
-  /** Replace the parameters specified in the config, if possible. */
+  /**
+   * Replace the parameters specified in the config, if possible.
+   */
   private void doSubstitutions(NodeTraversal t, Config config, Node n) {
-    if (n.isTaggedTemplateLit()) {
-      // This is currently not supported, since tagged template literals have a different calling
-      // convention than ordinary functions, so it's unclear which arguments are expected to be
-      // replaced. Specifically, there are no direct string arguments, and for arbitrary tag
-      // functions it's not clear that it's safe to inline any constant placeholders.
-      compiler.report(JSError.make(n, STRING_REPLACEMENT_TAGGED_TEMPLATE));
-      return;
-    }
     checkState(n.isNew() || n.isCall());
 
     if (!config.isReplaceAll()) {
@@ -311,7 +312,8 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
    * @param t The traversal
    * @param expr The expression node
    * @param parent The expression node's parent
-   * @return The replacement node (or the original expression if no replacement is made)
+   * @return The replacement node (or the original expression if no replacement
+   *         is made)
    */
   private Node replaceExpression(NodeTraversal t, Node expr, Node parent) {
     Node replacement;
@@ -323,21 +325,27 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
         replacementString = getReplacement(key);
         replacement = IR.string(replacementString);
         break;
-      case TEMPLATELIT:
       case ADD:
-      case NAME:
         StringBuilder keyBuilder = new StringBuilder();
         Node keyNode = IR.string("");
-        replacement = buildReplacement(t, expr, keyNode, keyBuilder);
+        replacement = buildReplacement(expr, keyNode, keyBuilder);
         key = keyBuilder.toString();
-        if (key.equals(placeholderToken)) {
-          // There is no static text in expr - only a placeholder - so just return expr directly.
-          // In this case, replacement is just the string join ('`' + expr), which is not useful.
-          return expr;
-        }
         replacementString = getReplacement(key);
         keyNode.setString(replacementString);
         break;
+      case NAME:
+        // If the referenced variable is a constant, use its value.
+        Var var = t.getScope().getVar(expr.getString());
+        if (var != null && var.isInferredConst()) {
+          Node value = var.getInitialValue();
+          if (value != null && value.isString()) {
+            key = value.getString();
+            replacementString = getReplacement(key);
+            replacement = IR.string(replacementString);
+            break;
+          }
+        }
+        return expr;
       default:
         // This may be a function call or a variable reference. We don't
         // replace these.
@@ -354,7 +362,9 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     return replacement;
   }
 
-  /** Get a replacement string for the provide key text. */
+  /**
+   * Get a replacement string for the provide key text.
+   */
   private String getReplacement(String key) {
     Result result = results.get(key);
     if (result != null) {
@@ -367,7 +377,9 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     return replacement;
   }
 
-  /** Record the location the replacement was made. */
+  /**
+   * Record the location the replacement was made.
+   */
   private void recordReplacement(String key) {
     Result result = results.get(key);
     checkState(result != null);
@@ -376,58 +388,29 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   }
 
   /**
-   * Builds a replacement abstract syntax tree for the string expression {@code expr}. Appends any
-   * string literal values that are encountered to {@code keyBuilder}, to build the expression's
-   * replacement key.
+   * Builds a replacement abstract syntax tree for the string expression {@code
+   * expr}. Appends any string literal values that are encountered to
+   * {@code keyBuilder}, to build the expression's replacement key.
    *
    * @param expr A JS expression that evaluates to a string value
-   * @param prefix The JS expression to which {@code expr}'s replacement is logically being
-   *     concatenated. It is a partial solution to the problem at hand and will either be this
-   *     method's return value or a descendant of it.
+   * @param prefix The JS expression to which {@code expr}'s replacement is
+   *        logically being concatenated. It is a partial solution to the
+   *        problem at hand and will either be this method's return value or a
+   *        descendant of it.
    * @param keyBuilder A builder of the string expression's replacement key
    * @return The abstract syntax tree that should replace {@code expr}
    */
-  private Node buildReplacement(NodeTraversal t, Node expr, Node prefix, StringBuilder keyBuilder) {
+  private Node buildReplacement(
+      Node expr, Node prefix, StringBuilder keyBuilder) {
     switch (expr.getToken()) {
       case ADD:
         Node left = expr.getFirstChild();
         Node right = left.getNext();
-        prefix = buildReplacement(t, left, prefix, keyBuilder);
-        return buildReplacement(t, right, prefix, keyBuilder);
-      case TEMPLATELIT:
-        for (Node child = expr.getFirstChild(); child != null; child = child.getNext()) {
-          switch (child.getToken()) {
-            case TEMPLATELIT_STRING:
-              keyBuilder.append(child.getCookedString());
-              break;
-            case TEMPLATELIT_SUB:
-              prefix = buildReplacement(t, child.getFirstChild(), prefix, keyBuilder);
-              break;
-            default:
-              throw new IllegalStateException("Unexpected TEMPLATELIT child: " + child);
-          }
-        }
-        return prefix;
+        prefix = buildReplacement(left, prefix, keyBuilder);
+        return buildReplacement(right, prefix, keyBuilder);
       case STRING:
         keyBuilder.append(expr.getString());
         return prefix;
-      case NAME:
-        // If the referenced variable is a constant, use its value.
-        Var var = t.getScope().getVar(expr.getString());
-        if (var != null && (var.isDeclaredOrInferredConst() || var.isConst())) {
-          Node initialValue = var.getInitialValue();
-          if (initialValue != null) {
-            Node newKeyNode = IR.string("");
-            StringBuilder newKeyBuilder = new StringBuilder();
-            Node replacement = buildReplacement(t, initialValue, newKeyNode, newKeyBuilder);
-            if (replacement == newKeyNode) {
-              keyBuilder.append(newKeyBuilder);
-              return prefix;
-            }
-          }
-          // Not a simple string constant.
-        }
-        // fall-through
       default:
         keyBuilder.append(placeholderToken);
         prefix = IR.add(prefix, IR.string(placeholderToken));
@@ -435,7 +418,9 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     }
   }
 
-  /** From a provide name extract the method name. */
+  /**
+   * From a provide name extract the method name.
+   */
   private static String getMethodFromDeclarationName(String fullDeclarationName) {
     String[] parts = fullDeclarationName.split("\\.prototype\\.");
     checkState(parts.length == 1 || parts.length == 2);
@@ -445,7 +430,9 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
     return null;
   }
 
-  /** From a provide name extract the class name. */
+  /**
+   * From a provide name extract the class name.
+   */
   private static String getClassFromDeclarationName(String fullDeclarationName) {
     String[] parts = fullDeclarationName.split("\\.prototype\\.");
     checkState(parts.length == 1 || parts.length == 2);
@@ -456,7 +443,8 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   }
 
   /**
-   * Build the data structures need by this pass from the provided list of functions and methods.
+   * Build the data structures need by this pass from the provided
+   * list of functions and methods.
    */
   private void parseConfiguration(List<String> functionsToInspect) {
     for (String function : functionsToInspect) {
@@ -471,9 +459,13 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   }
 
   /**
-   * Convert the provide string into a Config. The string can be a static function: foo(,,?)
-   * foo.bar(?) or a class method: foo.prototype.bar(?) And is allowed to either replace all
-   * parameters using "*" or one parameter "?". "," is used as a placeholder for ignored parameters.
+   * Convert the provide string into a Config.  The string can be a static function:
+   *    foo(,,?)
+   *    foo.bar(?)
+   * or a class method:
+   *    foo.prototype.bar(?)
+   * And is allowed to either replace all parameters using "*" or one parameter "?".
+   * "," is used as a placeholder for ignored parameters.
    */
   private Config parseConfiguration(String function) {
     // Looks like this function_name(,$,)
@@ -517,12 +509,14 @@ class ReplaceStrings extends AbstractPostOrderCallback implements CompilerPass {
   }
 
   /**
-   * Use a name generate to create names so the names overlap with the names used for variable and
-   * properties.
+   * Use a name generate to create names so the names overlap with the names
+   * used for variable and properties.
    */
-  private static DefaultNameGenerator createNameGenerator(Iterable<String> reserved) {
+  private static DefaultNameGenerator createNameGenerator(
+        Iterable<String> reserved) {
     final String namePrefix = "";
     final char[] reservedChars = new char[0];
-    return new DefaultNameGenerator(ImmutableSet.copyOf(reserved), namePrefix, reservedChars);
+    return new DefaultNameGenerator(
+        ImmutableSet.copyOf(reserved), namePrefix, reservedChars);
   }
 }

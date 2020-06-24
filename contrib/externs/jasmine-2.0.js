@@ -514,6 +514,7 @@ function spyOn(spiedOnObject, methodName) {}
 
 
 /**
+ * @nosideeffects
  * @param {string} description
  * @param {function(this:jasmine.Suite)} handler
  */

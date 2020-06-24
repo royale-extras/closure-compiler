@@ -26,6 +26,7 @@ import com.google.javascript.rhino.Node;
 
 /**
  * Checks for errors related to interfaces.
+ *
  */
 public final class CheckInterfaces extends AbstractPostOrderCallback
     implements HotSwapCompilerPass {
@@ -102,4 +103,3 @@ public final class CheckInterfaces extends AbstractPostOrderCallback
     }
   }
 }
-

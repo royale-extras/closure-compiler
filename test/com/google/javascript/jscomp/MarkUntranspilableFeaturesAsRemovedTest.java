@@ -27,38 +27,48 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
 
+  private LanguageMode languageIn;
   private LanguageMode languageOut;
 
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
+    languageIn = LanguageMode.ECMASCRIPT_NEXT;
     languageOut = LanguageMode.ECMASCRIPT3;
     disableTypeCheck();
     enableRunTypeCheckAfterProcessing();
   }
 
   @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
+  @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_NEXT);
+    options.setLanguageIn(languageIn);
     options.setLanguageOut(languageOut);
     return options;
   }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new MarkUntranspilableFeaturesAsRemoved(compiler, languageOut.toFeatureSet());
+    return new MarkUntranspilableFeaturesAsRemoved(
+        compiler, languageIn.toFeatureSet(), languageOut.toFeatureSet());
   }
 
   @Test
   public void testEs2018RegexFlagS() {
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2018;
     testSame("const a = /asdf/;");
     testSame("const a = /asdf/g;");
     testSame("const a = /asdf/s;");
     testSame("const a = /asdf/gs;");
 
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2017;
     testSame("const a = /asdf/;");
     testSame("const a = /asdf/g;");
@@ -66,12 +76,16 @@ public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
         "const a = /asdf/s;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature "
-            + "\"RegExp flag 's'\" to targeted output language.");
+            + "\"RegExp flag 's'\" to targeted output language. "
+            + "Either remove feature \"RegExp flag 's'\" "
+            + "or raise output level to ECMASCRIPT_2018.");
     testError(
         "const a = /asdf/gs;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature "
-            + "\"RegExp flag 's'\" to targeted output language.");
+            + "\"RegExp flag 's'\" to targeted output language. "
+            + "Either remove feature \"RegExp flag 's'\" "
+            + "or raise output level to ECMASCRIPT_2018.");
   }
 
   @Test
@@ -81,10 +95,12 @@ public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
 
   @Test
   public void testEs2018RegexLookbehind() {
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2018;
     testSame("const a = /(?<=asdf)/;");
     testSame("const a = /(?<!asdf)/;");
 
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2017;
     testSame("const a = /(?=asdf)/;"); // Lookaheads are fine
     testSame("const a = /(?!asdf)/g;"); // Lookaheads are fine
@@ -92,22 +108,28 @@ public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
         "const a = /(?<=asdf)/;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature "
-            + "\"RegExp Lookbehind\" to targeted output language.");
+            + "\"RegExp Lookbehind\" to targeted output language. "
+            + "Either remove feature \"RegExp Lookbehind\" or "
+            + "raise output level to ECMASCRIPT_2018.");
     testError(
         "const a = /(?<!asdf)/;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature "
-            + "\"RegExp Lookbehind\" to targeted output language.");
+            + "\"RegExp Lookbehind\" to targeted output language. "
+            + "Either remove feature \"RegExp Lookbehind\" or "
+            + "raise output level to ECMASCRIPT_2018.");
   }
 
   @Test
   public void testEs2018RegexUnicodePropertyEscape() {
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2018;
     testSame("const a = /\\p{Script=Greek}/u;");
     testSame("const a = /\\P{Script=Greek}/u;");
     testSame("const a = /\\p{Script=Greek}/;"); // Without u flag, /\p/ is same as /p/
     testSame("const a = /\\P{Script=Greek}/;"); // Without u flag, /\p/ is same as /p/
 
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2017;
     testSame("const a = /\\p{Script=Greek}/;"); // Without u flag, /\p/ is same as /p/
     testSame("const a = /\\P{Script=Greek}/;"); // Without u flag, /\p/ is same as /p/
@@ -115,16 +137,21 @@ public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
         "const a = /\\p{Script=Greek}/u;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature "
-            + "\"RegExp unicode property escape\" to targeted output language.");
+            + "\"RegExp unicode property escape\" to targeted "
+            + "output language. Either remove feature \"RegExp unicode property escape\" or raise "
+            + "output level to ECMASCRIPT_2018.");
     testError(
         "const a = /\\P{Script=Greek}/u;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature "
-            + "\"RegExp unicode property escape\" to targeted output language.");
+            + "\"RegExp unicode property escape\" to targeted "
+            + "output language. Either remove feature \"RegExp unicode property escape\" or raise "
+            + "output level to ECMASCRIPT_2018.");
   }
 
   @Test
   public void testRegExpConstructorCalls() {
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2017;
     // TODO(bradfordcsmith): report errors from RegExp in this form
     testSame("const a = new RegExp('asdf', 'gs');");
@@ -132,20 +159,26 @@ public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
 
   @Test
   public void testEs2018RegexNamedCaptureGroups() {
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2018;
     testSame("const a = /(?<name>)/u;");
 
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2017;
     testError(
         "const a = /(?<name>)/;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature \"RegExp named groups\" "
-            + "to targeted output language.");
+            + "to targeted output language. "
+            + "Either remove feature \"RegExp named groups\" "
+            + "or raise output level to ECMASCRIPT_2018.");
     testError(
         "const a = /(?<$var>).*/u;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature \"RegExp named groups\" "
-            + "to targeted output language.");
+            + "to targeted output language. "
+            + "Either remove feature \"RegExp named groups\" "
+            + "or raise output level to ECMASCRIPT_2018.");
     // test valid regex with '<' or '>' that is not named capture group
     testSame("const a = /(<name>)/;");
     testSame("const a = /(>.>)/u;");
@@ -153,14 +186,21 @@ public class MarkUntranspilableFeaturesAsRemovedTest extends CompilerTestCase {
 
   @Test
   public void testEs2018RegexNamedCaptureGroupsBackReferencing() {
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2018;
     testSame("const a = /^(?<half>.*).\\k<half>$/u;");
 
+    languageIn = LanguageMode.ECMASCRIPT_2018;
     languageOut = LanguageMode.ECMASCRIPT_2017;
     testError(
         "const a = /^(?<half>.*).\\k<half>$/u;",
         UNTRANSPILABLE_FEATURE_PRESENT,
         "Cannot convert ECMASCRIPT_2018 feature \"RegExp named groups\" "
-            + "to targeted output language.");
+            + "to targeted output language. "
+            + "Either remove feature \"RegExp named groups\" "
+            + "or raise output level to ECMASCRIPT_2018.");
+
+    // test that in named groups backreferencing, the backslash is not removed
+    testSame("const a = /.\\k<half>$/u;");
   }
 }

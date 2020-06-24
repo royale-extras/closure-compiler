@@ -16,12 +16,14 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CodingConvention.AssertionFunctionLookup;
+import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.CodingConvention.AssertionFunctionSpec;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * <p>Compiler pass that removes Closure-specific code patterns.</p>
@@ -39,6 +41,8 @@ import java.util.List;
  *        this is not provably safe, much like the equivalent assert
  *        statement in Java.</li>
  * </ul>
+ *
+ * @author robbyw@google.com (Robby Walker)
  */
 final class ClosureCodeRemoval implements CompilerPass {
 
@@ -169,17 +173,25 @@ final class ClosureCodeRemoval implements CompilerPass {
    * Identifies all assertion calls.
    */
   private class FindAssertionCalls extends AbstractPostOrderCallback {
-    final AssertionFunctionLookup assertionNames;
+    final Set<String> assertionNames;
 
     FindAssertionCalls() {
-      assertionNames =
-          AssertionFunctionLookup.of(compiler.getCodingConvention().getAssertionFunctions());
+      ImmutableSet.Builder<String> assertionNamesBuilder = ImmutableSet.builder();
+      for (AssertionFunctionSpec spec :
+               compiler.getCodingConvention().getAssertionFunctions()) {
+        assertionNamesBuilder.add(spec.getFunctionName());
+      }
+      assertionNames = assertionNamesBuilder.build();
     }
+
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      if (n.isCall() && assertionNames.lookupByCallee(n.getFirstChild()) != null) {
-        assertionCalls.add(n);
+      if (n.isCall()) {
+        String fnName = n.getFirstChild().getQualifiedName();
+        if (assertionNames.contains(fnName)) {
+          assertionCalls.add(n);
+        }
       }
     }
   }

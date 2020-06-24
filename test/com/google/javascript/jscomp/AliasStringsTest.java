@@ -17,7 +17,6 @@
 package com.google.javascript.jscomp;
 
 import com.google.common.collect.ImmutableSet;
-import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
 import java.util.Set;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -254,7 +253,7 @@ public final class AliasStringsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testSkipList() {
+  public void testBlackList() {
     // The 'TOPseCreT' string is configured to be ignored even though it fits the aliasing
     // conditions.
     test(
@@ -358,21 +357,21 @@ public final class AliasStringsTest extends CompilerTestCase {
     // common parent module m1
 
     JSModule[] modules =
-        JSChunkGraphBuilder.forBush()
-            .addChunk(
-                "function f(a) { alert('ffffffffffffffffffff' + 'ffffffffffffffffffff' + a); }"
-                    + "function g() { alert('ciaociaociaociaociao'); }")
-            .addChunk(
-                "f('---------hi---------');f('bye');function h(a) { alert('hhhhhhhhhhhhhhhhhhhh'"
-                    + " + 'hhhhhhhhhhhhhhhhhhhh' + a); }")
-            .addChunk(
-                "f('---------hi---------');h('ciaociaociaociaociao' +"
-                    + " '--------adios-------');(function() { alert('zzzzzzzzzzzzzzzzzzzz' +"
-                    + " 'zzzzzzzzzzzzzzzzzzzz'); })();")
-            .addChunk(
-                "f('---------hi---------'); alert('--------adios-------');"
-                    + "h('-------peaches------'); h('-------peaches------');")
-            .build();
+        createModuleBush(
+            // m0
+            "function f(a) { alert('ffffffffffffffffffff' + 'ffffffffffffffffffff' + a); }"
+                + "function g() { alert('ciaociaociaociaociao'); }",
+            // m1
+            "f('---------hi---------');"
+                + "f('bye');"
+                + "function h(a) { alert('hhhhhhhhhhhhhhhhhhhh' + 'hhhhhhhhhhhhhhhhhhhh' + a); }",
+            // m2
+            "f('---------hi---------');"
+                + "h('ciaociaociaociaociao' + '--------adios-------');"
+                + "(function() { alert('zzzzzzzzzzzzzzzzzzzz' + 'zzzzzzzzzzzzzzzzzzzz'); })();",
+            // m3
+            "f('---------hi---------'); alert('--------adios-------');"
+                + "h('-------peaches------'); h('-------peaches------');");
 
     test(
         modules,
@@ -416,16 +415,18 @@ public final class AliasStringsTest extends CompilerTestCase {
     // common parent module m1
 
     JSModule[] modules =
-        JSChunkGraphBuilder.forBush()
-            .addChunk("function g() { alert('ciaociaociaociaociao'); }")
-            .addChunk(
-                "function h(a) {"
-                    + "  alert('hhhhhhhhhhhhhhhhhhh:' + a);"
-                    + "  alert('hhhhhhhhhhhhhhhhhhh:' + a);"
-                    + "}")
-            .addChunk("h('ciaociaociaociaociao' + 'adios');")
-            .addChunk("g();")
-            .build();
+        createModuleBush(
+            // m0
+            "function g() { alert('ciaociaociaociaociao'); }",
+            // m1
+            "function h(a) {"
+                + "  alert('hhhhhhhhhhhhhhhhhhh:' + a);"
+                + "  alert('hhhhhhhhhhhhhhhhhhh:' + a);"
+                + "}",
+            // m2
+            "h('ciaociaociaociaociao' + 'adios');",
+            // m3
+            "g();");
 
     test(
         modules,
@@ -453,12 +454,15 @@ public final class AliasStringsTest extends CompilerTestCase {
     strings = ALL_STRINGS;
 
     JSModule[] modules =
-        JSChunkGraphBuilder.forBush()
-            .addChunk("")
-            .addChunk("function g() { alert('ciaociaociaociaociao'); }")
-            .addChunk("h('ciaociaociaociaociao' + 'adios');")
-            .addChunk("g();")
-            .build();
+        createModuleBush(
+            // m0
+            "",
+            // m1
+            "function g() { alert('ciaociaociaociaociao'); }",
+            // m2
+            "h('ciaociaociaociaociao' + 'adios');",
+            // m3
+            "g();");
 
     // The "ciao" string is used in m1 and m2.
     // Since m2 depends on m1, we should create the module there and not force it into m0.
@@ -481,11 +485,13 @@ public final class AliasStringsTest extends CompilerTestCase {
   @Test
   public void testEmptyModules() {
     JSModule[] modules =
-        JSChunkGraphBuilder.forStar()
-            .addChunk("")
-            .addChunk("function foo() { f('goodgoodgoodgoodgood') }")
-            .addChunk("function foo() { f('goodgoodgoodgoodgood') }")
-            .build();
+        createModuleStar(
+            // m0
+            "",
+            // m1
+            "function foo() { f('goodgoodgoodgoodgood') }",
+            // m2
+            "function foo() { f('goodgoodgoodgoodgood') }");
 
     test(
         modules,

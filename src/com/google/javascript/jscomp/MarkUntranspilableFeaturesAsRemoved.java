@@ -28,6 +28,7 @@ import com.google.javascript.jscomp.regex.RegExpTree.LookbehindAssertion;
 import com.google.javascript.jscomp.regex.RegExpTree.NamedCaptureGroup;
 import com.google.javascript.jscomp.regex.RegExpTree.UnicodePropertyEscape;
 import com.google.javascript.rhino.Node;
+import java.util.EnumSet;
 import java.util.function.Predicate;
 
 /**
@@ -41,9 +42,8 @@ public final class MarkUntranspilableFeaturesAsRemoved extends AbstractPostOrder
   static final DiagnosticType UNTRANSPILABLE_FEATURE_PRESENT =
       DiagnosticType.error(
           "JSC_UNTRANSPILABLE",
-          // TODO(b/123768968) suggest users raise their language level once we support language
-          // output higher than ES5.
-          "Cannot convert {0} feature \"{1}\" to targeted output language.");
+          "Cannot convert {0} feature \"{1}\" to targeted output language. "
+              + "Either remove feature \"{1}\" or raise output level to {0}.");
 
   private static final FeatureSet UNTRANSPILABLE_2018_FEATURES =
       FeatureSet.BARE_MINIMUM.with(
@@ -52,28 +52,25 @@ public final class MarkUntranspilableFeaturesAsRemoved extends AbstractPostOrder
           Feature.REGEXP_NAMED_GROUPS,
           Feature.REGEXP_UNICODE_PROPERTY_ESCAPE);
 
-  private static final FeatureSet UNTRANSPILABLE_2019_FEATURES =
-      FeatureSet.BARE_MINIMUM.with(
-          // We could transpile this, but there's no point. We always escape these in the output,
-          // no need to have a separate pass to escape them. So we'll piggy back off this pass to
-          // mark it as transpiled. Note that we never complain that this feature won't be
-          // transpiled below.
-          Feature.UNESCAPED_UNICODE_LINE_OR_PARAGRAPH_SEP);
-
   private static final FeatureSet ALL_UNTRANSPILABLE_FEATURES =
-      FeatureSet.BARE_MINIMUM
-          .union(UNTRANSPILABLE_2018_FEATURES)
-          .union(UNTRANSPILABLE_2019_FEATURES);
+      FeatureSet.BARE_MINIMUM.union(UNTRANSPILABLE_2018_FEATURES);
+
+  private static final FeatureSet ALL_TRANSPILABLE_FEATURES =
+      FeatureSet.BARE_MINIMUM.with(
+          EnumSet.complementOf(EnumSet.copyOf(ALL_UNTRANSPILABLE_FEATURES.getFeatures())));
 
   private final AbstractCompiler compiler;
   private final FeatureSet untranspilableFeaturesToRemove;
 
-  MarkUntranspilableFeaturesAsRemoved(AbstractCompiler compiler, FeatureSet outputFeatures) {
+  MarkUntranspilableFeaturesAsRemoved(
+      AbstractCompiler compiler, FeatureSet inputFeatures, FeatureSet outputFeatures) {
     checkNotNull(compiler);
+    checkNotNull(inputFeatures);
     checkNotNull(outputFeatures);
     this.compiler = compiler;
     this.untranspilableFeaturesToRemove =
-        ALL_UNTRANSPILABLE_FEATURES // Features that we can't transpile...
+        inputFeatures // All features in the input language features...
+            .without(ALL_TRANSPILABLE_FEATURES) // that we can't transpile...
             .without(outputFeatures); // and do not exist in the output language features
   }
 

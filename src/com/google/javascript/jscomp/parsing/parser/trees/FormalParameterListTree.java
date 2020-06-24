@@ -17,22 +17,15 @@
 package com.google.javascript.jscomp.parsing.parser.trees;
 
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.parsing.parser.util.SourcePosition;
 import com.google.javascript.jscomp.parsing.parser.util.SourceRange;
 
 public class FormalParameterListTree extends ParseTree {
   public final ImmutableList<ParseTree> parameters;
-  public final boolean hasTrailingComma;
-  public final ImmutableList<SourcePosition> commaPositions;
 
-  public FormalParameterListTree(
-      SourceRange location,
-      ImmutableList<ParseTree> parameters,
-      boolean hasTrailingComma,
-      ImmutableList<SourcePosition> commaPositions) {
+  public FormalParameterListTree(SourceRange location,
+      ImmutableList<ParseTree> parameters) {
     super(ParseTreeType.FORMAL_PARAMETER_LIST, location);
     this.parameters = parameters;
-    this.hasTrailingComma = hasTrailingComma;
-    this.commaPositions = commaPositions;
   }
+
 }

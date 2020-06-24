@@ -17,44 +17,38 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
-import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.jstype.ObjectType;
-import java.util.LinkedHashSet;
 import javax.annotation.Nullable;
 
 /**
- * Keeps track of "invalidating types" that force type-based optimizations to back off, specifically
- * for {@link InlineProperties}, {@link AmbiguateProperties}, and {@link DisambiguateProperties}.
- * Note that disambiguation has slightly different behavior from the other two, as pointed out in
- * implementation comments.
+ * Keeps track of "invalidating types" that force type-based
+ * optimizations to back off, specifically for {@link InlineProperties},
+ * {@link AmbiguateProperties}, and {@link DisambiguateProperties}.
+ * Note that disambiguation has slightly different behavior from the
+ * other two, as pointed out in implementation comments.
  */
-public final class InvalidatingTypes {
+final class InvalidatingTypes {
   private final ImmutableSet<JSType> types;
-  /** Whether to allow disambiguating enum properties */
   private final boolean allowEnums;
-  /** Whether to allow types like 'str'.toString() */
   private final boolean allowScalars;
 
-  private final boolean allowObjectLiteralTypes;
-
-  private InvalidatingTypes(Builder builder, ImmutableSet<JSType> types) {
-    this.types = types;
+  private InvalidatingTypes(Builder builder) {
+    this.types = builder.types.build();
     this.allowEnums = builder.allowEnums;
     this.allowScalars = builder.allowScalars;
-    this.allowObjectLiteralTypes = builder.allowObjectLiteralTypes;
   }
 
-  public boolean isInvalidating(JSType type) {
+  boolean isInvalidating(JSType type) {
     if (type == null || type.isUnknownType() || type.isEmptyType()) {
       return true;
     }
-
-    // A union type is invalidating if any one of its members is invalidating
     if (type.isUnionType()) {
       type = type.restrictByNotNullOrUndefined();
       if (type.isUnionType()) {
@@ -72,159 +66,107 @@ public final class InvalidatingTypes {
     if (objType == null) {
       return !allowScalars;
     }
-
     return types.contains(objType)
-        // Don't disambiguate properties on object literals, e.g. var obj = {a: 'a', b: 'b'};
-        || this.isInvalidatingDueToAmbiguity(objType)
+        || objType.isAmbiguousObject()
         || (!allowEnums && objType.isEnumType())
         || (!allowScalars && objType.isBoxableScalar());
   }
 
-  private boolean isInvalidatingDueToAmbiguity(ObjectType type) {
-    if (this.allowObjectLiteralTypes && type.isLiteralObject()) {
-      return false;
-    }
-
-    return type.isAmbiguousObject();
-  }
-
-  /** Builder */
-  public static final class Builder {
+  static final class Builder {
+    private final ImmutableSet.Builder<JSType> types = ImmutableSet.builder();
     private final JSTypeRegistry registry;
-
-    @Nullable private Multimap<JSType, Node> invalidationMap;
-    private final LinkedHashSet<TypeMismatch> mismatches = new LinkedHashSet<>();
     private boolean allowEnums = false;
     private boolean allowScalars = false;
-    private boolean allowGlobalThis = true;
-    private boolean allowTypesInvalidForRenaming = true;
-    private boolean allowObjectLiteralTypes = false;
+    @Nullable private Multimap<JSType, Supplier<JSError>> invalidationMap;
 
-    private boolean alsoInvalidateRelatedTypes = true;
-
-    private ImmutableSet.Builder<JSType> types;
-
-    public Builder(JSTypeRegistry registry) {
+    Builder(JSTypeRegistry registry) {
       this.registry = registry;
     }
 
-    public InvalidatingTypes build() {
-      checkState(this.types == null);
-      this.types = ImmutableSet.builder();
-
-      if (!this.allowGlobalThis) {
-        types.add(registry.getNativeType(JSTypeNative.GLOBAL_THIS));
-      }
-      if (!this.allowTypesInvalidForRenaming) {
-        types.add(
-            registry.getNativeType(JSTypeNative.FUNCTION_FUNCTION_TYPE),
-            registry.getNativeType(JSTypeNative.FUNCTION_TYPE),
-            registry.getNativeType(JSTypeNative.FUNCTION_PROTOTYPE),
-            registry.getNativeType(JSTypeNative.OBJECT_TYPE),
-            registry.getNativeType(JSTypeNative.OBJECT_PROTOTYPE),
-            registry.getNativeType(JSTypeNative.OBJECT_FUNCTION_TYPE));
-      }
-
-      for (TypeMismatch mismatch : this.mismatches) {
-        this.addTypeWithReason(mismatch.getFound(), mismatch.getLocation());
-        this.addTypeWithReason(mismatch.getRequired(), mismatch.getLocation());
-      }
-
-      ImmutableSet<JSType> types = this.types.build();
-      this.types = null;
-      return new InvalidatingTypes(this, types);
+    InvalidatingTypes build() {
+      return new InvalidatingTypes(this);
     }
 
     // TODO(sdh): Investigate whether this can be consolidated between all three passes.
     // In particular, mutation testing suggests allowEnums=true should work everywhere.
     // We should revisit what breaks when we disallow scalars everywhere.
-    public Builder writeInvalidationsInto(@Nullable Multimap<JSType, Node> invalidationMap) {
+    Builder writeInvalidationsInto(@Nullable Multimap<JSType, Supplier<JSError>> invalidationMap) {
       this.invalidationMap = invalidationMap;
       return this;
     }
 
-    public Builder allowEnumsAndScalars() {
+    Builder allowEnumsAndScalars() {
       // Ambiguate and Inline do not allow enums or scalars.
       this.allowEnums = this.allowScalars = true;
       return this;
     }
 
-    public Builder disallowGlobalThis() {
-      /**
-       * Disambiguate does not invalidate global this because it sets skipping explicitly for extern
-       * properties only on the extern types.
-       */
-      this.allowGlobalThis = false;
+    Builder disallowGlobalThis() {
+      // Disambiguate does not invalidate global this because it
+      // sets skipping explicitly for extern properties only on
+      // the extern types.
+      types.add(registry.getNativeType(JSTypeNative.GLOBAL_THIS));
       return this;
     }
 
-    public Builder addAllTypeMismatches(Iterable<TypeMismatch> mismatches) {
-      mismatches.forEach(this.mismatches::add);
+    Builder addAllTypeMismatches(Iterable<TypeMismatch> mismatches) {
+      for (TypeMismatch mis : mismatches) {
+        addType(mis.typeA, mis);
+        addType(mis.typeB, mis);
+      }
       return this;
     }
 
-    public Builder addTypesInvalidForPropertyRenaming() {
-      this.allowTypesInvalidForRenaming = false;
-      return this;
-    }
-
-    public Builder setAlsoInvalidateRelatedTypes(boolean x) {
-      this.alsoInvalidateRelatedTypes = x;
-      return this;
-    }
-
-    public Builder setAllowObjectLiteralTypes(boolean x) {
-      this.allowObjectLiteralTypes = x;
+    Builder addTypesInvalidForPropertyRenaming() {
+      types.addAll(
+          ImmutableList.of(
+              registry.getNativeType(JSTypeNative.FUNCTION_FUNCTION_TYPE),
+              registry.getNativeType(JSTypeNative.FUNCTION_INSTANCE_TYPE),
+              registry.getNativeType(JSTypeNative.FUNCTION_PROTOTYPE),
+              registry.getNativeType(JSTypeNative.OBJECT_TYPE),
+              registry.getNativeType(JSTypeNative.OBJECT_PROTOTYPE),
+              registry.getNativeType(JSTypeNative.OBJECT_FUNCTION_TYPE),
+              registry.getNativeType(JSTypeNative.TOP_LEVEL_PROTOTYPE)));
       return this;
     }
 
     /** Invalidates the given type, so that no properties on it will be inlined or renamed. */
-    private void addTypeWithReason(JSType type, Node location) {
+    private Builder addType(JSType type, TypeMismatch mismatch) {
       type = type.restrictByNotNullOrUndefined();
-
       if (type.isUnionType()) {
         for (JSType alt : type.getUnionMembers()) {
-          this.addTypeWithReason(alt, location);
+          addType(alt, mismatch);
         }
-        return;
-      }
-      checkState(!type.isUnionType(), type);
-
-      if (!this.alsoInvalidateRelatedTypes) {
-        this.recordTypeWithReason(type, location);
-      } else if (type.isEnumElementType()) {
-        // Only in disambigation.
-        this.recordTypeWithReason(type.getEnumeratedTypeOfEnumElement(), location);
-        return;
-      } else {
-        // Ambiguation and InlineProperties both do this.
-        this.recordTypeWithReason(type, location);
+      } else if (type.isEnumElementType()) { // only in disamb
+        addType(type.getEnumeratedTypeOfEnumElement(), mismatch);
+      } else { // amb and inl both do this without the else
+        checkState(!type.isUnionType());
+        types.add(type);
+        recordInvalidation(type, mismatch);
 
         ObjectType objType = type.toMaybeObjectType();
-        if (objType == null) {
-          return;
-        }
-
-        this.recordTypeWithReason(objType.getImplicitPrototype(), location);
-
-        if (objType.isConstructor()) {
-          // TODO(b/142431852): This should never be null but it is possible.
-          // Case: `function(new:T)`, `T = number`.
-          this.recordTypeWithReason(objType.toMaybeFunctionType().getInstanceType(), location);
-        } else if (objType.isInstanceType()) {
-          this.recordTypeWithReason(objType.getConstructor(), location);
+        if (objType != null) {
+          ObjectType proto = objType.getImplicitPrototype();
+          if (proto != null) {
+            types.add(proto);
+            recordInvalidation(proto, mismatch);
+          }
+          if (objType.isConstructor()) {
+            types.add(objType.toMaybeFunctionType().getInstanceType());
+          } else if (objType.isInstanceType()) {
+            types.add(objType.getConstructor());
+          }
         }
       }
+      return this;
     }
 
-    private void recordTypeWithReason(JSType type, Node location) {
-      if (type == null || !type.isObjectType()) {
+    private void recordInvalidation(JSType type, TypeMismatch mis) {
+      if (!type.isObjectType()) {
         return;
       }
-
-      this.types.add(type);
       if (invalidationMap != null) {
-        this.invalidationMap.put(type, location);
+        invalidationMap.put(type, mis.error);
       }
     }
   }

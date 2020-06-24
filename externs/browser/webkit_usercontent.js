@@ -50,6 +50,7 @@ UserMessageHandler.prototype.postMessage = function(message) {};
 
 
 /**
- * @const {!WebKitNamespace}
+ * @type {!WebKitNamespace}
+ * @const
  */
 var webkit;

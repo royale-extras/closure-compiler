@@ -28,6 +28,8 @@ import javax.annotation.Nullable;
 /**
  * A compiler node traversal callback that invokes matchers against every node and
  * keeps track of any suggested fixes from the refactoring.
+ *
+ * @author mknichel@google.com (Mark Knichel)
  */
 final class JsFlumeCallback implements Callback {
 
@@ -68,7 +70,7 @@ final class JsFlumeCallback implements Callback {
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
-    NodeMetadata metadata = NodeMetadata.fromTraversal(t);
+    NodeMetadata metadata = new NodeMetadata(t.getCompiler());
     if (scanner.matches(n, metadata)) {
       Match match = new Match(n, metadata);
       fixes.addAll(scanner.processMatch(match));

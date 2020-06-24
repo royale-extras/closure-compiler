@@ -294,13 +294,10 @@ ServiceWorkerContainer.prototype.getRegistration = function(opt_documentURL) {};
  */
 ServiceWorkerContainer.prototype.getRegistrations = function() {};
 
-/** @type {?function(!Event): void} */
+/** @type {?function(!Event)} */
 ServiceWorkerContainer.prototype.oncontrollerchange;
 
-/** @type {?function(!ExtendableMessageEvent): void} */
-ServiceWorkerContainer.prototype.onmessage;
-
-/** @type {?function(!ErrorEvent): void} */
+/** @type {?function(!ErrorEvent)} */
 ServiceWorkerContainer.prototype.onerror;
 
 /**
@@ -362,6 +359,9 @@ ServiceWorkerGlobalScope.prototype.onevicted;
 
 /** @type {?function(!MessageEvent)} */
 ServiceWorkerGlobalScope.prototype.onmessage;
+
+/** @type {!IDBFactory|undefined} */
+ServiceWorkerGlobalScope.prototype.indexedDB;
 
 /**
  * While not strictly correct, this should be effectively correct. Notification
@@ -640,7 +640,7 @@ FetchEvent.prototype.client;
 /** @type {?string} */
 FetchEvent.prototype.clientId;
 
-/** @type {boolean} */
+/** @type {!boolean} */
 FetchEvent.prototype.isReload;
 
 /** @type {?string} */
@@ -670,7 +670,7 @@ FetchEvent.prototype.default = function() {};
  *   request: (!Request|undefined),
  *   preloadResponse: (!Promise<Response>),
  *   client: (!ServiceWorkerClient|undefined),
- *   isReload: (boolean|undefined)
+ *   isReload: (!boolean|undefined)
  * }}
  */
 var FetchEventInit;

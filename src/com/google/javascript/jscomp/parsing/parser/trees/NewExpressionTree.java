@@ -22,18 +22,12 @@ public class NewExpressionTree extends ParseTree {
 
   public final ParseTree operand;
   public final ArgumentListTree arguments;
-  public final boolean hasTrailingComma;
 
-  public NewExpressionTree(
-      SourceRange location,
-      ParseTree operand,
-      ArgumentListTree arguments,
-      boolean hasTrailingComma) {
+  public NewExpressionTree(SourceRange location, ParseTree operand, ArgumentListTree arguments) {
     super(ParseTreeType.NEW_EXPRESSION, location);
 
     this.operand = operand;
     this.arguments = arguments;
-    this.hasTrailingComma = hasTrailingComma;
   }
 
 }

@@ -35,6 +35,8 @@ import com.google.javascript.rhino.Node;
  *
  * <p>This runs before the main ES6 transpilation step, to simplify
  * the transpilation of destructuring syntax.
+ *
+ * @author tbreisacher@google.com (Tyler Breisacher)
  */
 public final class Es6SplitVariableDeclarations extends
     NodeTraversal.AbstractPostOrderCallback implements HotSwapCompilerPass {

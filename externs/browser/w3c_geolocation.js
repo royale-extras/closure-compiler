@@ -27,18 +27,8 @@
 function Geolocation() {}
 
 /**
- * @typedef {function(!GeolocationPosition): void}
- */
-var PositionCallback;
-
-/**
- * @typedef {function(!GeolocationPositionError): void}
- */
-var PositionErrorCallback;
-
-/**
- * @param {PositionCallback} successCallback
- * @param {PositionErrorCallback=} opt_errorCallback
+ * @param {function(!GeolocationPosition)} successCallback
+ * @param {(function(!GeolocationPositionError)|null)=} opt_errorCallback
  * @param {GeolocationPositionOptions=} opt_options
  * @return {undefined}
  */
@@ -47,8 +37,8 @@ Geolocation.prototype.getCurrentPosition = function(successCallback,
                                                        opt_options) {};
 
 /**
- * @param {PositionCallback} successCallback
- * @param {PositionErrorCallback=} opt_errorCallback
+ * @param {function(!GeolocationPosition)} successCallback
+ * @param {(function(!GeolocationPositionError)|null)=} opt_errorCallback
  * @param {GeolocationPositionOptions=} opt_options
  * @return {number}
  */
@@ -74,13 +64,13 @@ GeolocationCoordinates.prototype.latitude;
 GeolocationCoordinates.prototype.longitude;
 /** @type {number} */
 GeolocationCoordinates.prototype.accuracy;
-/** @type {number|null} */
+/** @type {number} */
 GeolocationCoordinates.prototype.altitude;
-/** @type {number|null} */
+/** @type {number} */
 GeolocationCoordinates.prototype.altitudeAccuracy;
-/** @type {number|null} */
+/** @type {number} */
 GeolocationCoordinates.prototype.heading;
-/** @type {number|null} */
+/** @type {number} */
 GeolocationCoordinates.prototype.speed;
 
 
@@ -117,13 +107,13 @@ function GeolocationPositionError() {}
 GeolocationPositionError.prototype.code;
 /** @type {string} */
 GeolocationPositionError.prototype.message;
-/** @const {number} */
+/** @type {number} */
 GeolocationPositionError.prototype.UNKNOWN_ERROR;
-/** @const {number} */
+/** @type {number} */
 GeolocationPositionError.prototype.PERMISSION_DENIED;
-/** @const {number} */
+/** @type {number} */
 GeolocationPositionError.prototype.POSITION_UNAVAILABLE;
-/** @const {number} */
+/** @type {number} */
 GeolocationPositionError.prototype.TIMEOUT;
 
 /** @type {Geolocation} */

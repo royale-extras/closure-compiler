@@ -15,8 +15,6 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Predicates.not;
-import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
@@ -30,6 +28,7 @@ import com.google.javascript.rhino.jstype.NoType;
 import com.google.javascript.rhino.jstype.ObjectType;
 import com.google.javascript.rhino.jstype.UnionType;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -82,12 +81,12 @@ public class PartialCompilationTest {
         options);
     compiler.parse();
     compiler.check();
-
-    ImmutableList<JSError> sourcesErrors =
-        compiler.getErrors().stream()
-            .filter(not(DiagnosticGroups.MISSING_SOURCES_WARNINGS::matches))
-            .collect(toImmutableList());
-    assertThat(sourcesErrors).isEmpty();
+    List<JSError> errors = Arrays.asList(compiler.getErrors());
+    for (JSError error : errors) {
+      if (!DiagnosticGroups.MISSING_SOURCES_WARNINGS.matches(error)) {
+        assertWithMessage("Unexpected error " + error).fail();
+      }
+    }
   }
 
   @Test
@@ -156,7 +155,7 @@ public class PartialCompilationTest {
     assertPartialCompilationSucceeds(
         "/** @type {!some.thing.Missing<string, !AlsoMissing<!More>>} */", "var x;");
     TypedVar x = compiler.getTopScope().getSlot("x");
-    assertWithMessage("type %s", x.getType()).that(x.getType().isNoResolvedType()).isTrue();
+    assertThat(x.getType().isNoResolvedType()).named("type %s", x.getType()).isTrue();
     NoType templatizedType = (NoType) x.getType();
     assertThat(templatizedType.getReferenceName()).isEqualTo("some.thing.Missing");
     ImmutableList<JSType> templateTypes = templatizedType.getTemplateTypes();
@@ -173,7 +172,7 @@ public class PartialCompilationTest {
   public void testUnresolvedUnions() throws Exception {
     assertPartialCompilationSucceeds("/** @type {some.thing.Foo|some.thing.Bar} */", "var x;");
     TypedVar x = compiler.getTopScope().getSlot("x");
-    assertWithMessage("type %s", x.getType()).that(x.getType().isUnionType()).isTrue();
+    assertThat(x.getType().isUnionType()).named("type %s", x.getType()).isTrue();
     UnionType unionType = (UnionType) x.getType();
 
     Collection<JSType> alternatives = unionType.getAlternates();

@@ -21,8 +21,6 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.QualifiedName;
-import javax.annotation.Nullable;
 
 /**
  * A callback that calls the abstract method on every "inferrable const". This is a constant
@@ -33,11 +31,6 @@ import javax.annotation.Nullable;
  * the declarations found throughout the compilation.
  */
 abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrderCallback {
-
-  private static final QualifiedName GOOG_DEFINE = QualifiedName.of("goog.define");
-  private static final QualifiedName GOOG_PROVIDE = QualifiedName.of("goog.provide");
-  private static final QualifiedName GOOG_REQUIRE = QualifiedName.of("goog.require");
-  private static final QualifiedName CJS_REQUIRE = QualifiedName.of("require");
 
   private final FileInfo currentFile;
 
@@ -65,16 +58,18 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
         switch (expr.getToken()) {
           case CALL:
             Node callee = expr.getFirstChild();
-            if (GOOG_PROVIDE.matches(callee)) {
+            if (callee.matchesQualifiedName("goog.provide")) {
               currentFile.markProvided(expr.getLastChild().getString());
-            } else if (GOOG_REQUIRE.matches(callee) || CJS_REQUIRE.matches(callee)) {
+            } else if (callee.matchesQualifiedName("goog.require")) {
               currentFile.recordImport(expr.getLastChild().getString());
-            } else if (GOOG_DEFINE.matches(callee)) {
+            } else if (callee.matchesQualifiedName("goog.define")) {
               currentFile.recordDefine(expr);
             }
             break;
           case ASSIGN:
-            recordDeclaration(t, expr.getFirstChild(), expr.getLastChild());
+            Node lhs = expr.getFirstChild();
+            currentFile.recordNameDeclaration(lhs);
+            processDeclarationWithRhs(t, lhs);
             break;
           case GETPROP:
             currentFile.recordNameDeclaration(expr);
@@ -87,7 +82,10 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
       case CONST:
       case LET:
         checkState(n.hasOneChild(), n);
-        recordDeclaration(t, n.getFirstChild(), n.getFirstChild().getLastChild());
+        recordNameDeclaration(n);
+        if (n.getFirstChild().isName() && n.getFirstChild().hasChildren()) {
+          processDeclarationWithRhs(t, n.getFirstChild());
+        }
         break;
       case STRING_KEY:
         if (parent.isObjectLit() && n.hasOneChild()) {
@@ -100,27 +98,13 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
     }
   }
 
-  private void recordDeclaration(NodeTraversal t, Node lhs, @Nullable Node rhs) {
-    if (rhs != null
-        && rhs.isCall()
-        && GOOG_DEFINE.matches(rhs.getFirstChild())
-        && lhs.isQualifiedName()) {
-      currentFile.recordDefine(rhs);
-    } else {
-      recordNameDeclaration(lhs, rhs);
-      if (!lhs.isDestructuringLhs() && rhs != null) {
-        processDeclarationWithRhs(t, lhs);
-      }
-    }
-  }
-
-  private void recordNameDeclaration(Node lhs, @Nullable Node rhs) {
-    checkArgument(NodeUtil.isNameDeclaration(lhs.getParent()) || lhs.getParent().isAssign());
+  private void recordNameDeclaration(Node decl) {
+    checkArgument(NodeUtil.isNameDeclaration(decl));
+    Node rhs = decl.getFirstChild().getLastChild();
     boolean isImport = PotentialDeclaration.isImportRhs(rhs);
-    boolean isAlias = PotentialDeclaration.isAliasDeclaration(lhs, rhs);
-    for (Node name : NodeUtil.findLhsNodesInNode(lhs.getParent())) {
-      if (isAlias || isImport) {
-        currentFile.recordAliasDeclaration(name);
+    for (Node name : NodeUtil.findLhsNodesInNode(decl)) {
+      if (isImport) {
+        currentFile.recordImport(name.getString());
       } else {
         currentFile.recordNameDeclaration(name);
       }
@@ -128,11 +112,14 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
   }
 
   private void processDeclarationWithRhs(NodeTraversal t, Node lhs) {
-    checkArgument(lhs.isQualifiedName() || lhs.isStringKey(), lhs);
+    checkArgument(
+        lhs.isQualifiedName() || lhs.isStringKey() || lhs.isDestructuringLhs(),
+        lhs);
     checkState(NodeUtil.getRValueOfLValue(lhs) != null, lhs);
-    if (PotentialDeclaration.isConstToBeInferred(lhs)) {
-      processConstWithRhs(t, lhs);
+    if (!PotentialDeclaration.isConstToBeInferred(lhs)) {
+      return;
     }
+    processConstWithRhs(t, lhs);
   }
 
   protected abstract void processConstWithRhs(NodeTraversal t, Node lhs);

@@ -19,8 +19,6 @@
  * @suppress {uselessCode}
  */
 'require util/owns';
-'require util/polyfill';
-'require util/shouldpolyfill';
 
 /**
  * Equivalent to the Object.assign() method, but guaranteed to be available for use in code
@@ -36,8 +34,7 @@
  * @param {...?Object} var_args The source objects.
  * @return {!Object} The target object is returned.
  */
-$jscomp.assign =
-    ($jscomp.TRUST_ES6_POLYFILLS && typeof Object.assign == 'function') ?
+$jscomp.assign = (typeof Object.assign == 'function') ?
     Object.assign :
     /**
      * @param {!Object} target

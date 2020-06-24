@@ -33,6 +33,7 @@ import java.util.ArrayList;
 
 /**
  * Generates an AST for a JavaScript source file.
+ *
  */
 public class JsAst implements SourceAst {
   private static final long serialVersionUID = 1L;

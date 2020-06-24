@@ -43,56 +43,29 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.javascript.rhino.Node;
 
-/** An object type that is an instance of some function constructor. */
-final class InstanceObjectType extends PrototypeObjectType {
+/**
+ * An object type that is an instance of some function constructor.
+ */
+class InstanceObjectType extends PrototypeObjectType {
   private static final long serialVersionUID = 1L;
-
-  private static final JSTypeClass TYPE_CLASS = JSTypeClass.INSTANCE_OBJECT;
 
   private final FunctionType constructor;
 
-  private InstanceObjectType(Builder builder) {
-    super(builder);
-    this.constructor = checkNotNull(builder.constructor);
-
-    registry.getResolver().resolveIfClosed(this, TYPE_CLASS);
+  InstanceObjectType(JSTypeRegistry registry, FunctionType constructor) {
+    this(registry, constructor, false);
   }
 
-  static final class Builder extends PrototypeObjectType.Builder<Builder> {
-    private FunctionType constructor;
-
-    Builder(JSTypeRegistry registry) {
-      super(registry);
-    }
-
-    Builder setConstructor(FunctionType x) {
-      this.constructor = x;
-      return this;
-    }
-
-    @Override
-    InstanceObjectType build() {
-      return new InstanceObjectType(this);
-    }
+  InstanceObjectType(JSTypeRegistry registry, FunctionType constructor, boolean isNativeType) {
+    this(registry, constructor, isNativeType, constructor.getTemplateTypeMap());
   }
 
-  static Builder builderForCtor(FunctionType ctor) {
-    return new Builder(ctor.registry)
-        .setName(ctor.getReferenceName())
-        .setImplicitPrototype(null) // This isn't shared by a function and it's instances.
-        .setNative(ctor.isNativeObjectType())
-        .setAnonymous(ctor.isAnonymous())
-        .setTemplateTypeMap(ctor.getTemplateTypeMap())
-        // Recall that in ES5 code, instance and constructor template parameters were
-        // indistinguishable. That asumption is maintained here by deault, but later code may
-        // may overwrite the template parameter count.
-        .setTemplateParamCount(ctor.getTemplateParamCount())
-        .setConstructor(ctor);
-  }
-
-  @Override
-  JSTypeClass getTypeClass() {
-    return TYPE_CLASS;
+  InstanceObjectType(
+      JSTypeRegistry registry,
+      FunctionType constructor,
+      boolean isNativeType,
+      TemplateTypeMap templateTypeMap) {
+    super(registry, null, null, isNativeType, templateTypeMap);
+    this.constructor = checkNotNull(constructor);
   }
 
   @Override
@@ -121,25 +94,22 @@ final class InstanceObjectType extends PrototypeObjectType {
   }
 
   @Override
-  void appendTo(TypeStringBuilder sb) {
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
     if (!constructor.hasReferenceName()) {
-      super.appendTo(sb);
-      return;
-    } else if (sb.isForAnnotations()) {
-      sb.append(constructor.getNormalizedReferenceName());
-      return;
+      return super.appendTo(sb, forAnnotations);
+    } else if (forAnnotations) {
+      return sb.append(constructor.getNormalizedReferenceName());
     }
-
     String name = constructor.getReferenceName();
     if (name.isEmpty()) {
       Node n = constructor.getSource();
-      sb.append("<anonymous@")
+      return sb.append("<anonymous@")
           .append(n != null ? n.getSourceFileName() : "unknown")
           .append(":")
-          .append(Integer.toString(n != null ? n.getLineno() : 0))
+          .append(n != null ? n.getLineno() : 0)
           .append(">");
     }
-    sb.append(name);
+    return sb.append(name);
   }
 
   @Override
@@ -157,11 +127,6 @@ final class InstanceObjectType extends PrototypeObjectType {
   public boolean isArrayType() {
     return getConstructor().isNativeObjectType()
         && "Array".equals(getReferenceName());
-  }
-
-  @Override
-  public boolean isBigIntObjectType() {
-    return getConstructor().isNativeObjectType() && "BigInt".equals(getReferenceName());
   }
 
   @Override

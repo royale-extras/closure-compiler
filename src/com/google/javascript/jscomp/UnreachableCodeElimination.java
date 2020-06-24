@@ -19,7 +19,7 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.javascript.jscomp.ControlFlowGraph.Branch;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
+import com.google.javascript.jscomp.NodeTraversal.AbstractShallowCallback;
 import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphEdge;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
@@ -39,6 +39,7 @@ import java.util.logging.Logger;
  *    That first kind of statement sometimes appears intentionally, so that
  *    prototype properties can be annotated using JSDoc without actually
  *    being initialized.
+ *
  */
 
 // TODO(dimvar): Besides dead code after returns, this pass removes useless live
@@ -58,8 +59,6 @@ class UnreachableCodeElimination implements CompilerPass {
 
   @Override
   public void process(Node externs, Node toplevel) {
-    checkState(compiler.getLifeCycleStage().isNormalized());
-
     NodeTraversal.traverseChangedFunctions(compiler, new ChangeScopeRootCallback() {
         @Override
         public void enterChangeScopeRoot(AbstractCompiler compiler, Node root) {
@@ -81,28 +80,10 @@ class UnreachableCodeElimination implements CompilerPass {
       });
   }
 
-  private class EliminationPass implements Callback {
+  private class EliminationPass extends AbstractShallowCallback {
     private final ControlFlowGraph<Node> cfg;
-
     private EliminationPass(ControlFlowGraph<Node> cfg) {
       this.cfg = cfg;
-    }
-
-    @Override
-    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
-      if (parent == null) {
-        return true;
-      } else if (n.isExport()) {
-        // TODO(b/129564961): We should be exploring EXPORTs. We don't because their descendants
-        // have side-effects that `NodeUtil::mayHaveSideEffects` doesn't recognize. Since this pass
-        // currently runs after exports are removed anyway, this isn't yet an issue.
-        return false;
-      } else if (parent.isFunction()) {
-        // We only want to traverse the name of a function.
-        return n.isFirstChildOf(parent);
-      }
-
-      return true;
     }
 
     @Override
@@ -110,12 +91,12 @@ class UnreachableCodeElimination implements CompilerPass {
       if (parent == null || n.isFunction() || n.isScript()) {
         return;
       }
-      DiGraphNode<Node, Branch> gNode = cfg.getNode(n);
+      DiGraphNode<Node, Branch> gNode = cfg.getDirectedGraphNode(n);
       if (gNode == null) { // Not in CFG.
         return;
       }
       if (gNode.getAnnotation() != GraphReachability.REACHABLE
-          || !compiler.getAstAnalyzer().mayHaveSideEffects(n)) {
+          || !NodeUtil.mayHaveSideEffects(n, compiler)) {
         removeDeadExprStatementSafely(n);
         return;
       }
@@ -154,7 +135,7 @@ class UnreachableCodeElimination implements CompilerPass {
          return;
       }
 
-      DiGraphNode<Node, Branch> gNode = cfg.getNode(n);
+      DiGraphNode<Node, Branch> gNode = cfg.getDirectedGraphNode(n);
 
       if (gNode == null) {
         return;
@@ -170,7 +151,7 @@ class UnreachableCodeElimination implements CompilerPass {
           // We are looking for a control flow changing statement that always
           // branches to the same node. If after removing it control still
           // branches to the same node, it is safe to remove.
-          List<? extends DiGraphEdge<Node, Branch>> outEdges = gNode.getOutEdges();
+          List<DiGraphEdge<Node, Branch>> outEdges = gNode.getOutEdges();
           if (outEdges.size() == 1
               &&
               // If there is a next node, this jump is not useless.

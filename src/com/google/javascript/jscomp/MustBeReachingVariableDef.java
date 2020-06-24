@@ -40,6 +40,7 @@ import javax.annotation.Nullable;
  * A definition of {@code A} in {@code A = foo()} is a reaching definition of
  * the use of {@code A} in {@code alert(A)} if all paths from entry node must
  * reaches that definition and it is the last definition before the use.
+ *
  */
 final class MustBeReachingVariableDef extends
     DataFlowAnalysis<Node, MustBeReachingVariableDef.MustDef> {
@@ -54,7 +55,7 @@ final class MustBeReachingVariableDef extends
       ControlFlowGraph<Node> cfg,
       Scope jsScope,
       AbstractCompiler compiler,
-      SyntacticScopeCreator scopeCreator) {
+      Es6SyntacticScopeCreator scopeCreator) {
     super(cfg, new MustDefJoin());
     this.compiler = compiler;
     this.escaped = new HashSet<>();
@@ -136,7 +137,7 @@ final class MustBeReachingVariableDef extends
     public MustDef(Collection<Var> vars) {
       this();
       for (Var var : vars) {
-        reachingDef.put(var, new Definition(var.getScope().getRootNode()));
+        reachingDef.put(var, new Definition(var.scope.getRootNode()));
       }
     }
 
@@ -258,7 +259,6 @@ final class MustBeReachingVariableDef extends
 
       case FOR_IN:
       case FOR_OF:
-      case FOR_AWAIT_OF:
         // for(x in y) {...}
         Node lhs = n.getFirstChild();
         Node rhs = lhs.getNext();
@@ -278,7 +278,6 @@ final class MustBeReachingVariableDef extends
 
       case AND:
       case OR:
-      case COALESCE:
         computeMustDef(n.getFirstChild(), cfgNode, output, conditional);
         computeMustDef(n.getLastChild(), cfgNode, output, true);
         return;
@@ -337,7 +336,7 @@ final class MustBeReachingVariableDef extends
             addToDefIfLocal(
                 name.getString(), conditional ? null : cfgNode, n.getLastChild(), output);
             return;
-          } else if (NodeUtil.isNormalGet(n.getFirstChild())) {
+          } else if (NodeUtil.isGet(n.getFirstChild())) {
             // Treat all assignments to arguments as redefining the
             // parameters itself.
             Node obj = n.getFirstFirstChild();
@@ -485,7 +484,7 @@ final class MustBeReachingVariableDef extends
 
     for (Var s : def.depends) {
       // Don't inline try catch
-      if (s.getScope().isCatchScope()) {
+      if (s.scope.isCatchScope()) {
         return true;
       }
     }

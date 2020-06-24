@@ -21,7 +21,6 @@ import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES8_MODULES
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.Es6RewriteDestructuring.ObjectDestructuringRewriteMode;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
-import com.google.javascript.jscomp.testing.NoninjectingCompiler;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Before;
@@ -35,6 +34,7 @@ import org.junit.runners.JUnit4;
  *
  * @author dimvar@google.com (Dimitris Vardoulakis)
  */
+
 @RunWith(JUnit4.class)
 public final class MultiPassTest extends CompilerTestCase {
   private List<PassFactory> passes;
@@ -55,14 +55,24 @@ public final class MultiPassTest extends CompilerTestCase {
     PhaseOptimizer phaseopt = new PhaseOptimizer(compiler, null);
     phaseopt.consume(passes);
     phaseopt.setValidityCheck(
-        PassFactory.builder()
-            .setName("validityCheck")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(ValidityCheck::new)
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("validityCheck", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new ValidityCheck(compiler);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
     compiler.setPhaseOptimizer(phaseopt);
     return phaseopt;
+  }
+
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
   }
 
   @Override
@@ -129,7 +139,7 @@ public final class MultiPassTest extends CompilerTestCase {
     addRemoveUnusedClassProperties();
     test(
         "/** @constructor */ function Foo() { this.a = 1; } Foo.baz = function() {};",
-        "/** @constructor */ function Foo() {             }");
+        "/** @constructor */ function Foo() {             } Foo.baz = function() {};");
   }
 
   @Test
@@ -383,142 +393,190 @@ public final class MultiPassTest extends CompilerTestCase {
 
   private void addCollapseObjectLiterals() {
     passes.add(
-        PassFactory.builder()
-            .setName("collapseObjectLiterals")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (compiler) ->
-                    new InlineObjectLiterals(compiler, compiler.getUniqueNameIdSupplier()))
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("collapseObjectLiterals", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new InlineObjectLiterals(
+                compiler, compiler.getUniqueNameIdSupplier());
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addDeadCodeElimination() {
     passes.add(
-        PassFactory.builder()
-            .setName("removeUnreachableCode")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(UnreachableCodeElimination::new)
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("removeUnreachableCode", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new UnreachableCodeElimination(compiler);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addInlineFunctions() {
     passes.add(
-        PassFactory.builder()
-            .setName("inlineFunctions")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (compiler) ->
-                    new InlineFunctions(
-                        compiler,
-                        compiler.getUniqueNameIdSupplier(),
-                        CompilerOptions.Reach.ALL,
-                        true,
-                        true,
-                        CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING))
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("inlineFunctions", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new InlineFunctions(
+                compiler,
+                compiler.getUniqueNameIdSupplier(),
+                CompilerOptions.Reach.ALL,
+                true,
+                true,
+                CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addInlineVariables() {
     passes.add(
-        PassFactory.builder()
-            .setName("inlineVariables")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (compiler) -> new InlineVariables(compiler, InlineVariables.Mode.ALL, true))
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("inlineVariables", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new InlineVariables(
+                compiler, InlineVariables.Mode.ALL, true);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addPeephole() {
     passes.add(
-        PassFactory.builder()
-            .setName("peepholeOptimizations")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (compiler) -> {
-                  final boolean late = false;
-                  return new PeepholeOptimizationsPass(
-                      compiler,
-                      getName(),
-                      new PeepholeMinimizeConditions(late),
-                      new PeepholeSubstituteAlternateSyntax(late),
-                      new PeepholeReplaceKnownMethods(late, false /* useTypes */),
-                      new PeepholeRemoveDeadCode(),
-                      new PeepholeFoldConstants(late, false /* useTypes */),
-                      new PeepholeCollectPropertyAssignments());
-                })
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("peepholeOptimizations", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            final boolean late = false;
+            return new PeepholeOptimizationsPass(
+                compiler,
+                getName(),
+                new PeepholeMinimizeConditions(late),
+                new PeepholeSubstituteAlternateSyntax(late),
+                new PeepholeReplaceKnownMethods(late, false /* useTypes */),
+                new PeepholeRemoveDeadCode(),
+                new PeepholeFoldConstants(late, false /* useTypes */),
+                new PeepholeCollectPropertyAssignments());
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addRemoveUnusedClassProperties() {
     passes.add(
-        PassFactory.builder()
-            .setName("removeUnusedClassProperties")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (compiler) ->
-                    new RemoveUnusedCode.Builder(compiler)
-                        .removeUnusedThisProperties(true)
-                        .removeUnusedObjectDefinePropertiesDefinitions(true)
-                        .build())
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("removeUnusedClassProperties", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new RemoveUnusedCode.Builder(compiler)
+                .removeUnusedThisProperties(true)
+                .removeUnusedObjectDefinePropertiesDefinitions(true)
+                .build();
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addRemoveUnusedVars() {
     passes.add(
-        PassFactory.builder()
-            .setName("removeUnusedVars")
-            .setRunInFixedPointLoop(true)
-            .setInternalFactory(
-                (compiler) -> new RemoveUnusedCode.Builder(compiler).removeLocalVars(true).build())
-            .setFeatureSet(ES8_MODULES)
-            .build());
+        new PassFactory("removeUnusedVars", false) {
+          @Override
+          protected CompilerPass create(AbstractCompiler compiler) {
+            return new RemoveUnusedCode.Builder(compiler).removeLocalVars(true).build();
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return ES8_MODULES;
+          }
+        });
   }
 
   private void addDestructuringPass() {
     passes.add(
-        PassFactory.builder()
-            .setName("destructuringPass")
-            .setInternalFactory(
-                (compiler) ->
-                    new Es6RewriteDestructuring.Builder(compiler)
-                        .setDestructuringRewriteMode(
-                            ObjectDestructuringRewriteMode.REWRITE_ALL_OBJECT_PATTERNS)
-                        .build())
-            .setFeatureSet(FeatureSet.ES8_MODULES)
-            .build());
+        new PassFactory("destructuringPass", true) {
+          @Override
+          protected CompilerPass create(final AbstractCompiler compiler) {
+            return new Es6RewriteDestructuring.Builder(compiler)
+                .setDestructuringRewriteMode(
+                    ObjectDestructuringRewriteMode.REWRITE_ALL_OBJECT_PATTERNS)
+                .build();
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return FeatureSet.ES8_MODULES;
+          }
+        });
   }
 
   private void addArrowFunctionPass() {
     passes.add(
-        PassFactory.builder()
-            .setName("arrowFunctionPass")
-            .setInternalFactory(Es6RewriteArrowFunction::new)
-            .setFeatureSet(FeatureSet.ES8_MODULES)
-            .build());
+        new PassFactory("arrowFunctionPass", true) {
+          @Override
+          protected CompilerPass create(final AbstractCompiler compiler) {
+            return new Es6RewriteArrowFunction(compiler);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return FeatureSet.ES8_MODULES;
+          }
+        });
   }
 
   private void addSplitVariableDeclarationsPass() {
     passes.add(
-        PassFactory.builder()
-            .setName("splitVariableDeclarationsPass")
-            .setInternalFactory(Es6SplitVariableDeclarations::new)
-            .setFeatureSet(FeatureSet.ES8_MODULES)
-            .build());
+        new PassFactory("splitVariableDeclarationsPass", true) {
+          @Override
+          protected CompilerPass create(final AbstractCompiler compiler) {
+            return new Es6SplitVariableDeclarations(compiler);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return FeatureSet.ES8_MODULES;
+          }
+        });
   }
 
   private void addRenameVariablesInParamListsPass() {
     passes.add(
-        PassFactory.builder()
-            .setName("renameVariablesInParamListsPass")
-            .setInternalFactory(Es6RenameVariablesInParamLists::new)
-            .setFeatureSet(FeatureSet.ES8_MODULES)
-            .build());
+        new PassFactory("renameVariablesInParamListsPass", true) {
+          @Override
+          protected CompilerPass create(final AbstractCompiler compiler) {
+            return new Es6RenameVariablesInParamLists(compiler);
+          }
+
+          @Override
+          protected FeatureSet featureSet() {
+            return FeatureSet.ES8_MODULES;
+          }
+        });
   }
 
   @Override

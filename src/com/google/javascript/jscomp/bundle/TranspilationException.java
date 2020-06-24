@@ -38,9 +38,7 @@ public class TranspilationException extends RuntimeException {
   }
 
   public TranspilationException(
-      SourceExcerptProvider source,
-      ImmutableList<JSError> errors,
-      ImmutableList<JSError> warnings) {
+      SourceExcerptProvider source, JSError[] errors, JSError[] warnings) {
     this(
         ImmutableList.copyOf(errors),
         ImmutableList.copyOf(warnings),
@@ -70,10 +68,7 @@ public class TranspilationException extends RuntimeException {
     return warnings;
   }
 
-  private static String format(
-      SourceExcerptProvider source,
-      ImmutableList<JSError> errors,
-      ImmutableList<JSError> warnings) {
+  private static String format(SourceExcerptProvider source, JSError[] errors, JSError[] warnings) {
     StringBuilder sb = new StringBuilder().append("Transpilation failed:\n");
     MessageFormatter formatter =
         source != null

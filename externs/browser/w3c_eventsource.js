@@ -16,7 +16,7 @@
 
 /**
  * @fileoverview Definitions for W3C's EventSource API.
- * @see https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events
+ * @see http://www.w3.org/TR/eventsource/
  *
  * @externs
  */
@@ -47,60 +47,50 @@ EventSource.prototype.removeEventListener = function(
 EventSource.prototype.dispatchEvent = function(evt) {};
 
 /**
- * @const {string}
+ * @type {string}
+ * @const
  */
 EventSource.prototype.url;
 
-/** @const {boolean} */
+/** @type {boolean} */
 EventSource.prototype.withCredentials;
 
 /**
- * @const {number}
+ * @type {number}
+ * @const
  */
-EventSource.prototype.CONNECTING;
+EventSource.prototype.CONNECTING = 0;
 
 /**
- * @const {number}
+ * @type {number}
+ * @const
  */
-EventSource.CONNECTING;
+EventSource.prototype.OPEN = 1;
 
 /**
- * @const {number}
+ * @type {number}
+ * @const
  */
-EventSource.prototype.OPEN;
+EventSource.prototype.CLOSED = 2;
 
 /**
- * @const {number}
- */
-EventSource.OPEN;
-
-/**
- * @const {number}
- */
-EventSource.prototype.CLOSED;
-
-/**
- * @const {number}
- */
-EventSource.CLOSED;
-
-/**
- * @const {number}
+ * @type {number}
+ * @const
  */
 EventSource.prototype.readyState;
 
 /**
- * @type {?function(!Event): void}
+ * @type {?function(!Event)}
  */
 EventSource.prototype.onopen = function(e) {};
 
 /**
- * @type {?function(!MessageEvent<string>): void}
+ * @type {?function(!MessageEvent<*>)}
  */
 EventSource.prototype.onmessage = function(e) {};
 
 /**
- * @type {?function(!Event): void}
+ * @type {?function(!Event)}
  */
 EventSource.prototype.onerror = function(e) {};
 

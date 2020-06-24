@@ -38,10 +38,12 @@
 
 package com.google.javascript.rhino;
 
-import java.io.Serializable;
-
-/** A simple implementation of {@code StaticSourceFile} for testing. */
-public final class SimpleSourceFile implements StaticSourceFile, Serializable {
+/**
+ * A simple implementation of {@code StaticSourceFile} for testing.
+ *
+ * @author nicksantos@google.com (Nick Santos)
+ */
+public final class SimpleSourceFile implements StaticSourceFile {
   private final String name;
   private final SourceKind kind;
 

@@ -26,6 +26,7 @@ import org.junit.runners.JUnit4;
  *
  * @author chadkillingsworth@gmail.com (Chad Killingsworth)
  */
+
 @RunWith(JUnit4.class)
 public final class ClosurePrimitivesIntegrationTest extends IntegrationTestCase {
 

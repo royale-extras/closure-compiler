@@ -19,7 +19,6 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
@@ -31,12 +30,13 @@ import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
  * Rewrites "goog.defineClass" into a form that is suitable for
  * type checking and dead code elimination.
+ *
+ * @author johnlenz@google.com (John Lenz)
  */
 class ClosureRewriteClass extends AbstractPostOrderCallback
     implements HotSwapCompilerPass {
@@ -225,15 +225,14 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
 
     // name = goog.defineClass(superClass, {...}, [modifier, ...])
     Node superClass = NodeUtil.getArgumentForCallOrNew(callNode, 0);
-    if (superClass == null
-        || (!superClass.isNull()
-            && !superClass.isQualifiedName()
-            && !NodeUtil.isCallTo(superClass, "goog.module.get"))) {
+    if (superClass == null ||
+        (!superClass.isNull() && !superClass.isQualifiedName())) {
       compiler.report(JSError.make(callNode, GOOG_CLASS_SUPER_CLASS_NOT_VALID));
       return null;
     }
 
-    if (NodeUtil.isNullOrUndefined(superClass) || superClass.matchesName("Object")) {
+    if (NodeUtil.isNullOrUndefined(superClass)
+        || superClass.matchesQualifiedName("Object")) {
       superClass = null;
     }
 
@@ -347,7 +346,9 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
             GOOG_CLASS_ES6_COMPUTED_PROP_NAMES_NOT_SUPPORTED));
         return false;
       }
-      if (key.isStringKey() && key.getFirstChild().isArrowFunction()) {
+      if (key.isStringKey()
+          && key.hasChildren()
+          && key.getFirstChild().isArrowFunction()){
         // report using arrow function
         compiler.report(JSError.make(objlit,
             GOOG_CLASS_ES6_ARROW_FUNCTION_NOT_SUPPORTED));
@@ -414,23 +415,16 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
       Node decl =
           IR.declaration(cls.name.cloneTree(), cls.constructor.value, exprRoot.getToken())
               .srcref(exprRoot);
-      // TODO(b/138324343): remove this special case for names in module scopes, which is
-      // here only to unblock moving module rewriting later. this should warn instead of being
-      // a no-op.
-      JSDocInfo mergedClassInfo =
-          mergeJsDocFor(
-              cls, decl, /* includeConstructorExport= */ !exprRoot.getParent().isModuleBody());
+      JSDocInfo mergedClassInfo = mergeJsDocFor(cls, decl);
       decl.setJSDocInfo(mergedClassInfo);
       block.addChildToBack(decl);
     } else {
       // example: ns.ctr = function(){}
-      Node assign =
-          IR.assign(cls.name.cloneTree(), cls.constructor.value)
-              .srcref(exprRoot)
-              .setJSDocInfo(cls.constructor.info);
+      Node assign = IR.assign(cls.name.cloneTree(), cls.constructor.value)
+          .srcref(exprRoot)
+          .setJSDocInfo(cls.constructor.info);
 
-      JSDocInfo mergedClassInfo =
-          mergeJsDocFor(cls, exprRoot.getOnlyChild(), /* includeConstructorExport= */ true);
+      JSDocInfo mergedClassInfo = mergeJsDocFor(cls, assign);
       assign.setJSDocInfo(mergedClassInfo);
 
       Node expr = IR.exprResult(assign).srcref(exprRoot);
@@ -440,13 +434,12 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
     if (cls.superClass != null) {
       // example: goog.inherits(ctr, superClass)
       block.addChildToBack(
-          fixupSrcref(
-              IR.exprResult(
-                  IR.call(
-                          NodeUtil.newQName(compiler, "goog.inherits").srcrefTree(cls.superClass),
-                          cls.name.cloneTree(),
-                          cls.superClass.cloneTree())
-                      .srcref(cls.superClass))));
+          fixupSrcref(IR.exprResult(
+              IR.call(
+                  NodeUtil.newQName(compiler, "goog.inherits")
+                      .srcrefTree(cls.superClass),
+                  cls.name.cloneTree(),
+                  cls.superClass.cloneTree()).srcref(cls.superClass))));
     }
 
     for (MemberDefinition def : cls.staticProps) {
@@ -558,47 +551,22 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
 
   static final String VIRTUAL_FILE = "<ClosureRewriteClass.java>";
 
-  private JSTypeExpression getSuperclassFor(Node superNode) {
-    final String superName;
-    if (superNode.isQualifiedName()) {
-      superName = superNode.getQualifiedName();
-    } else {
-      checkState(NodeUtil.isCallTo(superNode, "goog.module.get"));
-      superName = superNode.getLastChild().getString();
-    }
-    return new JSTypeExpression(
-        new Node(Token.BANG, IR.string(superName)).srcrefTree(superNode), VIRTUAL_FILE);
-  }
-
-  /**
-   * Merges the JSDoc from the class and constructor into a single function-level JSDoc
-   *
-   * @param includeConstructorExport if false, disregards the @export JSDoc from the constructor, if
-   *     any. This is a workaround for b/138324343.
-   */
-  private JSDocInfo mergeJsDocFor(
-      ClassDefinition cls, Node associatedNode, boolean includeConstructorExport) {
+  private JSDocInfo mergeJsDocFor(ClassDefinition cls, Node associatedNode) {
     // avoid null checks
-    JSDocInfo classInfo =
-        (cls.classInfo != null) ? cls.classInfo : new JSDocInfoBuilder(true).build(true);
+    JSDocInfo classInfo = (cls.classInfo != null)
+        ? cls.classInfo
+        : new JSDocInfoBuilder(true).build(true);
 
-    JSDocInfo ctorInfo =
-        (cls.constructor.info != null)
-            ? cls.constructor.info
-            : new JSDocInfoBuilder(true).build(true);
+    JSDocInfo ctorInfo = (cls.constructor.info != null)
+        ? cls.constructor.info
+        : new JSDocInfoBuilder(true).build(true);
 
     Node superNode = cls.superClass;
 
     // Start with a clone of the constructor info if there is one.
-    JSDocInfoBuilder mergedInfo =
-        cls.constructor.info != null
-            ? JSDocInfoBuilder.copyFrom(ctorInfo)
-            : new JSDocInfoBuilder(true);
-    // Optionally, remove @export from the cloned constructor info.
-    // TODO(b/138324343): remove this case (or, even better, just delete goog.defineClass support).
-    if (!includeConstructorExport && ctorInfo.isExport()) {
-      mergedInfo.removeExport();
-    }
+    JSDocInfoBuilder mergedInfo = cls.constructor.info != null
+        ? JSDocInfoBuilder.copyFrom(ctorInfo)
+        : new JSDocInfoBuilder(true);
 
     // merge block description
     String blockDescription = Joiner.on("\n").skipNulls().join(
@@ -673,7 +641,10 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
         extendedInterfaces = classInfo.getExtendedInterfaces();
       } else if (ctorInfo.getExtendedInterfacesCount() == 0
           && superNode != null) {
-        extendedInterfaces = ImmutableList.of(getSuperclassFor(superNode));
+        extendedInterfaces = ImmutableList.of(new JSTypeExpression(
+            new Node(Token.BANG,
+                IR.string(superNode.getQualifiedName())),
+            VIRTUAL_FILE));
       }
       if (extendedInterfaces != null) {
         for (JSTypeExpression extend : extendedInterfaces) {
@@ -688,7 +659,10 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
         mergedInfo.recordBaseType(classInfo.getBaseType());
       } else if (superNode != null) {
         // a "super" implies @extends, build a default.
-        JSTypeExpression baseType = getSuperclassFor(superNode);
+        JSTypeExpression baseType = new JSTypeExpression(
+            new Node(Token.BANG,
+              IR.string(superNode.getQualifiedName())),
+            VIRTUAL_FILE);
         mergedInfo.recordBaseType(baseType);
       }
 
@@ -700,13 +674,11 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
     }
 
     // merge @template types if they exist
-    ImmutableMap<String, JSTypeExpression> classTemplates = classInfo.getTemplateTypes();
-    ImmutableMap<String, JSTypeExpression> ctorTemplates = ctorInfo.getTemplateTypes();
-    for (Map.Entry<String, JSTypeExpression> entry : classTemplates.entrySet()) {
-      mergedInfo.recordTemplateTypeName(entry.getKey(), entry.getValue());
-    }
-    for (Map.Entry<String, JSTypeExpression> entry : ctorTemplates.entrySet()) {
-      mergedInfo.recordTemplateTypeName(entry.getKey(), entry.getValue());
+    List<String> templateNames = new ArrayList<>();
+    templateNames.addAll(classInfo.getTemplateTypeNames());
+    templateNames.addAll(ctorInfo.getTemplateTypeNames());
+    for (String typeName : templateNames) {
+      mergedInfo.recordTemplateTypeName(typeName);
     }
     return mergedInfo.build();
   }

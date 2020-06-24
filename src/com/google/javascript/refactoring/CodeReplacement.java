@@ -19,13 +19,14 @@ package com.google.javascript.refactoring;
 import com.google.auto.value.AutoValue;
 import com.google.auto.value.AutoValue.CopyAnnotations;
 import com.google.errorprone.annotations.Immutable;
-import java.util.Comparator;
 
-/** Class that represents a set of changes to make to the code. */
-@AutoValue
-@CopyAnnotations
-@Immutable
-public abstract class CodeReplacement implements Comparable<CodeReplacement> {
+/**
+ * Class that represents a set of changes to make to the code.
+ *
+ * @author mknichel@google.com (Mark Knichel)
+ */
+@AutoValue @CopyAnnotations @Immutable
+public abstract class CodeReplacement {
 
   static CodeReplacement create(int startPosition, int length, String newContent) {
     return create(startPosition, length, newContent, "");
@@ -57,17 +58,5 @@ public abstract class CodeReplacement implements Comparable<CodeReplacement> {
   /**
    * Returns an additional String key that can be used to sort replacements using lexical ordering.
    */
-  abstract String getSortKey();
-
-  @Override
-  public final int compareTo(CodeReplacement x) {
-    return APPLICATION_ORDER.compare(this, x);
-  }
-
-  // Remember to compare every field so that it's consistent with equals.
-  private static final Comparator<CodeReplacement> APPLICATION_ORDER =
-      Comparator.comparingInt(CodeReplacement::getStartPosition)
-          .thenComparingInt(CodeReplacement::getLength)
-          .thenComparing(CodeReplacement::getSortKey)
-          .thenComparing(CodeReplacement::getNewContent);
+  public abstract String getSortKey();
 }

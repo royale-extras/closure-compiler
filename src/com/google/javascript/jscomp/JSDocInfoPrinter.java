@@ -16,8 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Ascii;
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Ordering;
 import com.google.javascript.rhino.JSDocInfo;
@@ -33,23 +33,14 @@ import java.util.Set;
 
 /**
  * Prints a JSDocInfo, used for preserving type annotations in ES6 transpilation.
+ *
  */
 public final class JSDocInfoPrinter {
 
   private final boolean useOriginalName;
-  private final boolean printDesc;
 
-  public JSDocInfoPrinter(boolean useOriginalName) {
-    this(useOriginalName, false);
-  }
-
-  /**
-   * @param useOriginalName Whether to use the original name field when printing types.
-   * @param printDesc Whether to print block, param, and return descriptions.
-   */
-  public JSDocInfoPrinter(boolean useOriginalName, boolean printDesc) {
+  JSDocInfoPrinter(boolean useOriginalName) {
     this.useOriginalName = useOriginalName;
-    this.printDesc = printDesc;
   }
 
   public String print(JSDocInfo info) {
@@ -57,6 +48,32 @@ public final class JSDocInfoPrinter {
 
     List<String> parts = new ArrayList<>();
 
+    // order:
+    //   externs|typeSummary
+    //   export|public|private|package|protected
+    //   abstract
+    //   lends
+    //   const
+    //   final
+    //   desc
+    //   dict|struct|unrestricted
+    //   constructor|interface|record
+    //   extends
+    //   implements
+    //   this
+    //   param
+    //   return
+    //   throws
+    //   template
+    //   override
+    //   type|define|typedef|enum
+    //   implicitCast
+    //   nocollapse
+    //   suppress
+    //   deprecated
+    //   polymer
+    //   polymerBehavior
+    //   mixinFunction
     parts.add("/**");
 
     if (info.isExterns()) {
@@ -69,7 +86,7 @@ public final class JSDocInfoPrinter {
       parts.add("@export");
     } else if (info.getVisibility() != null
         && info.getVisibility() != Visibility.INHERITED) {
-      parts.add("@" + Ascii.toLowerCase(info.getVisibility().toString()));
+      parts.add("@" + info.getVisibility().toString().toLowerCase());
     }
 
     if (info.isAbstract()) {
@@ -90,72 +107,7 @@ public final class JSDocInfoPrinter {
 
     String description = info.getDescription();
     if (description != null) {
-      multiline = true;
-      parts.add("@desc " + description);
-    }
-
-    if (info.isWizaction()) {
-      parts.add("@wizaction");
-    }
-
-    if (info.isPolymerBehavior()) {
-      parts.add("@polymerBehavior");
-    }
-
-    if (info.isPolymer()) {
-      parts.add("@polymer");
-    }
-
-    if (info.isCustomElement()) {
-      parts.add("@customElement");
-    }
-
-    if (info.isMixinClass()) {
-      parts.add("@mixinClass");
-    }
-
-    if (info.isMixinFunction()) {
-      parts.add("@mixinFunction");
-    }
-
-    if (info.isDisposes()) {
-      parts.add("@disposes");
-    }
-
-    if (info.isExpose()) {
-      parts.add("@expose");
-    }
-
-    if (info.isNoSideEffects()) {
-      parts.add("@nosideeffects");
-    }
-
-    if (info.isNoCompile()) {
-      parts.add("@nocompile");
-    }
-
-    if (info.isNoInline()) {
-      parts.add("@noinline");
-    }
-
-    if (info.isIdGenerator()) {
-      parts.add("@idGenerator {unique}");
-    }
-
-    if (info.isConsistentIdGenerator()) {
-      parts.add("@idGenerator {consistent}");
-    }
-
-    if (info.isStableIdGenerator()) {
-      parts.add("@idGenerator {stable}");
-    }
-
-    if (info.isXidGenerator()) {
-      parts.add("@idGenerator {xid}");
-    }
-
-    if (info.isMappedIdGenerator()) {
-      parts.add("@idGenerator {mapped}");
+      parts.add("@desc " + description + '\n');
     }
 
     if (info.makesDicts()) {
@@ -209,36 +161,23 @@ public final class JSDocInfoPrinter {
     if (info.getParameterCount() > 0) {
       multiline = true;
       for (String name : info.getParameterNames()) {
-        parts.add("@param " + buildParamType(info, name));
+        parts.add("@param " + buildParamType(name, info.getParameterType(name)));
       }
     }
 
     if (info.hasReturnType()) {
       multiline = true;
-      parts.add(
-          buildAnnotationWithType("return", info.getReturnType(), info.getReturnDescription()));
+      parts.add(buildAnnotationWithType("return", info.getReturnType()));
     }
 
     if (!info.getThrownTypes().isEmpty()) {
       parts.add(buildAnnotationWithType("throws", info.getThrownTypes().get(0)));
     }
 
-    ImmutableMap<String, JSTypeExpression> templates = info.getTemplateTypes();
-    if (!templates.isEmpty()) {
+    ImmutableList<String> names = info.getTemplateTypeNames();
+    if (!names.isEmpty()) {
+      parts.add("@template " + Joiner.on(',').join(names));
       multiline = true;
-      templates.forEach(
-          (name, boundExpr) -> {
-            Node boundRoot = boundExpr.getRoot();
-            if (boundRoot.getToken() == Token.QMARK && !boundRoot.hasChildren()) {
-              // If the bound of the expression is `?` (as it is after parsing an unbounded
-              // template) don't specify a bound.
-              // TODO(b/140187077): This case becomes redundant when fixed. It also only covers
-              // explicit `?` bounds, typedefs will remain explicit.
-              parts.add("@template " + name);
-            } else {
-              parts.add(buildAnnotationWithType("template", boundExpr, name));
-            }
-          });
     }
 
     ImmutableMap<String, Node> typeTransformations = info.getTypeTransformations();
@@ -318,44 +257,16 @@ public final class JSDocInfoPrinter {
       parts.add("@customElement");
     }
 
-    if (info.getClosurePrimitiveId() != null) {
-      parts.add("@closurePrimitive {" + info.getClosurePrimitiveId() + "}");
-    }
-
-    if (info.isNgInject()) {
-      parts.add("@ngInject");
-    }
-
-    if (printDesc && info.getBlockDescription() != null) {
-      String cleaned = info.getBlockDescription().replaceAll("\n\\s*\\*\\s*", "\n");
-      if (!cleaned.isEmpty()) {
-        multiline = true;
-        cleaned = cleaned.trim();
-        if (parts.size() > 1) {
-          // If there is more than one part - the opening "/**" - then add blank line between the
-          // description and everything else.
-          cleaned += '\n';
-        }
-        parts.add(1, cleaned);
-      }
-    }
+    parts.add("*/");
 
     StringBuilder sb = new StringBuilder();
     if (multiline) {
-      Joiner.on("\n").appendTo(sb, parts);
+      Joiner.on("\n ").appendTo(sb, parts);
     } else {
       Joiner.on(" ").appendTo(sb, parts);
-      sb.append(" */");
     }
-    // Ensure all lines start with " *", and then ensure all non blank lines have a space after
-    // the *.
-    String s = sb.toString().replaceAll("\n", "\n *").replaceAll("\n \\*([^ \n])", "\n * $1");
-    if (multiline) {
-      s += "\n */\n";
-    } else {
-      s += " ";
-    }
-    return s;
+    sb.append((multiline) ? "\n" : " ");
+    return sb.toString();
   }
 
   private Node stripBang(Node typeNode) {
@@ -366,45 +277,22 @@ public final class JSDocInfoPrinter {
   }
 
   private String buildAnnotationWithType(String annotation, JSTypeExpression type) {
-    return buildAnnotationWithType(annotation, type, null);
-  }
-
-  private String buildAnnotationWithType(
-      String annotation, JSTypeExpression type, String description) {
-    return buildAnnotationWithType(annotation, type.getRoot(), description);
+    return buildAnnotationWithType(annotation, type.getRoot());
   }
 
   private String buildAnnotationWithType(String annotation, Node type) {
-    return buildAnnotationWithType(annotation, type, null);
-  }
-
-  private String buildAnnotationWithType(String annotation, Node type, String description) {
     StringBuilder sb = new StringBuilder();
     sb.append("@");
     sb.append(annotation);
     sb.append(" {");
     appendTypeNode(sb, type);
     sb.append("}");
-    if (description != null) {
-      sb.append(" ");
-      sb.append(description);
-    }
     return sb.toString();
   }
 
-  private String buildParamType(JSDocInfo info, String name) {
-    JSTypeExpression type = info.getParameterType(name);
+  private String buildParamType(String name, JSTypeExpression type) {
     if (type != null) {
-      String p =
-          "{"
-              + typeNode(type.getRoot())
-              + "} "
-              + name
-              + (printDesc && info.getDescriptionForParameter(name) != null
-                  // Don't add a leading space; the parser retained it.
-                  ? info.getDescriptionForParameter(name)
-                  : "");
-      return p.trim();
+      return "{" + typeNode(type.getRoot()) + "} " + name;
     } else {
       return name;
     }
@@ -437,7 +325,7 @@ public final class JSDocInfoPrinter {
         }
       }
       sb.append(")");
-    } else if (typeNode.getToken() == Token.ITER_REST) {
+    } else if (typeNode.getToken() == Token.ELLIPSIS) {
       sb.append("...");
       if (typeNode.hasChildren() && !typeNode.getFirstChild().isEmpty()) {
         appendTypeNode(sb, typeNode.getFirstChild());

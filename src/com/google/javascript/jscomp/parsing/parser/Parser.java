@@ -25,6 +25,7 @@ import com.google.javascript.jscomp.parsing.parser.trees.ArgumentListTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ArrayLiteralExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ArrayPatternTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ArrayTypeTree;
+import com.google.javascript.jscomp.parsing.parser.trees.AssignmentRestElementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.AwaitExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.BinaryOperatorTree;
 import com.google.javascript.jscomp.parsing.parser.trees.BlockTree;
@@ -50,7 +51,6 @@ import com.google.javascript.jscomp.parsing.parser.trees.DebuggerStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.DefaultClauseTree;
 import com.google.javascript.jscomp.parsing.parser.trees.DefaultParameterTree;
 import com.google.javascript.jscomp.parsing.parser.trees.DoWhileStatementTree;
-import com.google.javascript.jscomp.parsing.parser.trees.DynamicImportTree;
 import com.google.javascript.jscomp.parsing.parser.trees.EmptyStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.EnumDeclarationTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ExportDeclarationTree;
@@ -69,12 +69,9 @@ import com.google.javascript.jscomp.parsing.parser.trees.GetAccessorTree;
 import com.google.javascript.jscomp.parsing.parser.trees.IdentifierExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.IfStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ImportDeclarationTree;
-import com.google.javascript.jscomp.parsing.parser.trees.ImportMetaExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ImportSpecifierTree;
 import com.google.javascript.jscomp.parsing.parser.trees.IndexSignatureTree;
 import com.google.javascript.jscomp.parsing.parser.trees.InterfaceDeclarationTree;
-import com.google.javascript.jscomp.parsing.parser.trees.IterRestTree;
-import com.google.javascript.jscomp.parsing.parser.trees.IterSpreadTree;
 import com.google.javascript.jscomp.parsing.parser.trees.LabelledStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.LiteralExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.MemberExpressionTree;
@@ -88,11 +85,6 @@ import com.google.javascript.jscomp.parsing.parser.trees.NewTargetExpressionTree
 import com.google.javascript.jscomp.parsing.parser.trees.NullTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ObjectLiteralExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ObjectPatternTree;
-import com.google.javascript.jscomp.parsing.parser.trees.ObjectRestTree;
-import com.google.javascript.jscomp.parsing.parser.trees.ObjectSpreadTree;
-import com.google.javascript.jscomp.parsing.parser.trees.OptionalCallExpressionTree;
-import com.google.javascript.jscomp.parsing.parser.trees.OptionalMemberExpressionTree;
-import com.google.javascript.jscomp.parsing.parser.trees.OptionalMemberLookupExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.OptionalParameterTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ParameterizedTypeTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ParenExpressionTree;
@@ -101,8 +93,10 @@ import com.google.javascript.jscomp.parsing.parser.trees.ParseTreeType;
 import com.google.javascript.jscomp.parsing.parser.trees.ProgramTree;
 import com.google.javascript.jscomp.parsing.parser.trees.PropertyNameAssignmentTree;
 import com.google.javascript.jscomp.parsing.parser.trees.RecordTypeTree;
+import com.google.javascript.jscomp.parsing.parser.trees.RestParameterTree;
 import com.google.javascript.jscomp.parsing.parser.trees.ReturnStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.SetAccessorTree;
+import com.google.javascript.jscomp.parsing.parser.trees.SpreadExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.SuperExpressionTree;
 import com.google.javascript.jscomp.parsing.parser.trees.SwitchStatementTree;
 import com.google.javascript.jscomp.parsing.parser.trees.TemplateLiteralExpressionTree;
@@ -232,6 +226,7 @@ public class Parser {
       ES5,
       ES6_OR_ES7,
       ES8_OR_GREATER,
+      ES_NEXT,
       TYPESCRIPT,
     }
 
@@ -253,7 +248,7 @@ public class Parser {
     public Config(Mode mode, boolean isStrictMode) {
       parseTypeSyntax = mode == Mode.TYPESCRIPT;
       atLeast6 = !(mode == Mode.ES3 || mode == Mode.ES5);
-      atLeast8 = mode == Mode.ES8_OR_GREATER || mode == Mode.TYPESCRIPT;
+      atLeast8 = mode == Mode.ES8_OR_GREATER || mode == Mode.ES_NEXT;
       this.isStrictMode = isStrictMode;
 
       // Generally, we allow everything that is valid in any mode
@@ -266,21 +261,14 @@ public class Parser {
 
   private class CommentRecorder implements Scanner.CommentRecorder {
     private final ImmutableList.Builder<Comment> comments = ImmutableList.builder();
-    private SourcePosition lastCommentEndPosition;
 
     @Override
     public void recordComment(Comment.Type type, SourceRange range, String value) {
-      // If we rewind the token stream, the scanner might pass comments that we've already seen.
-      // Only record comments past the furthest comment end position we've seen.
-      // NB: this assumes the CommentRecorder is used for at most one source file.
-      if (lastCommentEndPosition == null || range.end.offset > this.lastCommentEndPosition.offset) {
-        value = value.trim();
-        if (value.startsWith(SOURCE_MAPPING_URL_PREFIX)) {
-          sourceMapURL = value.substring(SOURCE_MAPPING_URL_PREFIX.length());
-        }
-        comments.add(new Comment(value, range, type));
-        this.lastCommentEndPosition = range.end;
+      value = value.trim();
+      if (value.startsWith(SOURCE_MAPPING_URL_PREFIX)) {
+        sourceMapURL = value.substring(SOURCE_MAPPING_URL_PREFIX.length());
       }
+      comments.add(new Comment(value, range, type));
     }
 
     private ImmutableList<Comment> getComments() {
@@ -402,12 +390,9 @@ public class Parser {
     return parseAmbientDeclarationHelper();
   }
 
+  // https://people.mozilla.org/~jorendorff/es6-draft.html#sec-imports
   private boolean peekImportDeclaration() {
-    return peek(TokenType.IMPORT)
-        && (peekIdOrKeyword(1)
-            || peek(1, TokenType.STRING)
-            || peek(1, TokenType.OPEN_CURLY)
-            || peek(1, TokenType.STAR));
+    return peek(TokenType.IMPORT);
   }
 
   private ParseTree parseImportDeclaration() {
@@ -417,7 +402,7 @@ public class Parser {
     // import ModuleSpecifier ;
     if (peek(TokenType.STRING)) {
       LiteralToken moduleSpecifier = eat(TokenType.STRING).asLiteral();
-      eatPossiblyImplicitSemiColon();
+      eatPossibleImplicitSemiColon();
 
       return new ImportDeclarationTree(
           getTreeLocation(start), null, null, null, moduleSpecifier);
@@ -459,7 +444,7 @@ public class Parser {
     Token moduleStr = eat(TokenType.STRING);
     LiteralToken moduleSpecifier = (moduleStr == null)
         ? null : moduleStr.asLiteral();
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
 
     return new ImportDeclarationTree(
         getTreeLocation(start),
@@ -604,7 +589,7 @@ public class Parser {
     }
 
     if (needsSemiColon || peekImplicitSemiColon()) {
-      eatPossiblyImplicitSemiColon();
+      eatPossibleImplicitSemiColon();
     }
 
     return new ExportDeclarationTree(
@@ -699,7 +684,7 @@ public class Parser {
       if (!peek(TokenType.CLOSE_CURLY)) {
         // The standard delimiter is semicolon, but we also accept comma
         if (peekImplicitSemiColon()) {
-          eatPossiblyImplicitSemiColon();
+          eatPossibleImplicitSemiColon();
         } else {
           eat(TokenType.COMMA);
         }
@@ -828,42 +813,27 @@ public class Parser {
   private ImmutableList<ParseTree> parseClassElements(boolean isAmbient) {
     ImmutableList.Builder<ParseTree> result = ImmutableList.builder();
 
-    while (true) {
-      Token token = peekToken();
-      switch (token.type) {
-        case SEMI_COLON:
-          // Ignore extraneous semicolons in class bodies.
-          eat(TokenType.SEMI_COLON);
-          continue;
-
-        default:
-          if (isClassElementStart(token)) {
-            break;
-          } else {
-            return result.build();
-          }
-      }
+    while (peekClassElement()) {
       result.add(parseClassElement(isAmbient));
     }
+
+    return result.build();
   }
 
-  private boolean isClassElementStart(Token token) {
+  private boolean peekClassElement() {
+    Token token = peekToken();
     switch (token.type) {
-        case IDENTIFIER:
-        case NUMBER:
-        case BIGINT:
-        case STAR:
-        case STATIC:
-        case STRING:
-        case OPEN_SQUARE:
+      case IDENTIFIER:
+      case NUMBER:
+      case STAR:
+      case STATIC:
+      case STRING:
+      case OPEN_SQUARE:
+      case SEMI_COLON:
         return true;
-
-        default:
-          if (Keywords.isKeyword(token.type)) {
-          return true;
-        }
+      default:
+        return Keywords.isKeyword(token.type);
     }
-    return false;
   }
 
   private static class PartialClassElement {
@@ -890,19 +860,9 @@ public class Parser {
 
       partialElement.isAmbient = isAmbient;
       partialElement.accessModifier = maybeParseAccessibilityModifier();
-      partialElement.isStatic = eatStaticIfNotElementName();
+      partialElement.isStatic = eatOpt(TokenType.STATIC) != null;
       return parseClassElement(partialElement);
     }
-  }
-
-  private boolean eatStaticIfNotElementName() {
-    // only eat `static` if it being used as a keyword and not
-    // a member name.
-    if (peek(TokenType.STATIC) && isClassElementStart(peekToken(1))) {
-      eat(TokenType.STATIC);
-      return true;
-    }
-    return false;
   }
 
   private ParseTree parseClassElement(PartialClassElement partialElement) {
@@ -944,14 +904,13 @@ public class Parser {
         // { 'str'() {} }
         // { 123() {} }
         // Treat these as if they were computed properties.
-        // TODO(b/123769080): Stop making this assumption!
         name = null;
         nameExpr = parseLiteralExpression();
       }
     } else {
       if (config.parseTypeSyntax && peekIndexSignature()) {
         ParseTree indexSignature = parseIndexSignature();
-        eatPossiblyImplicitSemiColon();
+        eatPossibleImplicitSemiColon();
         return indexSignature;
       }
       nameExpr = parseComputedPropertyName();
@@ -974,7 +933,7 @@ public class Parser {
       ParseTree function;
       if (partial.isAmbient) {
         function = parseMethodSignature(partial, name, isGenerator, /* isOptional */ false);
-        eatPossiblyImplicitSemiColon();
+        eatPossibleImplicitSemiColon();
       } else {
         FunctionDeclarationTree.Builder builder =
             FunctionDeclarationTree.builder(kind)
@@ -1000,7 +959,7 @@ public class Parser {
       if (peek(TokenType.EQUAL)) {
         reportError("Member variable initializers ('=') are not supported");
       }
-      eatPossiblyImplicitSemiColon();
+      eatPossibleImplicitSemiColon();
       if (nameExpr == null) {
         return new MemberVariableTree(
             getTreeLocation(partial.start),
@@ -1046,7 +1005,7 @@ public class Parser {
               .setFormalParameterList(parseFormalParameterList(ParamContext.SIGNATURE))
               .setReturnType(maybeParseColonType())
               .setFunctionBody(new EmptyStatementTree(getTreeLocation(partial.start)));
-          eatPossiblyImplicitSemiColon();
+          eatPossibleImplicitSemiColon();
         } else {
           parseFunctionTail(
               builder,
@@ -1074,7 +1033,7 @@ public class Parser {
       }
     } else if (config.parseTypeSyntax && peekIndexSignature()) {
       ParseTree indexSignature = parseIndexSignature();
-      eatPossiblyImplicitSemiColon();
+      eatPossibleImplicitSemiColon();
       return indexSignature;
     } else { // expect '[' to start computed property name
       ParseTree nameExpr = parseComputedPropertyName();
@@ -1372,7 +1331,7 @@ public class Parser {
   }
 
   private boolean peekParameter(ParamContext context) {
-    if (peekId() || peek(TokenType.ELLIPSIS)) {
+    if (peekId() || peek(TokenType.SPREAD)) {
       return true;
     }
     if (context != ParamContext.TYPE_EXPRESSION) {
@@ -1385,8 +1344,8 @@ public class Parser {
     SourcePosition start = getTreeStartLocation();
     ParseTree parameter = null;
 
-    if (peek(TokenType.ELLIPSIS)) {
-      parameter = parseIterRest(PatternKind.INITIALIZER);
+    if (peek(TokenType.SPREAD)) {
+      parameter = parseRestParameter();
     } else if (peekId()) {
       parameter = parseIdentifierExpression();
       if (peek(TokenType.QUESTION)) {
@@ -1428,35 +1387,37 @@ public class Parser {
     return parameter;
   }
 
+  private ParseTree parseRestParameter() {
+    SourcePosition start = getTreeStartLocation();
+    eat(TokenType.SPREAD);
+    return new RestParameterTree(
+        getTreeLocation(start), parseRestAssignmentTarget(PatternKind.INITIALIZER));
+  }
+
   private FormalParameterListTree parseFormalParameterList(ParamContext context) {
     SourcePosition listStart = getTreeStartLocation();
     eat(TokenType.OPEN_PAREN);
 
     ImmutableList.Builder<ParseTree> result = ImmutableList.builder();
-    boolean trailingComma = false;
-    ImmutableList.Builder<SourcePosition> commaPositions = ImmutableList.builder();
 
     while (peekParameter(context)) {
       result.add(parseParameter(context));
 
       if (!peek(TokenType.CLOSE_PAREN)) {
         Token comma = eat(TokenType.COMMA);
-        if (comma != null) {
-          commaPositions.add(comma.getStart());
-        }
         if (peek(TokenType.CLOSE_PAREN)) {
           recordFeatureUsed(Feature.TRAILING_COMMA_IN_PARAM_LIST);
           if (!config.atLeast8) {
             reportError(comma, "Invalid trailing comma in formal parameter list");
           }
-          trailingComma = true;
         }
       }
     }
 
     eat(TokenType.CLOSE_PAREN);
+
     return new FormalParameterListTree(
-        getTreeLocation(listStart), result.build(), trailingComma, commaPositions.build());
+        getTreeLocation(listStart), result.build());
   }
 
   private FormalParameterListTree parseSetterParameterList() {
@@ -1654,11 +1615,11 @@ public class Parser {
     return result.build();
   }
 
-  private IterSpreadTree parseIterSpread() {
+  private SpreadExpressionTree parseSpreadExpression() {
     SourcePosition start = getTreeStartLocation();
-    eat(TokenType.ELLIPSIS);
+    eat(TokenType.SPREAD);
     ParseTree operand = parseAssignmentExpression();
-    return new IterSpreadTree(getTreeLocation(start), operand);
+    return new SpreadExpressionTree(getTreeLocation(start), operand);
   }
 
   // 12 Statements
@@ -1800,7 +1761,7 @@ public class Parser {
   private VariableStatementTree parseVariableStatement() {
     SourcePosition start = getTreeStartLocation();
     VariableDeclarationListTree declarations = parseVariableDeclarationList();
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new VariableStatementTree(getTreeLocation(start), declarations);
   }
 
@@ -1894,7 +1855,7 @@ public class Parser {
   private ExpressionStatementTree parseExpressionStatement() {
     SourcePosition start = getTreeStartLocation();
     ParseTree expression = parseExpression();
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new ExpressionStatementTree(getTreeLocation(start), expression);
   }
 
@@ -2093,7 +2054,7 @@ public class Parser {
   // 12.6.3 The for Statement
   private ParseTree parseForStatement(SourcePosition start, ParseTree initializer) {
     if (initializer == null) {
-      initializer = new NullTree(new SourceRange(getTreeEndLocation(), getTreeStartLocation()));
+      initializer = new NullTree(getTreeLocation(getTreeStartLocation()));
     }
     eat(TokenType.SEMI_COLON);
 
@@ -2101,7 +2062,7 @@ public class Parser {
     if (!peek(TokenType.SEMI_COLON)) {
       condition = parseExpression();
     } else {
-      condition = new NullTree(new SourceRange(getTreeEndLocation(), getTreeStartLocation()));
+      condition = new NullTree(getTreeLocation(getTreeStartLocation()));
     }
     eat(TokenType.SEMI_COLON);
 
@@ -2109,7 +2070,7 @@ public class Parser {
     if (!peek(TokenType.CLOSE_PAREN)) {
       increment = parseExpression();
     } else {
-      increment = new NullTree(new SourceRange(getTreeEndLocation(), getTreeStartLocation()));
+      increment = new NullTree(getTreeLocation(getTreeStartLocation()));
     }
     eat(TokenType.CLOSE_PAREN);
     ParseTree body = parseStatement();
@@ -2133,7 +2094,7 @@ public class Parser {
     if (!peekImplicitSemiColon()) {
       name = eatIdOpt();
     }
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new ContinueStatementTree(getTreeLocation(start), name);
   }
 
@@ -2145,7 +2106,7 @@ public class Parser {
     if (!peekImplicitSemiColon()) {
       name = eatIdOpt();
     }
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new BreakStatementTree(getTreeLocation(start), name);
   }
 
@@ -2157,7 +2118,7 @@ public class Parser {
     if (!peekImplicitSemiColon()) {
       expression = parseExpression();
     }
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new ReturnStatementTree(getTreeLocation(start), expression);
   }
 
@@ -2242,7 +2203,7 @@ public class Parser {
     } else {
       value = parseExpression();
     }
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new ThrowStatementTree(getTreeLocation(start), value);
   }
 
@@ -2269,22 +2230,14 @@ public class Parser {
     SourcePosition start = getTreeStartLocation();
     CatchTree catchBlock;
     eat(TokenType.CATCH);
-
-    ParseTree exception =
-        new EmptyStatementTree(new SourceRange(getTreeEndLocation(), getTreeStartLocation()));
-
-    if (peekToken().type == TokenType.OPEN_PAREN) {
-      eat(TokenType.OPEN_PAREN);
-      if (peekPatternStart()) {
-        exception = parsePattern(PatternKind.INITIALIZER);
-      } else {
-        exception = parseIdentifierExpression();
-      }
-      eat(TokenType.CLOSE_PAREN);
+    eat(TokenType.OPEN_PAREN);
+    ParseTree exception;
+    if (peekPatternStart()) {
+      exception = parsePattern(PatternKind.INITIALIZER);
     } else {
-      recordFeatureUsed(Feature.OPTIONAL_CATCH_BINDING);
+      exception = parseIdentifierExpression();
     }
-
+    eat(TokenType.CLOSE_PAREN);
     BlockTree catchBody = parseBlock();
     catchBlock = new CatchTree(getTreeLocation(start), exception, catchBody);
     return catchBlock;
@@ -2301,7 +2254,7 @@ public class Parser {
   private ParseTree parseDebuggerStatement() {
     SourcePosition start = getTreeStartLocation();
     eat(TokenType.DEBUGGER);
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
 
     return new DebuggerStatementTree(getTreeLocation(start));
   }
@@ -2309,50 +2262,44 @@ public class Parser {
   // 11.1 Primary Expressions
   private ParseTree parsePrimaryExpression() {
     switch (peekType()) {
-      case CLASS:
-        return parseClassExpression();
-      case SUPER:
-        return parseSuperExpression();
-      case THIS:
-        return parseThisExpression();
-      case IMPORT:
-        return parseDynamicImportExpression();
-      case IDENTIFIER:
-      case TYPE:
-      case DECLARE:
-      case MODULE:
-      case NAMESPACE:
-        return parseIdentifierExpression();
-      case NUMBER:
-      case STRING:
-      case BIGINT:
-      case TRUE:
-      case FALSE:
-      case NULL:
-        return parseLiteralExpression();
-      case NO_SUBSTITUTION_TEMPLATE:
-      case TEMPLATE_HEAD:
-        return parseTemplateLiteral(null);
-      case OPEN_SQUARE:
-        return parseArrayInitializer();
-      case OPEN_CURLY:
-        return parseObjectLiteral();
-      case OPEN_PAREN:
-        return parseCoverParenthesizedExpressionAndArrowParameterList();
-      case SLASH:
-      case SLASH_EQUAL:
-        return parseRegularExpressionLiteral();
-      default:
-        return parseMissingPrimaryExpression();
+    case CLASS:
+      return parseClassExpression();
+    case SUPER:
+      return parseSuperExpression();
+    case THIS:
+      return parseThisExpression();
+    case IDENTIFIER:
+    case TYPE:
+    case DECLARE:
+    case MODULE:
+    case NAMESPACE:
+      return parseIdentifierExpression();
+    case NUMBER:
+    case STRING:
+    case TRUE:
+    case FALSE:
+    case NULL:
+      return parseLiteralExpression();
+    case NO_SUBSTITUTION_TEMPLATE:
+    case TEMPLATE_HEAD:
+      return parseTemplateLiteral(null);
+    case OPEN_SQUARE:
+      return parseArrayInitializer();
+    case OPEN_CURLY:
+      return parseObjectLiteral();
+    case OPEN_PAREN:
+      return parseCoverParenthesizedExpressionAndArrowParameterList();
+    case SLASH:
+    case SLASH_EQUAL:
+      return parseRegularExpressionLiteral();
+    default:
+      return parseMissingPrimaryExpression();
     }
   }
 
   private SuperExpressionTree parseSuperExpression() {
     SourcePosition start = getTreeStartLocation();
     eat(TokenType.SUPER);
-    if (peek(TokenType.QUESTION_DOT)) { // super?.() not allowed
-      reportError("Optional chaining is forbidden in super?.");
-    }
     return new SuperExpressionTree(getTreeLocation(start));
   }
 
@@ -2360,20 +2307,6 @@ public class Parser {
     SourcePosition start = getTreeStartLocation();
     eat(TokenType.THIS);
     return new ThisExpressionTree(getTreeLocation(start));
-  }
-
-  // https://tc39.github.io/proposal-dynamic-import
-  private DynamicImportTree parseDynamicImportExpression() {
-    SourcePosition start = getTreeStartLocation();
-    eat(TokenType.IMPORT);
-    if (peek(TokenType.QUESTION_DOT)) { // import?.() not allowed
-      reportError("Optional chaining is forbidden in import?.");
-    }
-    eat(TokenType.OPEN_PAREN);
-    ParseTree argument = parseAssignmentExpression();
-    eat(TokenType.CLOSE_PAREN);
-    recordFeatureUsed(Feature.DYNAMIC_IMPORT);
-    return new DynamicImportTree(getTreeLocation(start), argument);
   }
 
   private IdentifierExpressionTree parseIdentifierExpression() {
@@ -2385,16 +2318,6 @@ public class Parser {
   private LiteralExpressionTree parseLiteralExpression() {
     SourcePosition start = getTreeStartLocation();
     Token literal = nextLiteralToken();
-
-    if (literal.type == TokenType.STRING
-        && ((StringLiteralToken) literal).hasUnescapedUnicodeLineOrParagraphSeparator()) {
-      recordFeatureUsed(Feature.UNESCAPED_UNICODE_LINE_OR_PARAGRAPH_SEP);
-    }
-
-    if (literal.type == TokenType.NUMBER && literal.toString().contains("_")) {
-      recordFeatureUsed(Feature.NUMERIC_SEPARATOR);
-    }
-
     return new LiteralExpressionTree(getTreeLocation(start), literal);
   }
 
@@ -2558,14 +2481,14 @@ public class Parser {
 
     eat(TokenType.OPEN_SQUARE);
     Token trailingCommaToken = null;
-    while (peek(TokenType.COMMA) || peek(TokenType.ELLIPSIS) || peekAssignmentExpression()) {
+    while (peek(TokenType.COMMA) || peek(TokenType.SPREAD) || peekAssignmentExpression()) {
       trailingCommaToken = null;
       if (peek(TokenType.COMMA)) {
         elements.add(new NullTree(getTreeLocation(getTreeStartLocation())));
       } else {
-        if (peek(TokenType.ELLIPSIS)) {
+        if (peek(TokenType.SPREAD)) {
           recordFeatureUsed(Feature.SPREAD_EXPRESSIONS);
-          elements.add(parseIterSpread());
+          elements.add(parseSpreadExpression());
         } else {
           elements.add(parseAssignmentExpression());
         }
@@ -2579,7 +2502,7 @@ public class Parser {
     maybeReportTrailingComma(trailingCommaToken);
 
     return new ArrayLiteralExpressionTree(
-        getTreeLocation(start), elements.build(), trailingCommaToken != null);
+        getTreeLocation(start), elements.build());
   }
 
   // 11.1.4 Object Literal Expression
@@ -2589,7 +2512,7 @@ public class Parser {
 
     eat(TokenType.OPEN_CURLY);
     Token commaToken = null;
-    while (peek(TokenType.ELLIPSIS)
+    while (peek(TokenType.SPREAD)
         || peekPropertyNameOrComputedProp(0)
         || peek(TokenType.STAR)
         || peekAccessibilityModifier()) {
@@ -2604,8 +2527,7 @@ public class Parser {
 
     maybeReportTrailingComma(commaToken);
 
-    return new ObjectLiteralExpressionTree(
-        getTreeLocation(start), result.build(), commaToken != null);
+    return new ObjectLiteralExpressionTree(getTreeLocation(start), result.build());
   }
 
   void maybeReportTrailingComma(Token commaToken) {
@@ -2628,13 +2550,12 @@ public class Parser {
   private boolean peekPropertyName(int tokenIndex) {
     TokenType type = peekType(tokenIndex);
     switch (type) {
-      case IDENTIFIER:
-      case STRING:
-      case NUMBER:
-      case BIGINT:
-        return true;
-      default:
-        return Keywords.isKeyword(type);
+    case IDENTIFIER:
+    case STRING:
+    case NUMBER:
+      return true;
+    default:
+      return Keywords.isKeyword(type);
     }
   }
 
@@ -2642,15 +2563,11 @@ public class Parser {
     TokenType type = peekType();
     if (type == TokenType.STAR) {
       return parsePropertyAssignmentGenerator();
-    } else if (type == TokenType.ELLIPSIS) {
+    } else if (peek(TokenType.SPREAD)) {
       recordFeatureUsed(Feature.OBJECT_LITERALS_WITH_SPREAD);
-      SourcePosition start = getTreeStartLocation();
-      eat(TokenType.ELLIPSIS);
-      ParseTree operand = parseAssignmentExpression();
-      return new ObjectSpreadTree(getTreeLocation(start), operand);
+      return parseSpreadExpression();
     } else if (type == TokenType.STRING
         || type == TokenType.NUMBER
-        || type == TokenType.BIGINT
         || type == TokenType.IDENTIFIER
         || Keywords.isKeyword(type)) {
       if (peekGetAccessor()) {
@@ -2849,27 +2766,19 @@ public class Parser {
     if (peek(TokenType.CLOSE_PAREN)) {
       eat(TokenType.CLOSE_PAREN);
       if (peek(TokenType.ARROW)) {
-        return new FormalParameterListTree(
-            getTreeLocation(start),
-            ImmutableList.<ParseTree>of(),
-            /* hasTrailingComma= */ false,
-            ImmutableList.<SourcePosition>of());
+        return new FormalParameterListTree(getTreeLocation(start), ImmutableList.<ParseTree>of());
       } else {
         reportError("invalid parenthesized expression");
         return new MissingPrimaryExpressionTree(getTreeLocation(start));
       }
     }
     // Case ( ... BindingIdentifier )
-    if (peek(TokenType.ELLIPSIS)) {
+    if (peek(TokenType.SPREAD)) {
       ImmutableList<ParseTree> params = ImmutableList.of(
           parseParameter(ParamContext.IMPLEMENTATION));
       eat(TokenType.CLOSE_PAREN);
       if (peek(TokenType.ARROW)) {
-        return new FormalParameterListTree(
-            getTreeLocation(start),
-            params,
-            /* hasTrailingComma= */ false,
-            ImmutableList.<SourcePosition>of());
+        return new FormalParameterListTree(getTreeLocation(start), params);
       } else {
         reportError("invalid parenthesized expression");
         return new MissingPrimaryExpressionTree(getTreeLocation(start));
@@ -2971,7 +2880,6 @@ public class Parser {
       case NEW:
       case NULL:
       case NUMBER:
-      case BIGINT:
       case OPEN_CURLY:
       case OPEN_PAREN:
       case OPEN_SQUARE:
@@ -2990,8 +2898,6 @@ public class Parser {
       case VOID:
       case YIELD:
         return true;
-      case IMPORT:
-        return peekImportCall() || peekImportDot();
       default:
         return false;
     }
@@ -3000,10 +2906,10 @@ public class Parser {
   private ParseTree parse(Expression expressionIn) {
     SourcePosition start = getTreeStartLocation();
     ParseTree result = parseAssignment(expressionIn);
-    if (peek(TokenType.COMMA) && !peek(1, TokenType.ELLIPSIS)) {
+    if (peek(TokenType.COMMA) && !peek(1, TokenType.SPREAD)) {
       ImmutableList.Builder<ParseTree> exprs = ImmutableList.builder();
       exprs.add(result);
-      while (peek(TokenType.COMMA) && !peek(1, TokenType.ELLIPSIS)) {
+      while (peek(TokenType.COMMA) && !peek(1, TokenType.SPREAD)) {
         eat(TokenType.COMMA);
         exprs.add(parseAssignment(expressionIn));
       }
@@ -3116,10 +3022,7 @@ public class Parser {
         // e.g. x => x + 1
         arrowParameterList =
             new FormalParameterListTree(
-                leftOfArrow.location,
-                ImmutableList.<ParseTree>of(leftOfArrow),
-                /* hasTrailingComma= */ false,
-                ImmutableList.<SourcePosition>of());
+                leftOfArrow.location, ImmutableList.<ParseTree>of(leftOfArrow));
         break;
       case ARGUMENT_LIST:
       case PAREN_EXPRESSION:
@@ -3169,10 +3072,7 @@ public class Parser {
       final IdentifierExpressionTree singleParameter = parseIdentifierExpression();
       arrowParameterList =
           new FormalParameterListTree(
-              singleParameter.location,
-              ImmutableList.<ParseTree>of(singleParameter),
-              /* hasTrailingComma= */ false,
-              ImmutableList.<SourcePosition>of());
+              singleParameter.location, ImmutableList.<ParseTree>of(singleParameter));
     }
     if (peekImplicitSemiColon()) {
       reportError("No newline allowed before '=>'");
@@ -3201,11 +3101,7 @@ public class Parser {
   }
 
   private static FormalParameterListTree newEmptyFormalParameterList(SourceRange location) {
-    return new FormalParameterListTree(
-        location,
-        ImmutableList.<ParseTree>of(),
-        /* hasTrailingComma= */ false,
-        ImmutableList.<SourcePosition>of());
+    return new FormalParameterListTree(location, ImmutableList.<ParseTree>of());
   }
 
   /**
@@ -3235,14 +3131,14 @@ public class Parser {
     //     before the tree to correctly detect implicit semicolons, but it doesn't matter for the
     //     current use case.
     lastSourcePosition = tree.location.start;
-    scanner.setPosition(lastSourcePosition);
+    scanner.setOffset(lastSourcePosition.offset);
   }
 
   private void resetScannerAfter(ParseTree parseTree) {
     lastSourcePosition = parseTree.location.end;
     // NOTE: The "end" position for a parseTree actually points to the first character after the
     //     last token in the tree, so this is not an off-by-one error.
-    scanner.setPosition(lastSourcePosition);
+    scanner.setOffset(lastSourcePosition.offset);
   }
 
   private boolean peekAssignmentOperator() {
@@ -3293,7 +3189,7 @@ public class Parser {
   // 11.12 Conditional Expression
   private ParseTree parseConditional(Expression expressionIn) {
     SourcePosition start = getTreeStartLocation();
-    ParseTree condition = parseShortCircuit(expressionIn);
+    ParseTree condition = parseLogicalOR(expressionIn);
     if (peek(TokenType.QUESTION)) {
       eat(TokenType.QUESTION);
       ParseTree left = parseAssignment(expressionIn);
@@ -3303,35 +3199,6 @@ public class Parser {
           getTreeLocation(start), condition, left, right);
     }
     return condition;
-  }
-
-  private ParseTree parseShortCircuit(Expression expressionIn) {
-    SourcePosition start = getTreeStartLocation();
-    ParseTree left = parseLogicalOR(expressionIn);
-    if (peek(TokenType.QUESTION_QUESTION)) {
-      if (left.type == ParseTreeType.BINARY_OPERATOR) {
-        BinaryOperatorTree binaryTree = left.asBinaryOperator();
-        if (binaryTree.operator.type == TokenType.AND || binaryTree.operator.type == TokenType.OR) {
-          reportError("Logical OR and logical AND require parentheses when used with '??'");
-        }
-      }
-      return parseNullishCoalesce(expressionIn, left, start);
-    } else {
-      return left;
-    }
-  }
-
-  private ParseTree parseNullishCoalesce(
-      Expression expressionIn, ParseTree left, SourcePosition start) {
-    while (peek(TokenType.QUESTION_QUESTION)) {
-      Token operator = eat(TokenType.QUESTION_QUESTION);
-      ParseTree right = parseBitwiseOR(expressionIn);
-      left = new BinaryOperatorTree(getTreeLocation(start), left, operator, right);
-    }
-    if (peek(TokenType.AND) || peek(TokenType.OR)) {
-      reportError("Logical OR and logical AND require parentheses when used with '??'");
-    }
-    return left;
   }
 
   // 11.11 Logical OR
@@ -3608,45 +3475,19 @@ public class Parser {
     }
   }
 
-  private boolean peekImportCall() {
-    return peek(TokenType.IMPORT) && peek(1, TokenType.OPEN_PAREN);
-  }
-
-  private boolean peekImportDot() {
-    return peek(TokenType.IMPORT) && peek(1, TokenType.PERIOD);
-  }
-
-  /** Parse LeftHandSideExpression. */
+  // 11.2 Left hand side expression
+  //
+  // Also inlines the call expression productions
   @SuppressWarnings("incomplete-switch")
   private ParseTree parseLeftHandSideExpression() {
     SourcePosition start = getTreeStartLocation();
-    // We have these possible productions.
-    // LeftHandSideExpression -> NewExpression
-    //                        -> CallExpression
-    //                        -> MemberExpression
-    //                        -> OptionalExpression
-    //
-    // NewExpression -> new NewExpression
-    //               -> MemberExpression
-    //
-    // CallExpression -> MemberExpression Arguments
-    //                -> CallExpression ... see below
-    //
-    // OptionalExpression -> MemberExpression OptionalChain
-    //                    -> CallExpression OptionalChain
-    //                    -> OptionalExpression OptionalChain
-    //
-    // We try parsing a NewExpression, here, because that will include parsing MemberExpression.
-    // If what we really have is a CallExpression or OptionalExpression, then the MemberExpression
-    // we get back from parseNewExpression will be the first part of it, and we'll build the
-    // rest later.
     ParseTree operand = parseNewExpression();
 
     // this test is equivalent to is member expression
     if (!(operand instanceof NewExpressionTree)
         || ((NewExpressionTree) operand).arguments != null) {
-      // We have a MemberExpression, but it may actually be just the first part of a CallExpression
-      // Attempt to gather the rest of the CallExpression, if so.
+
+      // The Call expression productions
       while (peekCallSuffix()) {
         switch (peekType()) {
           case OPEN_PAREN:
@@ -3672,7 +3513,6 @@ public class Parser {
             throw new AssertionError("unexpected case: " + peekType());
         }
       }
-      operand = maybeParseOptionalExpression(operand);
     }
     return operand;
   }
@@ -3685,131 +3525,13 @@ public class Parser {
         || peek(TokenType.TEMPLATE_HEAD);
   }
 
-  /**
-   * Tries to parse the expression as an optional expression.
-   *
-   * <p>`operand?.identifier` or `operand?.[expression]` or `operand?.(arg1, arg2)`
-   *
-   * <p>returns parse tree after trying to parse it as an optional expression
-   */
-  private ParseTree maybeParseOptionalExpression(ParseTree operand) {
-    SourcePosition start = getTreeStartLocation();
-
-    while (peek(TokenType.QUESTION_DOT)) {
-      eat(TokenType.QUESTION_DOT);
-      switch (peekType()) {
-        case OPEN_PAREN:
-          ArgumentListTree arguments = parseArguments();
-          operand =
-              new OptionalCallExpressionTree(
-                  getTreeLocation(start),
-                  operand,
-                  arguments,
-                  /* isStartOfOptionalChain = */ true,
-                  arguments.hasTrailingComma);
-          break;
-        case OPEN_SQUARE:
-          eat(TokenType.OPEN_SQUARE);
-          ParseTree member = parseExpression();
-          eat(TokenType.CLOSE_SQUARE);
-          operand =
-              new OptionalMemberLookupExpressionTree(
-                  getTreeLocation(start), operand, member, /* isStartOfOptionalChain = */ true);
-          break;
-        case IDENTIFIER:
-          IdentifierToken id = eatIdOrKeywordAsId();
-          operand =
-              new OptionalMemberExpressionTree(
-                  getTreeLocation(start), operand, id, /* isStartOfOptionalChain = */ true);
-          break;
-        case NO_SUBSTITUTION_TEMPLATE:
-        case TEMPLATE_HEAD:
-          reportError("template literal cannot be used within optional chaining");
-          break;
-        default:
-          reportError("syntax error: %s not allowed in optional chain", peekType());
-      }
-      operand = parseOptionalChain(operand);
-    }
-    return operand;
-  }
-
-  /**
-   * Parse the next component of an optional chain.
-   *
-   * <p>`optionalExpression.identifier`, `optionalExpression[expression]`, `optionalExpression(arg1,
-   * arg2)`, or `optionalExpression?.optionalExpression`
-   *
-   * <p>returns parse tree after trying to parse it as an optional chain
-   */
-  private ParseTree parseOptionalChain(ParseTree optionalExpression) {
-    SourcePosition start = getTreeStartLocation();
-    while (peekOptionalChainSuffix()) {
-      if (peekType() == TokenType.NO_SUBSTITUTION_TEMPLATE
-          || peekType() == TokenType.TEMPLATE_HEAD) {
-        reportError("template literal cannot be used within optional chaining");
-        break;
-      }
-      switch (peekType()) {
-        case PERIOD:
-          eat(TokenType.PERIOD);
-          IdentifierToken id = eatIdOrKeywordAsId();
-          optionalExpression =
-              new OptionalMemberExpressionTree(
-                  getTreeLocation(start),
-                  optionalExpression,
-                  id,
-                  /*isStartOfOptionalChain=*/ false);
-          break;
-        case OPEN_PAREN:
-          ArgumentListTree arguments = parseArguments();
-          optionalExpression =
-              new OptionalCallExpressionTree(
-                  getTreeLocation(start),
-                  optionalExpression,
-                  arguments,
-                  /* isStartOfOptionalChain = */ false,
-                  arguments.hasTrailingComma);
-          break;
-        case OPEN_SQUARE:
-          eat(TokenType.OPEN_SQUARE);
-          ParseTree member = parseExpression();
-          eat(TokenType.CLOSE_SQUARE);
-          optionalExpression =
-              new OptionalMemberLookupExpressionTree(
-                  getTreeLocation(start),
-                  optionalExpression,
-                  member,
-                  /* isStartOfOptionalChain = */ false);
-          break;
-        default:
-          throw new AssertionError("unexpected case: " + peekType());
-      }
-    }
-    return optionalExpression;
-  }
-
-  /** Tokens that indicate continuation of an optional chain. */
-  private boolean peekOptionalChainSuffix() {
-    return peek(TokenType.OPEN_PAREN) // a?.b( ...
-        || peek(TokenType.OPEN_SQUARE) // a?.b[ ...
-        || peek(TokenType.PERIOD) // a?.b. ...
-        // TEMPLATE_HEAD and NO_SUBSTITUTION_TEMPLATE are actually not allowed within optional
-        // chaining and leads to an early error as dictated by the spec.
-        // https://tc39.es/proposal-optional-chaining/#sec-left-hand-side-expressions-static-semantics-early-errors
-        || peek(TokenType.NO_SUBSTITUTION_TEMPLATE) // a?.b`text`
-        || peek(TokenType.TEMPLATE_HEAD); // a?.b`text ${substitution} text`
-  }
-
   private static final String ASYNC = "async";
 
   // 11.2 Member Expression without the new production
   private ParseTree parseMemberExpressionNoNew() {
     SourcePosition start = getTreeStartLocation();
     ParseTree operand;
-    if (peekImportDot()) {
-      operand = parseImportDotMeta();
-    } else if (peekAsyncFunctionStart()) {
+    if (peekAsyncFunctionStart()) {
       operand = parseAsyncFunctionExpression();
     } else if (peekFunction()) {
       operand = parseFunctionExpression();
@@ -3855,22 +3577,12 @@ public class Parser {
     } else {
       SourcePosition start = getTreeStartLocation();
       eat(TokenType.NEW);
-      if (peek(TokenType.QUESTION_DOT)) { // new?.target not allowed
-        reportError("Optional chaining is forbidden in `new?.target` contexts.");
-      }
       ParseTree operand = parseNewExpression();
-      if (peek(TokenType.QUESTION_DOT)) { // new a?.() not allowed
-        reportError("Optional chaining is forbidden in construction contexts.");
-      }
       ArgumentListTree arguments = null;
       if (peek(TokenType.OPEN_PAREN)) {
         arguments = parseArguments();
       }
-      return new NewExpressionTree(
-          getTreeLocation(start),
-          operand,
-          arguments,
-          arguments != null && arguments.hasTrailingComma);
+      return new NewExpressionTree(getTreeLocation(start), operand, arguments);
     }
   }
 
@@ -3881,14 +3593,6 @@ public class Parser {
     eat(TokenType.PERIOD);
     eatPredefinedString("target");
     return new NewTargetExpressionTree(getTreeLocation(start));
-  }
-
-  private ParseTree parseImportDotMeta() {
-    SourcePosition start = getTreeStartLocation();
-    eat(TokenType.IMPORT);
-    eat(TokenType.PERIOD);
-    eatPredefinedString("meta");
-    return new ImportMetaExpressionTree(getTreeLocation(start));
   }
 
   private ArgumentListTree parseArguments() {
@@ -3902,8 +3606,6 @@ public class Parser {
 
     SourcePosition start = getTreeStartLocation();
     ImmutableList.Builder<ParseTree> arguments = ImmutableList.builder();
-    boolean trailingComma = false;
-    ImmutableList.Builder<SourcePosition> commaPositions = ImmutableList.builder();
 
     eat(TokenType.OPEN_PAREN);
     while (peekAssignmentOrSpread()) {
@@ -3911,21 +3613,16 @@ public class Parser {
 
       if (!peek(TokenType.CLOSE_PAREN)) {
         Token comma = eat(TokenType.COMMA);
-        if (comma != null) {
-          commaPositions.add(comma.getStart());
-        }
         if (peek(TokenType.CLOSE_PAREN)) {
           recordFeatureUsed(Feature.TRAILING_COMMA_IN_PARAM_LIST);
           if (!config.atLeast8) {
             reportError(comma, "Invalid trailing comma in arguments list");
           }
-          trailingComma = true;
         }
       }
     }
     eat(TokenType.CLOSE_PAREN);
-    return new ArgumentListTree(
-        getTreeLocation(start), arguments.build(), trailingComma, commaPositions.build());
+    return new ArgumentListTree(getTreeLocation(start), arguments.build());
   }
 
   /**
@@ -3935,12 +3632,12 @@ public class Parser {
    * {@link #parseAssignmentOrSpread} might still fail when this returns true.
    */
   private boolean peekAssignmentOrSpread() {
-    return peek(TokenType.ELLIPSIS) || peekAssignmentExpression();
+    return peek(TokenType.SPREAD) || peekAssignmentExpression();
   }
 
   private ParseTree parseAssignmentOrSpread() {
-    if (peek(TokenType.ELLIPSIS)) {
-      return parseIterSpread();
+    if (peek(TokenType.SPREAD)) {
+      return parseSpreadExpression();
     }
     return parseAssignmentExpression();
   }
@@ -3975,11 +3672,11 @@ public class Parser {
     return peekExpression();
   }
 
-  private ParseTree parseIterRest(PatternKind patternKind) {
+  private ParseTree parsePatternRest(PatternKind patternKind) {
     SourcePosition start = getTreeStartLocation();
-    eat(TokenType.ELLIPSIS);
+    eat(TokenType.SPREAD);
     ParseTree patternAssignmentTarget = parseRestAssignmentTarget(patternKind);
-    return new IterRestTree(getTreeLocation(start), patternAssignmentTarget);
+    return new AssignmentRestElementTree(getTreeLocation(start), patternAssignmentTarget);
   }
 
   private ParseTree parseRestAssignmentTarget(PatternKind patternKind) {
@@ -4012,9 +3709,9 @@ public class Parser {
         }
       }
     }
-    if (peek(TokenType.ELLIPSIS)) {
+    if (peek(TokenType.SPREAD)) {
       recordFeatureUsed(Feature.ARRAY_PATTERN_REST);
-      elements.add(parseIterRest(kind));
+      elements.add(parsePatternRest(kind));
     }
     if (eat(TokenType.CLOSE_SQUARE) == null) {
       // If we get no closing bracket then return invalid tree to avoid compiler tripping
@@ -4041,12 +3738,9 @@ public class Parser {
         break;
       }
     }
-    if (peek(TokenType.ELLIPSIS)) {
+    if (peek(TokenType.SPREAD)) {
       recordFeatureUsed(Feature.OBJECT_PATTERN_REST);
-      SourcePosition restStart = getTreeStartLocation();
-      eat(TokenType.ELLIPSIS);
-      ParseTree patternAssignmentTarget = parseRestAssignmentTarget(kind);
-      fields.add(new ObjectRestTree(getTreeLocation(restStart), patternAssignmentTarget));
+      fields.add(parsePatternRest(kind));
     }
     eat(TokenType.CLOSE_CURLY);
     return new ObjectPatternTree(getTreeLocation(start), fields.build());
@@ -4156,7 +3850,7 @@ public class Parser {
     IdentifierToken alias = eatId();
     eat(TokenType.EQUAL);
     ParseTree original = parseType();
-    eatPossiblyImplicitSemiColon();
+    eatPossibleImplicitSemiColon();
     return new TypeAliasTree(getTreeLocation(start), alias, original);
   }
 
@@ -4172,7 +3866,7 @@ public class Parser {
     switch (peekType()) {
       case FUNCTION:
         declare = parseAmbientFunctionDeclaration();
-        eatPossiblyImplicitSemiColon();
+        eatPossibleImplicitSemiColon();
         break;
       case CLASS:
         declare = parseClassDeclaration(true);
@@ -4189,16 +3883,18 @@ public class Parser {
       case CONST:
       default: // unreachable, parse as a var decl to get a parse error.
         declare = parseAmbientVariableDeclarationList();
-        eatPossiblyImplicitSemiColon();
+        eatPossibleImplicitSemiColon();
         break;
     }
 
     return declare;
   }
 
-  /** Consume a (possibly implicit) semi-colon. Reports an error if a semi-colon is not present. */
-  private void eatPossiblyImplicitSemiColon() {
-    if (peek(TokenType.SEMI_COLON)) {
+  /**
+   * Consume a (possibly implicit) semi-colon. Reports an error if a semi-colon is not present.
+   */
+  private void eatPossibleImplicitSemiColon() {
+    if (peek(TokenType.SEMI_COLON) && peekToken().location.start.line == getLastLine()) {
       eat(TokenType.SEMI_COLON);
       return;
     }
@@ -4280,11 +3976,7 @@ public class Parser {
   }
 
   private boolean peekIdOrKeyword() {
-    return peekIdOrKeyword(0);
-  }
-
-  private boolean peekIdOrKeyword(int index) {
-    TokenType type = peekType(index);
+    TokenType type = peekType();
     return TokenType.IDENTIFIER == type || Keywords.isKeyword(type);
   }
 
@@ -4330,7 +4022,6 @@ public class Parser {
     switch (token.type) {
       case STRING:
       case NUMBER:
-      case BIGINT:
         return nextToken();
       case IDENTIFIER:
       default:

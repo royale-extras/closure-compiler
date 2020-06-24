@@ -15,7 +15,6 @@
  */
 
 'require util/polyfill';
-'require es6/reflect/reflect';
 
 
 $jscomp.polyfill('Reflect.getOwnPropertyDescriptor', function(orig) {

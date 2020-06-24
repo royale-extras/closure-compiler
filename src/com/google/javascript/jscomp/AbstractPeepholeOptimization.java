@@ -20,19 +20,16 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.TernaryValue;
 
 /**
  * An abstract class whose implementations run peephole optimizations:
  * optimizations that look at a small section of code and either remove
  * that code (if it is not needed) or replaces it with smaller code.
+ *
  */
 abstract class AbstractPeepholeOptimization {
 
-  /** Intentionally not exposed to subclasses */
-  private AbstractCompiler compiler;
-  /** Intentionally not exposed to subclasses */
-  private AstAnalyzer astAnalyzer;
+  protected AbstractCompiler compiler;
 
   /**
    * Given a node to optimize and a traversal, optimize the node. Subclasses
@@ -81,117 +78,54 @@ abstract class AbstractPeepholeOptimization {
 
   /** Informs the optimization that a traversal will begin. */
   void beginTraversal(AbstractCompiler compiler) {
-    this.compiler = checkNotNull(compiler);
-    astAnalyzer = compiler.getAstAnalyzer();
-  }
-
-  /** Returns whether the node may create new mutable state, or change existing state. */
-  protected boolean mayEffectMutableState(Node n) {
-    return astAnalyzer.mayEffectMutableState(n);
-  }
-
-  /** Returns whether the node may have side effects when executed. */
-  protected boolean mayHaveSideEffects(Node n) {
-    return astAnalyzer.mayHaveSideEffects(n);
+    this.compiler = compiler;
   }
 
   /**
-   * Returns the number value of the node if it has one and it cannot have side effects.
-   *
-   * <p>Returns {@code null} otherwise.
+   * @return Whether the node may create new mutable state, or change existing
+   * state.
    */
-  protected Double getSideEffectFreeNumberValue(Node n) {
-    Double value = NodeUtil.getNumberValue(n);
-    // Calculating the number value, if any, is likely to be faster than calculating side effects,
-    // and there are only a very few cases where we can compute a number value, but there could
-    // also be side effects. e.g. `void doSomething()` has value NaN, regardless of the behavior
-    // of `doSomething()`
-    if (value != null && astAnalyzer.mayHaveSideEffects(n)) {
-      value = null;
-    }
-    return value;
+  boolean mayEffectMutableState(Node n) {
+    return NodeUtil.mayEffectMutableState(n, compiler);
   }
 
   /**
-   * Gets the value of a node as a String, or {@code null} if it cannot be converted.
-   *
-   * <p>This method effectively emulates the <code>String()</code> JavaScript cast function when
-   * possible and the node has no side effects. Otherwise, it returns {@code null}.
+   * @return Whether the node may have side effects when executed.
    */
-  protected String getSideEffectFreeStringValue(Node n) {
-    String value = NodeUtil.getStringValue(n);
-    // Calculating the string value, if any, is likely to be faster than calculating side effects,
-    // and there are only a very few cases where we can compute a string value, but there could
-    // also be side effects. e.g. `void doSomething()` has value 'undefined', regardless of the
-    // behavior of `doSomething()`
-    if (value != null && astAnalyzer.mayHaveSideEffects(n)) {
-      value = null;
-    }
-    return value;
-  }
-
-  /**
-   * Calculate the known boolean value for a node if possible and if it has no side effects.
-   *
-   * <p>Returns {@link TernaryValue#UNKNOWN} if the node has side effects or its value cannot be
-   * statically determined.
-   */
-  protected TernaryValue getSideEffectFreeBooleanValue(Node n) {
-    TernaryValue value = NodeUtil.getBooleanValue(n);
-    // Calculating the boolean value, if any, is likely to be faster than calculating side effects,
-    // and there are only a very few cases where we can compute a boolean value, but there could
-    // also be side effects. e.g. `void doSomething()` has value `false`, regardless of the
-    // behavior of `doSomething()`
-    if (value != TernaryValue.UNKNOWN && astAnalyzer.mayHaveSideEffects(n)) {
-      value = TernaryValue.UNKNOWN;
-    }
-    return value;
+  boolean mayHaveSideEffects(Node n) {
+    return NodeUtil.mayHaveSideEffects(n, compiler);
   }
 
   /**
    * Returns true if the current node's type implies side effects.
    *
-   * <p>This is a non-recursive version of the may have side effects check; used to check wherever
-   * the current node's type is one of the reason's why a subtree has side effects.
+   * This is a non-recursive version of the may have side effects
+   * check; used to check wherever the current node's type is one of
+   * the reason's why a subtree has side effects.
    */
-  protected boolean nodeTypeMayHaveSideEffects(Node n) {
-    return astAnalyzer.nodeTypeMayHaveSideEffects(n);
+  boolean nodeTypeMayHaveSideEffects(Node n) {
+    return NodeUtil.nodeTypeMayHaveSideEffects(n, compiler);
   }
 
   /**
-   * Returns whether the output language is ECMAScript 5 or later. Workarounds for quirks in
-   * browsers that do not support ES5 can be ignored when this is true.
+   * @return Whether the output language is ECMAScript 5 or later.
+   *     Workarounds for quirks in browsers that do not support ES5 can be
+   *     ignored when this is true.
    */
-  protected boolean isEcmaScript5OrGreater() {
+  boolean isEcmaScript5OrGreater() {
     return compiler != null
         && compiler.getOptions().getOutputFeatureSet().contains(FeatureSet.ES5);
   }
 
-  /** Returns the current coding convention. */
-  protected CodingConvention getCodingConvention() {
+  /**
+   * @return the current coding convention.
+   */
+  CodingConvention getCodingConvention() {
     // Note: this assumes a thread safe coding convention object.
     return compiler.getCodingConvention();
   }
 
-  protected final void reportChangeToEnclosingScope(Node n) {
-    compiler.reportChangeToEnclosingScope(n);
-  }
-
-  /** Calls {@link NodeUtil#deleteNode(Node, AbstractCompiler)} */
-  protected final void deleteNode(Node property) {
-    checkNotNull(compiler);
-    NodeUtil.deleteNode(property, compiler);
-  }
-
-  /** Calls {@link NodeUtil#markFunctionsDeleted(Node, AbstractCompiler)} */
-  protected final void markFunctionsDeleted(Node function) {
-    checkNotNull(compiler);
-    NodeUtil.markFunctionsDeleted(function, compiler);
-  }
-
-  /** Calls {@link NodeUtil#markNewScopesChanged(Node, AbstractCompiler)} */
-  protected final void markNewScopesChanged(Node n) {
-    checkNotNull(compiler);
-    NodeUtil.markNewScopesChanged(n, compiler);
+  final boolean areDeclaredGlobalExternsOnWindow() {
+    return compiler != null && compiler.getOptions().declaredGlobalExternsOnWindow;
   }
 }

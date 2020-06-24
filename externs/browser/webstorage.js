@@ -21,12 +21,13 @@
 
 /**
  * @interface
- * @see https://www.w3.org/TR/webstorage/#the-storage-interface
+ * @see http://www.w3.org/TR/2011/CR-webstorage-20111208/#the-storage-interface
  */
 function Storage() {}
 
 /**
- * @const {number}
+ * @type {number}
+ * @const
  */
 Storage.prototype.length;
 
@@ -62,7 +63,7 @@ Storage.prototype.clear = function() {};
 
 /**
  * @interface
- * @see https://www.w3.org/TR/webstorage/#the-sessionstorage-attribute
+ * @see http://www.w3.org/TR/2011/CR-webstorage-20111208/#the-sessionstorage-attribute
  */
 function WindowSessionStorage() {}
 
@@ -80,7 +81,7 @@ Window.prototype.sessionStorage;
 
 /**
  * @interface
- * @see https://www.w3.org/TR/webstorage/#the-localstorage-attribute
+ * @see http://www.w3.org/TR/2011/CR-webstorage-20111208/#the-localstorage-attribute
  */
 function WindowLocalStorage() {}
 
@@ -97,36 +98,12 @@ WindowLocalStorage.prototype.localStorage;
 Window.prototype.localStorage;
 
 /**
- * @record
- * @extends {EventInit}
- * @see https://www.w3.org/TR/webstorage/#the-storageevent-interface
- */
-function StorageEventInit() {}
-
-/** @type {undefined|string} */
-StorageEventInit.prototype.key;
-
-/** @type {undefined|string} */
-StorageEventInit.prototype.oldValue;
-
-/** @type {undefined|string} */
-StorageEventInit.prototype.newValue;
-
-/** @type {string} */
-StorageEventInit.prototype.url;
-
-/** @type {undefined|!Storage} */
-StorageEventInit.prototype.storageArea;
-
-/**
  * This is the storage event interface.
- * @see https://www.w3.org/TR/webstorage/#the-storage-event
+ * @see http://www.w3.org/TR/2011/CR-webstorage-20111208/#the-storage-event
  * @extends {Event}
- * @param {string} type
- * @param {!StorageEventInit=} eventInitDict
  * @constructor
  */
-function StorageEvent(type, eventInitDict) {}
+function StorageEvent() {}
 
 /**
  * @type {string}

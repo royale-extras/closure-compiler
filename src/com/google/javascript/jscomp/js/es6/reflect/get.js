@@ -16,7 +16,6 @@
 
 'require util/finddescriptor';
 'require util/polyfill';
-'require es6/reflect/reflect';
 
 
 $jscomp.polyfill('Reflect.get', function(orig) {

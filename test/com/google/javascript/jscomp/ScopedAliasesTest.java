@@ -18,14 +18,12 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.javascript.jscomp.CompilerOptions.AliasTransformation;
 import com.google.javascript.jscomp.CompilerOptions.AliasTransformationHandler;
-import com.google.javascript.jscomp.ScopedAliases.InvalidModuleGetHandling;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.SourcePosition;
@@ -59,9 +57,7 @@ public final class ScopedAliasesTest extends CompilerTestCase {
       MINIMAL_EXTERNS,
       "var window;");
 
-  private InvalidModuleGetHandling invalidModuleGetHandling;
-
-  private AliasTransformationHandler transformationHandler =
+  AliasTransformationHandler transformationHandler =
       CompilerOptions.NULL_ALIAS_TRANSFORMATION_HANDLER;
 
   public ScopedAliasesTest() {
@@ -74,8 +70,6 @@ public final class ScopedAliasesTest extends CompilerTestCase {
     super.setUp();
     disableTypeCheck();
     enableRunTypeCheckAfterProcessing();
-    enableCreateModuleMap();
-    this.invalidModuleGetHandling = InvalidModuleGetHandling.DELETE;
   }
 
   private void testScoped(String code, String expected, Postcondition... postconditions) {
@@ -1124,7 +1118,6 @@ public final class ScopedAliasesTest extends CompilerTestCase {
     test(
         lines(
             "goog.provide('provided');",
-            "goog.provide('other.name.Foo');",
             "goog.scope(function() {",
             "  var Foo = goog.module.get('other.name.Foo')",
             "  /** @type {!Foo} */",
@@ -1133,7 +1126,6 @@ public final class ScopedAliasesTest extends CompilerTestCase {
             ""),
         lines(
             "goog.provide('provided');",
-            "goog.provide('other.name.Foo');",
             "/** @type {!other.name.Foo} */",
             "provided.f = new (goog.module.get('other.name.Foo'));",
             ""));
@@ -1144,7 +1136,6 @@ public final class ScopedAliasesTest extends CompilerTestCase {
     test(
         lines(
             "goog.provide('foo.baz');",
-            "goog.provide('other.thing');",
             "",
             "goog.scope(function() {",
             "",
@@ -1155,7 +1146,6 @@ public final class ScopedAliasesTest extends CompilerTestCase {
             "}); // goog.scope"),
         lines(
             "goog.provide('foo.baz');",
-            "goog.provide('other.thing');",
             "foo.baz = goog.module.get('other.thing').b;",
             ""));
   }
@@ -1165,7 +1155,6 @@ public final class ScopedAliasesTest extends CompilerTestCase {
     test(
         lines(
             "goog.provide('foo.baz');",
-            "goog.provide('other.thing');",
             "",
             "goog.scope(function() {",
             "",
@@ -1175,150 +1164,7 @@ public final class ScopedAliasesTest extends CompilerTestCase {
             "}); // goog.scope"),
         lines(
             "goog.provide('foo.baz');",
-            "goog.provide('other.thing');",
             "foo.baz = goog.module.get('other.thing').b;",
-            ""));
-  }
-
-  @Test
-  public void testGoogModuleGet_ofModule() {
-    test(
-        srcs(
-            "goog.module('other.name.Foo');",
-            lines(
-                "goog.provide('provided');",
-                "goog.scope(function() {",
-                "  var Foo = goog.module.get('other.name.Foo')",
-                "  /** @type {!Foo} */",
-                "  provided.f = new Foo;",
-                "});",
-                "")),
-        expected(
-            "goog.module('other.name.Foo');",
-            lines(
-                "goog.provide('provided');",
-                "/** @type {!other.name.Foo} */",
-                "provided.f = new (goog.module.get('other.name.Foo'));",
-                "")));
-  }
-
-  @Test
-  public void testGoogModuleGet_missing_noDeletion() {
-    invalidModuleGetHandling = InvalidModuleGetHandling.PRESERVE;
-    test(
-        lines(
-            "goog.provide('provided');",
-            "",
-            "goog.scope(function() {",
-            "  var Foo = goog.module.get('missing.name.Foo');",
-            "  /** @type {!Foo} */",
-            "  provided.f = new Foo;",
-            "});",
-            ""),
-        lines(
-            "goog.provide('provided');", //
-            "",
-            "/** @type {!missing.name.Foo} */",
-            "provided.f = new (goog.module.get('missing.name.Foo'));",
-            ""));
-  }
-
-  @Test
-  public void testGoogModuleGet_missing() {
-    test(
-        lines(
-            "goog.provide('provided');",
-            "",
-            "goog.scope(function() {",
-            "  var Foo = goog.module.get('missing.name.Foo')",
-            "  /** @type {!Foo} */",
-            "  provided.f = new Foo;",
-            "});",
-            ""),
-        lines(
-            "goog.provide('provided');", //
-            "",
-            "/** @type {!Foo} */",
-            "provided.f = new Foo();",
-            ""));
-  }
-
-  @Test
-  public void testGoogModuleGet_missingUsedInRhs() {
-    test(
-        lines(
-            "goog.provide('provided');",
-            "",
-            "goog.scope(function() {",
-            "  var Foo = goog.module.get('missing.name.Foo')",
-            "  provided.Bar = class extends Foo {};",
-            "});",
-            ""),
-        lines(
-            "goog.provide('provided');", //
-            "",
-            "provided.Bar=class extends Foo {}",
-            ""));
-  }
-
-  @Test
-  public void testGoogModuleGet_missingRecursive() {
-    test(
-        lines(
-            "goog.provide('provided');",
-            "",
-            "goog.scope(function() {",
-            "  var Foo = goog.module.get('missing.name.Foo')",
-            "  /** @type {!Foo.Bar} */",
-            "  provided.f = new Foo.Bar;",
-            "});",
-            ""),
-        lines(
-            "goog.provide('provided');",
-            "",
-            "/** @type {!Foo.Bar} */",
-            "provided.f = new Foo.Bar();",
-            ""));
-  }
-
-  @Test
-  public void testGoogModuleGet_missingProperty() {
-    test(
-        lines(
-            "goog.provide('provided');",
-            "",
-            "goog.scope(function() {",
-            "  var Bar = goog.module.get('missing.name.Foo').Bar",
-            "  /** @type {!Bar} */",
-            "  provided.f = new Bar;",
-            "});",
-            ""),
-        lines(
-            "goog.provide('provided');", //
-            "",
-            "/** @type {!Bar} */",
-            "provided.f = new Bar;",
-            ""));
-  }
-
-  @Test
-  public void testGoogModuleGet_aliasOfDeletedModuleGetAlias() {
-    test(
-        lines(
-            "goog.provide('provided');",
-            "",
-            "goog.scope(function() {",
-            "  var Foo = goog.module.get('missing.name.Foo');",
-            "  var Bar = Foo.Bar",
-            "  /** @type {!Bar} */",
-            "  provided.f = new Bar;",
-            "});",
-            ""),
-        lines(
-            "goog.provide('provided');",
-            "",
-            "/** @type {!Foo.Bar} */",
-            "provided.f = new Foo.Bar();",
             ""));
   }
 
@@ -1470,14 +1316,16 @@ public final class ScopedAliasesTest extends CompilerTestCase {
 
   @Override
   protected ScopedAliases getProcessor(Compiler compiler) {
-    return ScopedAliases.builder(compiler)
-        .setAliasTransformationHandler(transformationHandler)
-        .setModuleMetadataMap(compiler.getModuleMetadataMap())
-        .setInvalidModuleGetHandling(invalidModuleGetHandling)
-        .build();
+    return new ScopedAliases(compiler, null, transformationHandler);
   }
 
-  private static class TransformationHandlerSpy implements AliasTransformationHandler {
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
+  private static class TransformationHandlerSpy
+      implements AliasTransformationHandler {
 
     private final ListMultimap<String, SourcePosition<AliasTransformation>> observedPositions =
         MultimapBuilder.hashKeys().arrayListValues().build();
@@ -1537,7 +1385,7 @@ public final class ScopedAliasesTest extends CompilerTestCase {
                 .that(actualTypes.size())
                 .isEqualTo(expectedTypes.size());
             for (int i = 0; i < expectedTypes.size(); i++) {
-              assertNode(actualTypes.get(i)).isEqualTo(expectedTypes.get(i));
+              assertThat(expectedTypes.get(i).checkTreeEquals(actualTypes.get(i))).isNull();
             }
           } else {
             actualTypes = new ArrayList<>();

@@ -33,6 +33,8 @@ import java.util.Set;
 
 /**
  * An AST for JavaScript regular expressions.
+ *
+ * @author mikesamuel@gmail.com (Mike Samuel)
  */
 public abstract class RegExpTree {
 

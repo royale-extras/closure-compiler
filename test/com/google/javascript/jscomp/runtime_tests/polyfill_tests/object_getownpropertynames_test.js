@@ -14,11 +14,6 @@
  * limitations under the License.
  */
 
-/**
- * @fileoverview Tests for our symbol polyfill interaction with
- * getOwnPropertyNames. We don't polyfill getOwnPropertyNames itself.
- */
-
 goog.module('jscomp.runtime_tests.polyfill_tests.object_getownpropertynames_test');
 goog.setTestOnly();
 
@@ -28,7 +23,7 @@ const testing = goog.require('jscomp.runtime_tests.polyfill_tests.testing');
 const assertPropertyListEquals = testing.assertPropertyListEquals;
 const objectCreate = testing.objectCreate;
 
-const SYMBOL_IS_POLYFILLED = typeof Symbol('') !== 'symbol';
+const SYMBOL_IS_POLYFILLED = typeof Symbol('') === 'string';
 
 testSuite({
   testGetOwnPropertyNames_strings() {
@@ -57,10 +52,9 @@ testSuite({
 
     if (SYMBOL_IS_POLYFILLED) {
       assertPropertyListEquals(
-          ['12', a.toString(), 'b', 'a'], Object.getOwnPropertyNames(obj));
+          ['12', a, 'b', 'a'], Object.getOwnPropertyNames(obj));
       assertPropertyListEquals(
-          ['42', c.toString(), b.toString(), 'x'],
-          Object.getOwnPropertyNames(sub));
+          ['42', c, b, 'x'], Object.getOwnPropertyNames(sub));
     } else {
       assertPropertyListEquals(
           ['12', 'b', 'a'], Object.getOwnPropertyNames(obj));

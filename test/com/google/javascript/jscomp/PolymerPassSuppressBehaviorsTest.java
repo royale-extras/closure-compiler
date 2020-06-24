@@ -86,6 +86,11 @@ public class PolymerPassSuppressBehaviorsTest extends CompilerTestCase {
     enableParseTypeInfo();
   }
 
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
+
   @Test
   public void testPropertyTypeRemoval() {
     test(
@@ -201,13 +206,5 @@ public class PolymerPassSuppressBehaviorsTest extends CompilerTestCase {
             "/** @polymerBehavior @nocollapse */",
             "let FunBehavior = {",
             "};"));
-  }
-
-  @Test
-  public void testPolymerBehaviorWithoutRhsDoesntCrash() {
-    disableTypeCheck();
-
-    testError(
-        "/** @polymerBehavior */ let FunBehavior;", PolymerPassErrors.POLYMER_UNQUALIFIED_BEHAVIOR);
   }
 }

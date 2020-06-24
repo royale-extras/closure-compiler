@@ -52,38 +52,17 @@ import com.google.javascript.rhino.Node;
 public final class TemplateType extends ProxyObjectType {
   private static final long serialVersionUID = 1L;
 
-  private static final JSTypeClass TYPE_CLASS = JSTypeClass.TEMPLATE;
-
   private final String name;
-  private JSType bound;
   private final Node typeTransformation;
 
   TemplateType(JSTypeRegistry registry, String name) {
-    this(registry, name, null, null);
-  }
-
-  TemplateType(JSTypeRegistry registry, String name, JSType bound) {
-    this(registry, name, bound, null);
+    this(registry, name, null);
   }
 
   TemplateType(JSTypeRegistry registry, String name, Node typeTransformation) {
-    this(registry, name, null, typeTransformation);
-  }
-
-  private TemplateType(
-      JSTypeRegistry registry, String name, JSType bound, Node typeTransformation) {
-    super(
-        registry, bound == null ? registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE) : bound);
+    super(registry, registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE));
     this.name = name;
-    this.bound = bound == null ? registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE) : bound;
     this.typeTransformation = typeTransformation;
-
-    registry.getResolver().resolveIfClosed(this, TYPE_CLASS);
-  }
-
-  @Override
-  JSTypeClass getTypeClass() {
-    return TYPE_CLASS;
   }
 
   @Override
@@ -92,13 +71,8 @@ public final class TemplateType extends ProxyObjectType {
   }
 
   @Override
-  void appendTo(TypeStringBuilder sb) {
-    if (JSType.areIdentical(bound, registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE))) {
-      // This is an unbound template, don't print it's bound
-      sb.append(this.name);
-    } else {
-      sb.append(this.name).append(" extends ").append(bound);
-    }
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
+    return sb.append(this.name);
   }
 
   @Override
@@ -128,15 +102,6 @@ public final class TemplateType extends ProxyObjectType {
     return typeTransformation;
   }
 
-  public JSType getBound() {
-    return bound;
-  }
-
-  public void setBound(JSType bound) {
-    this.bound = bound;
-    this.setReferencedType(bound);
-  }
-
   @Override
   public boolean setValidator(Predicate<JSType> validator) {
     // ProxyObjectType will delegate to the unknown type's setValidator, which we don't want.
@@ -145,15 +110,5 @@ public final class TemplateType extends ProxyObjectType {
     // treat TemplateTypes differently from a random type for which isUnknownType() is true.
     // (e.g. FunctionTypeBuilder#ExtendedTypeValidator)
     return validator.apply(this);
-  }
-
-  /**
-   * This function returns whether or not there is a cycle in the reference chain of this type.
-   */
-  public boolean containsCycle() {
-    // By passing in an unreachable type `null` as the target, the visitor will only return if a
-    // cycle is found or a terminating type is reached.
-    ContainsUpperBoundSuperTypeVisitor typeVisitor = new ContainsUpperBoundSuperTypeVisitor(null);
-    return this.visit(typeVisitor) == ContainsUpperBoundSuperTypeVisitor.Result.CYCLE;
   }
 }

@@ -18,23 +18,23 @@
  * @fileoverview Polyfill for for-of loops.
  */
 'require es6/symbol';
-'require es6/util/makeiterator';
 
 /**
  * Creates an iterator for the given iterable.
  *
- * @param {string|!AsyncIterable<T>|!Iterable<T>|!Iterator<T>|!Arguments} iterable
- * @return {!AsyncIteratorIterable<T>}
+ * @param {string|!AsyncIterable<T>|!Iterable<T>|!Iterator<T>|!Arguments<T>} iterable
+ * @return {AsyncIterator<T>}
  * @template T
  * @suppress {reportUnknownTypes}
  */
 $jscomp.makeAsyncIterator = function(iterable) {
+  $jscomp.initSymbolAsyncIterator();
   var asyncIteratorFunction = (iterable)[Symbol.asyncIterator];
   if (asyncIteratorFunction !== undefined) {
     return asyncIteratorFunction.call(iterable);
   }
   return new $jscomp.AsyncIteratorFromSyncWrapper($jscomp.makeIterator(
-      /** @type {string|!Iterable<T>|!Iterator<T>|!Arguments} */
+      /** @type {string|!Iterable<T>|!Iterator<T>|!Arguments<T>} */
       (iterable)));
 };
 
@@ -42,7 +42,7 @@ $jscomp.makeAsyncIterator = function(iterable) {
  *
  * @param {!Iterator<T>} iterator
  * @constructor
- * @implements {AsyncIteratorIterable<T>}
+ * @implements {AsyncIterator<T>}
  * @template T
  * @suppress {reportUnknownTypes}
  */
@@ -55,7 +55,7 @@ $jscomp.AsyncIteratorFromSyncWrapper = function(iterator) {
   };
 
   /**
-   * @return {!Iterator<!Promise<!IIterableResult<T>>>}
+   * @return {!Iterator<T>}
    */
   this[Symbol.iterator] = function() {
     return iterator;

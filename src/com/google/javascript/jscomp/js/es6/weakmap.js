@@ -17,7 +17,6 @@
 'require es6/conformance';
 'require es6/util/makeiterator';
 'require util/defineproperty';
-'require util/defines';
 'require util/owns';
 'require util/polyfill';
 
@@ -59,16 +58,6 @@ $jscomp.polyfill('WeakMap',
   function WeakMapMembership() {}
 
   /**
-   * Returns whether the argument is a valid WeakMap key.
-   * @param {*} key
-   * @return {boolean}
-   */
-  function isValidKey(key) {
-    var type = typeof key;
-    return (type === 'object' && key !== null) || type === 'function';
-  }
-
-  /**
    * Inserts the hidden property into the target.
    * @param {!Object} target
    */
@@ -90,21 +79,13 @@ $jscomp.polyfill('WeakMap',
    * @param {string} name
    */
   function patch(name) {
-    if ($jscomp.ISOLATE_POLYFILLS) {
-      // Monkey-patching Object.freeze and friends can cause bad interactions
-      // with third-party code. This means that polyfill isolation does not
-      // support inserting frozen objects as keys into a WeakMap.
-      return;
-    }
     var prev = Object[name];
     if (prev) {
       Object[name] = function(target) {
         if (target instanceof WeakMapMembership) {
           return target;
         } else {
-          if (Object.isExtensible(target)) {
-            insert(target);
-          }
+          insert(target);
           return prev(target);
         }
       };
@@ -152,9 +133,6 @@ $jscomp.polyfill('WeakMap',
 
   /** @override */
   PolyfillWeakMap.prototype.set = function(key, value) {
-    if (!isValidKey(key)) {
-      throw new Error('Invalid WeakMap key');
-    }
     insert(key);
     if (!$jscomp.owns(key, prop)) {
       // NOTE: If the insert() call fails on the key, but the property
@@ -172,19 +150,17 @@ $jscomp.polyfill('WeakMap',
 
   /** @override */
   PolyfillWeakMap.prototype.get = function(key) {
-    return isValidKey(key) && $jscomp.owns(key, prop) ? key[prop][this.id_] :
-                                                        undefined;
+    return $jscomp.owns(key, prop) ? key[prop][this.id_] : undefined;
   };
 
   /** @override */
   PolyfillWeakMap.prototype.has = function(key) {
-    return isValidKey(key) && $jscomp.owns(key, prop) &&
-        $jscomp.owns(key[prop], this.id_);
+    return $jscomp.owns(key, prop) && $jscomp.owns(key[prop], this.id_);
   };
 
   /** @override */
   PolyfillWeakMap.prototype.delete = function(key) {
-    if (!isValidKey(key) || !$jscomp.owns(key, prop) ||
+    if (!$jscomp.owns(key, prop) ||
         !$jscomp.owns(key[prop], this.id_)) {
       return false;
     }

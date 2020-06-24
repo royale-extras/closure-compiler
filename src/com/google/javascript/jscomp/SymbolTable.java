@@ -32,7 +32,6 @@ import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Marker;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
-import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.SourcePosition;
 import com.google.javascript.rhino.StaticRef;
@@ -93,6 +92,7 @@ import javax.annotation.Nullable;
  * assume that most clients will not care about the distinction.
  *
  * @see #addSymbolsFrom For more information on how to write plugins for this symbol table.
+ * @author nicksantos@google.com (Nick Santos)
  */
 public final class SymbolTable {
   private static final Logger logger = Logger.getLogger(SymbolTable.class.getName());
@@ -420,16 +420,13 @@ public final class SymbolTable {
 
     int refCount = 0;
     for (Reference ref : getReferences(symbol)) {
-      Node node = ref.getNode();
       builder.append(
           SimpleFormat.format(
-              "  Ref %d: %s line: %d col: %d len: %d %s\n",
+              "  Ref %d: %s:%d %s\n",
               refCount,
-              node.getSourceFileName(),
-              node.getLineno(),
-              node.getCharno(),
-              node.getLength(),
-              node.isIndexable() ? "" : "non indexable"));
+              ref.getNode().getSourceFileName(),
+              ref.getNode().getLineno(),
+              ref.getNode().isIndexable() ? "" : "non indexable"));
       refCount++;
     }
   }
@@ -485,30 +482,23 @@ public final class SymbolTable {
     if (sym == null) {
       // JSCompiler has no symbol for this scope. Check to see if it's a
       // local function. If it is, give it a name.
-      Node rootNode = scope.getRootNode();
       if (scope.isLexicalScope()
           && !scope.isGlobalScope()
-          && rootNode != null
-          && !rootNode.isFromExterns()
+          && scope.getRootNode() != null
+          && !scope.getRootNode().isFromExterns()
           && scope.getParentScope() != null
-          && rootNode.isFunction()) {
+          && scope.getRootNode().isFunction()) {
         SymbolScope parent = scope.getParentScope();
 
         String innerName = "function%" + scope.getIndexInParent();
-        JSType type = rootNode.getJSType();
-
-        // Functions defined on anonymous objects are considered anonymous as well:
-        // doFoo({bar() {}});
-        // bar is not technically anonymous, but it's a method on an anonymous object literal so
-        // effectively it's anonymous/inaccessible. In this case, slightly correct rootNode to
-        // be a MEMBER_FUNCTION_DEF node instead of a FUNCTION node.
-        if (rootNode.getParent().isMemberFunctionDef()) {
-          rootNode = rootNode.getParent();
-        }
-
         Symbol anonymousFunctionSymbol =
             declareSymbol(
-                innerName, type, /* inferred= */ true, parent, rootNode, /* info= */ null);
+                innerName,
+                scope.getRootNode().getJSType(),
+                /* inferred= */ true,
+                parent,
+                scope.getRootNode(),
+                /* info= */ null);
         scope.setSymbolForScope(anonymousFunctionSymbol);
       }
     }
@@ -1156,6 +1146,21 @@ public final class SymbolTable {
     NodeTraversal.traverseRoots(compiler, collectSuper, externs, root);
   }
 
+  private boolean isSymbolGeneratedAndShouldNotBeIndexed(Symbol symbol) {
+    // Destructuring pass introduces new variables:
+    //
+    // let {a, b} = foo;
+    //
+    // is transpiled to
+    //
+    // let destructuring$var0 = foo;
+    // let a = destructuring$var0.a;
+    // let b = destructuring$var0.b;
+    //
+    // destructuring$var0 should not get into index as it's invisible to a user.
+    // TODO(b/77597706): remove this once destructuring transpilation is done after type checks.
+    return symbol.getName().contains(Es6RewriteDestructuring.DESTRUCTURING_TEMP_VAR);
+  }
   /*
    * Checks whether symbol is a quoted object literal key. In the following object:
    *
@@ -1234,10 +1239,27 @@ public final class SymbolTable {
    * correspond to a symbol in original source code (before transpilation).
    */
   void removeGeneratedSymbols() {
+    IdentityHashMap<Node, Symbol> nodeToSymbol = null;
     // Need to iterate over copy of values list because removeSymbol() will change the map
     // and we'll get ConcurrentModificationException
     for (Symbol symbol : ImmutableList.copyOf(symbols.values())) {
-      if (isSymbolAQuotedObjectKey(symbol)) {
+      if (isSymbolGeneratedAndShouldNotBeIndexed(symbol)) {
+        removeSymbol(symbol);
+      } else if (symbol.getDeclaration() != null
+          && symbol.getDeclaration().getNode().getBooleanProp(Node.MODULE_EXPORT)) {
+
+        // Lazy initialize nodeToSymbol map as it's needed only when ES6 modules are used.
+        if (nodeToSymbol == null) {
+          nodeToSymbol = new IdentityHashMap<>();
+          for (Symbol s : symbols.values()) {
+            for (Node node : s.references.keySet()) {
+              nodeToSymbol.put(node, s);
+            }
+          }
+        }
+
+        inlineEs6ExportProperty(symbol, nodeToSymbol);
+      } else if (isSymbolAQuotedObjectKey(symbol)) {
         // Quoted object keys are not considered symbols. Only unquoted keys and dot-access
         // properties are considered symbols. Remove the quoted key.
         boolean symbolAlreadyRemoved = !getScope(symbol).ownSymbols.containsKey(symbol.getName());
@@ -1247,6 +1269,59 @@ public final class SymbolTable {
       }
     }
     mergeExternSymbolsDuplicatedOnWindow();
+  }
+
+  /**
+   * Removes a layer of indirection introduced by ES6 module rewriting. Following example:
+   *
+   * <pre>
+   *   // a.js
+   *   export const foo = 1;
+   *
+   *   // b.js
+   *   import {foo} from './a';
+   *   console.log(foo);
+   * </pre>
+   *
+   * <p>Is rewritten to
+   *
+   * <pre>
+   *   // a.js
+   *   const foo = 1; module$a$exports = {}; module$a$exports.foo = foo;
+   *
+   *   // b.js
+   *   console.log(module$a$exports.foo);
+   * </pre>
+   *
+   * <p>So 'foo' in b.js now points to the generated property instead of original foo variable. This
+   * method removes module$a$exports.foo symbol and changes its references to point to foo.
+   */
+  private void inlineEs6ExportProperty(
+      Symbol exportPropertySymbol, IdentityHashMap<Node, Symbol> nodeToSymbol) {
+    // decl is module$a$exports.foo node from the example above.
+    Node decl = exportPropertySymbol.getDeclaration().getNode();
+    // originalSymbol is symbol declared by "const foo = 1";
+    Symbol originalSymbol = null;
+    if (decl.isGetProp() && decl.getParent().isAssign()) {
+      originalSymbol = nodeToSymbol.get(decl.getNext());
+    } else if (decl.isGetProp() && decl.getParent().isExprResult()) {
+      // Typedefs are special.
+      //
+      // /** @typedef {number} */ export Foo;
+      //
+      // is rewritten to
+      //
+      // Foo; module$a$exports = {}; module$a$exports.Foo;
+      //
+      // So we need to get type of module$a$exports.Foo in order to get hold of the original "foo"
+      // node.
+      Node originalTypedefNode = decl.getJSDocInfo().getTypedefType().getRoot();
+      originalSymbol = nodeToSymbol.get(originalTypedefNode);
+    }
+    if (originalSymbol == null) {
+      return;
+    }
+    mergeSymbol(exportPropertySymbol, originalSymbol);
   }
 
   /**
@@ -1769,7 +1844,7 @@ public final class SymbolTable {
 
         for (Node typeAst : info.getTypeNodes()) {
           SymbolScope scope = scopes.get(t.getScopeRoot());
-          visitTypeNode(info.getTemplateTypes(), scope == null ? globalScope : scope, typeAst);
+          visitTypeNode(info.getTemplateTypeNames(), scope == null ? globalScope : scope, typeAst);
         }
       }
     }
@@ -1786,11 +1861,10 @@ public final class SymbolTable {
       }
     }
 
-    public void visitTypeNode(
-        ImmutableMap<String, JSTypeExpression> templateTypeNames, SymbolScope scope, Node n) {
+    public void visitTypeNode(ImmutableList<String> templateTypeNames, SymbolScope scope, Node n) {
       if (n.isString()
           && !isNativeSourcelessType(n.getString())
-          && !templateTypeNames.containsKey(n.getString())) {
+          && !templateTypeNames.contains(n.getString())) {
         Symbol symbol = lookupPossiblyDottedName(scope, n.getString());
         if (symbol != null) {
           Node ref = n;

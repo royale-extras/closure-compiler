@@ -75,6 +75,7 @@ import javax.annotation.Nullable;
  * el.className = baseClass + '-d';
  *
  * In addition, the CSS names before replacement can optionally be gathered.
+ *
  */
 class ReplaceCssNames implements CompilerPass {
 
@@ -107,17 +108,16 @@ class ReplaceCssNames implements CompilerPass {
 
   private CssRenamingMap symbolMap;
 
-  private final Set<String> skiplist;
+  private final Set<String> whitelist;
 
   private JSType nativeStringType;
 
-  ReplaceCssNames(
-      AbstractCompiler compiler,
+  ReplaceCssNames(AbstractCompiler compiler,
       @Nullable Map<String, Integer> cssNames,
-      @Nullable Set<String> skiplist) {
+      @Nullable Set<String> whitelist) {
     this.compiler = compiler;
     this.cssNames = cssNames;
-    this.skiplist = skiplist;
+    this.whitelist = whitelist;
   }
 
   private JSType getNativeStringType() {
@@ -155,13 +155,13 @@ class ReplaceCssNames implements CompilerPass {
           case 2:
             // Replace the function call with the processed argument.
             if (first.isString()) {
-              processStringNode(first);
+              processStringNode(t, first);
               n.removeChild(first);
               parent.replaceChild(n, first);
               t.reportCodeChange();
             } else {
               compiler.report(
-                  JSError.make(n, STRING_LITERAL_EXPECTED_ERROR, first.getToken().toString()));
+                  t.makeError(n, STRING_LITERAL_EXPECTED_ERROR, first.getToken().toString()));
             }
             break;
 
@@ -173,13 +173,13 @@ class ReplaceCssNames implements CompilerPass {
 
             if (!second.isString()) {
               compiler.report(
-                  JSError.make(n, STRING_LITERAL_EXPECTED_ERROR, second.getToken().toString()));
+                  t.makeError(n, STRING_LITERAL_EXPECTED_ERROR, second.getToken().toString()));
             } else if (first.isString()) {
-              compiler.report(
-                  JSError.make(
-                      n, UNEXPECTED_STRING_LITERAL_ERROR, first.getString(), second.getString()));
+              compiler.report(t.makeError(
+                  n, UNEXPECTED_STRING_LITERAL_ERROR,
+                  first.getString(), second.getString()));
             } else {
-              processStringNode(second);
+              processStringNode(t, second);
               n.removeChild(first);
               Node replacement = IR.add(first,
                   IR.string("-" + second.getString())
@@ -192,24 +192,27 @@ class ReplaceCssNames implements CompilerPass {
             break;
 
           default:
-            compiler.report(JSError.make(n, INVALID_NUM_ARGUMENTS_ERROR, String.valueOf(count)));
+            compiler.report(t.makeError(
+                n, INVALID_NUM_ARGUMENTS_ERROR, String.valueOf(count)));
         }
       }
     }
 
     /**
-     * Processes a string argument to goog.getCssName(). The string will be renamed based off the
-     * symbol map. If there is no map or any part of the name can't be renamed, a warning is
-     * reported to the compiler and the node is left unchanged.
+     * Processes a string argument to goog.getCssName().  The string will be
+     * renamed based off the symbol map.  If there is no map or any part of the
+     * name can't be renamed, a warning is reported to the compiler and the node
+     * is left unchanged.
      *
-     * <p>If the type is unexpected then an error is reported to the compiler.
+     * If the type is unexpected then an error is reported to the compiler.
      *
+     * @param t The node traversal.
      * @param n The string node to process.
      */
-    private void processStringNode(Node n) {
+    private void processStringNode(NodeTraversal t, Node n) {
       String name = n.getString();
-      if (skiplist != null && skiplist.contains(name)) {
-        // We apply the skiplist before splitting on dashes, and not after.
+      if (whitelist != null && whitelist.contains(name)) {
+        // We apply the whitelist before splitting on dashes, and not after.
         // External substitution maps should do the same.
         return;
       }
@@ -220,7 +223,8 @@ class ReplaceCssNames implements CompilerPass {
           case BY_WHOLE:
             replacement = symbolMap.get(name);
             if (replacement == null) {
-              compiler.report(JSError.make(n, UNKNOWN_SYMBOL_WARNING, name, name));
+              compiler.report(
+                  t.makeError(n, UNKNOWN_SYMBOL_WARNING, name, name));
               return;
             }
             break;
@@ -230,7 +234,8 @@ class ReplaceCssNames implements CompilerPass {
               String part = symbolMap.get(parts[i]);
               if (part == null) {
                 // If we can't encode all parts, don't encode any of it.
-                compiler.report(JSError.make(n, UNKNOWN_SYMBOL_WARNING, parts[i], name));
+                compiler.report(
+                    t.makeError(n, UNKNOWN_SYMBOL_WARNING, parts[i], name));
                 return;
               }
               replaced[i] = part;

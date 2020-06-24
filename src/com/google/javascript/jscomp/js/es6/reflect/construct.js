@@ -21,7 +21,6 @@
 
 'require es6/util/construct';
 'require util/polyfill';
-'require es6/reflect/reflect';
 
 $jscomp.polyfill('Reflect.construct', function(orig) {
   // NOTE: This is just Reflect.construct if it's present and functional.

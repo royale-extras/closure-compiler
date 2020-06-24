@@ -25,6 +25,7 @@ import org.junit.runners.JUnit4;
  * Unit tests for {@link FlowSensitiveInlineVariables}.
  *
  */
+
 @RunWith(JUnit4.class)
 public final class FlowSensitiveInlineVariablesTest extends CompilerTestCase {
 
@@ -49,11 +50,12 @@ public final class FlowSensitiveInlineVariablesTest extends CompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
+    //return new FlowSensitiveInlineVariables(compiler);
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node root) {
-        new PureFunctionIdentifier.Driver(compiler).process(externs, root);
-        new FlowSensitiveInlineVariables(compiler).process(externs, root);
+        (new MarkNoSideEffectCalls(compiler)).process(externs, root);
+        (new FlowSensitiveInlineVariables(compiler)).process(externs, root);
       }
     };
   }

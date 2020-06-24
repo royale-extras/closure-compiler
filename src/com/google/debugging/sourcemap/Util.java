@@ -17,6 +17,9 @@ package com.google.debugging.sourcemap;
 
 import java.io.IOException;
 
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 public class Util {
 
   private static final char[] HEX_CHARS

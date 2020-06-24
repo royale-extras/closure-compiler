@@ -32,64 +32,64 @@
 function DOMException(message, name) {}
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.INDEX_SIZE_ERR;
+DOMException.INDEX_SIZE_ERR = 1;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.DOMSTRING_SIZE_ERR;
+DOMException.DOMSTRING_SIZE_ERR = 2;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.HIERARCHY_REQUEST_ERR;
+DOMException.HIERARCHY_REQUEST_ERR = 3;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.WRONG_DOCUMENT_ERR;
+DOMException.WRONG_DOCUMENT_ERR = 4;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.INVALID_CHARACTER_ERR;
+DOMException.INVALID_CHARACTER_ERR = 5;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.NO_DATA_ALLOWED_ERR;
+DOMException.NO_DATA_ALLOWED_ERR = 6;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.NO_MODIFICATION_ALLOWED_ERR;
+DOMException.NO_MODIFICATION_ALLOWED_ERR = 7;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.NOT_FOUND_ERR;
+DOMException.NOT_FOUND_ERR = 8;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.NOT_SUPPORTED_ERR;
+DOMException.NOT_SUPPORTED_ERR = 9;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-258A00AF
  */
-DOMException.INUSE_ATTRIBUTE_ERR;
+DOMException.INUSE_ATTRIBUTE_ERR = 10;
 
 /**
  * @constructor
@@ -203,9 +203,7 @@ Node.prototype.appendChild = function(newChild) {};
 
 /**
  * @param {boolean} deep
- * @return {THIS}
- * @this {THIS}
- * @template THIS
+ * @return {!Node}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#method-cloneNode
  * @nosideeffects
  */
@@ -242,73 +240,79 @@ Node.prototype.removeChild = function(oldChild) {};
 Node.prototype.replaceChild = function(newChild, oldChild) {};
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.ATTRIBUTE_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.CDATA_SECTION_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.COMMENT_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.DOCUMENT_FRAGMENT_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.DOCUMENT_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.DOCUMENT_TYPE_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.ELEMENT_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.ENTITY_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.ENTITY_REFERENCE_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.PROCESSING_INSTRUCTION_NODE;
 
 /**
- * @const {number}
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.TEXT_NODE;
 
 /**
- * @const {number}
+ * @type {number}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
+ */
+Node.XPATH_NAMESPACE_NODE;
+
+/**
+ * @type {number}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1950641247
  */
 Node.NOTATION_NODE;
@@ -380,16 +384,24 @@ Document.prototype.createDocumentFragment = function() {};
  * Create a DOM element.
  *
  * Web components introduced the second parameter as a way of extending existing
- * tags (e.g. document.createElement('button', {is: 'fancy-button'})).
+ * tags (e.g. document.createElement('button', 'fancy-button')).
  *
  * @param {string} tagName
- * @param {({is: string}|string)=} opt_typeExtension
+ * @param {string=} opt_typeExtension
  * @return {!Element}
  * @nosideeffects
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#method-createElement
- * @see https://dom.spec.whatwg.org/#dom-document-createelement
+ * @see http://w3c.github.io/webcomponents/spec/custom/#extensions-to-document-interface-to-instantiate
  */
 Document.prototype.createElement = function(tagName, opt_typeExtension) {};
+
+/**
+ * @param {string} name
+ * @return {!EntityReference}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#method-createEntityReference
+ * @nosideeffects
+ */
+Document.prototype.createEntityReference = function(name) {};
 
 /**
  * @param {string} target
@@ -417,32 +429,6 @@ Document.prototype.createTextNode = function(data) {};
 Document.prototype.getElementsByTagName = function(tagname) {};
 
 /**
- * @see https://developer.mozilla.org/en-US/docs/Web/API/Document/open
- * @see https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-open
- */
-Document.prototype.open;
-
-/**
- * @return {undefined}
- * @see https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-close
- */
-Document.prototype.close = function() {};
-
-/**
- * @param {!TrustedHTML|string} text
- * @return {undefined}
- * @see https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-write
- */
-Document.prototype.write = function(text) {};
-
-/**
- * @param {!TrustedHTML|string} text
- * @return {undefined}
- * @see https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-writeln
- */
-Document.prototype.writeln = function(text) {};
-
-/**
  * @constructor
  * @implements {IArrayLike<T>}
  * @implements {Iterable<T>}
@@ -467,7 +453,8 @@ NodeList.prototype.item = function(index) {};
 /**
  * @param {?function(this:S, T, number, !NodeList<T>): ?} callback
  * @param {S=} opt_thisobj
- * @template S
+ * @this {NodeList<T>}
+ * @template T,S
  * @return {undefined}
  * @see https://developer.mozilla.org/en-US/docs/Web/API/NodeList/forEach
  */
@@ -612,13 +599,6 @@ Attr.prototype.value;
 function Element() {}
 
 /**
- * @type {string}
- * @implicitCast
- * @see https://dom.spec.whatwg.org/index.html#dom-element-id
- */
-Element.prototype.id;
-
-/**
  * An Element always contains a non-null NamedNodeMap containing the attributes
  * of this node.
  * @type {!NamedNodeMap<!Attr>}
@@ -645,13 +625,13 @@ Element.prototype.className;
 
 /**
  * @param {string} name
- * @param {?number=} flags
+ * @param {number?=} opt_flags
  * @return {string}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#method-getAttribute
  * @see http://msdn.microsoft.com/en-us/library/ms536429(VS.85).aspx
  * @nosideeffects
  */
-Element.prototype.getAttribute = function(name, flags) {};
+Element.prototype.getAttribute = function(name, opt_flags) {};
 
 /**
  * @param {string} name
@@ -685,9 +665,9 @@ Element.prototype.removeAttributeNode = function(oldAttr) {};
 
 /**
  * @param {string} name
- * @param {string|number|boolean|!TrustedHTML|!TrustedScriptURL}
- *     value Values are converted to strings with ToString, so we accept number
- *     and boolean since both convert easily to strings.
+ * @param {string|number|boolean} value Values are converted to strings with
+ *     ToString, so we accept number and boolean since both convert easily to
+ *     strings.
  * @return {undefined}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#method-setAttribute
  */
@@ -725,8 +705,8 @@ Element.prototype.setAttributeNode = function(newAttr) {};
 /** @type {?function (Event)} */ Element.prototype.onkeydown;
 /** @type {?function (Event)} */ Element.prototype.onkeypress;
 /** @type {?function (Event)} */ Element.prototype.onkeyup;
-/** @type {?function (Event): void} */ Element.prototype.onload;
-/** @type {?function (Event): void} */ Element.prototype.onunload;
+/** @type {?function (Event)} */ Element.prototype.onload;
+/** @type {?function (Event)} */ Element.prototype.onunload;
 /** @type {?function (Event)} */ Element.prototype.onmousedown;
 /** @type {?function (Event)} */ Element.prototype.onmousemove;
 /** @type {?function (Event)} */ Element.prototype.onmouseout;
@@ -779,10 +759,73 @@ function CDATASection() {}
 function DocumentType() {}
 
 /**
+ * @type {NamedNodeMap<!Entity>}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1788794630
+ */
+DocumentType.prototype.entities;
+
+/**
  * @type {string}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-1844763134
  */
 DocumentType.prototype.name;
+
+/**
+ * @type {NamedNodeMap<!Notation>}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-D46829EF
+ */
+DocumentType.prototype.notations;
+
+/**
+ * @constructor
+ * @extends {Node}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-5431D1B9
+ */
+function Notation() {}
+
+/**
+ * @type {string}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-54F2B4D0
+ */
+Notation.prototype.publicId;
+
+/**
+ * @type {string}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-E8AAB1D0
+ */
+Notation.prototype.systemId;
+
+/**
+ * @constructor
+ * @extends {Node}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-527DCFF2
+ */
+function Entity() {}
+
+/**
+ * @type {string}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-D7303025
+ */
+Entity.prototype.publicId;
+
+/**
+ * @type {string}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-D7C29F3E
+ */
+Entity.prototype.systemId;
+
+/**
+ * @type {string}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-6ABAEB38
+ */
+Entity.prototype.notationName;
+
+/**
+ * @constructor
+ * @extends {Node}
+ * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-11C98490
+ */
+function EntityReference() {}
 
 /**
  * @constructor
@@ -855,6 +898,5 @@ Window.prototype.onerror;
 /** @type {?function (Event)} */ Window.prototype.onscroll;
 /** @type {?function (Event)} */ Window.prototype.onselect;
 /** @type {?function (Event=)} */ Window.prototype.onsubmit;
-/** @type {?function (Event)} */ Window.prototype.onunhandledrejection;
 /** @type {?function (Event)} */ Window.prototype.onunload;
 /** @type {?function (Event)} */ Window.prototype.onwheel;

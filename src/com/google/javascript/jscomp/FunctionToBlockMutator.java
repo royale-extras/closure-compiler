@@ -38,18 +38,18 @@ import java.util.Set;
 /**
  * A class to transform the body of a function into a generic block suitable
  * for inlining.
+ *
+ * @author johnlenz@google.com (John Lenz)
  */
 class FunctionToBlockMutator {
 
   private final AbstractCompiler compiler;
   private final Supplier<String> safeNameIdSupplier;
-  private final FunctionArgumentInjector functionArgumentInjector;
 
   FunctionToBlockMutator(
       AbstractCompiler compiler, Supplier<String> safeNameIdSupplier) {
-    this.compiler = checkNotNull(compiler);
+    this.compiler = compiler;
     this.safeNameIdSupplier = safeNameIdSupplier;
-    this.functionArgumentInjector = new FunctionArgumentInjector(compiler.getAstAnalyzer());
   }
 
   /**
@@ -139,14 +139,15 @@ class FunctionToBlockMutator {
     }
 
     // TODO(johnlenz): Mark NAME nodes constant for parameters that are not modified.
-    Set<String> namesToAlias = functionArgumentInjector.findModifiedParameters(newFnNode);
+    Set<String> namesToAlias =
+        FunctionArgumentInjector.findModifiedParameters(newFnNode);
     ImmutableMap<String, Node> args =
-        functionArgumentInjector.getFunctionCallParameterMap(
+        FunctionArgumentInjector.getFunctionCallParameterMap(
             newFnNode, callNode, this.safeNameIdSupplier);
     boolean hasArgs = !args.isEmpty();
     if (hasArgs) {
-      functionArgumentInjector.maybeAddTempsForCallArguments(
-          compiler, newFnNode, args, namesToAlias, compiler.getCodingConvention());
+      FunctionArgumentInjector.maybeAddTempsForCallArguments(
+          newFnNode, args, namesToAlias, compiler.getCodingConvention());
     }
 
     Node newBlock = NodeUtil.getFunctionBody(newFnNode);
@@ -311,7 +312,8 @@ class FunctionToBlockMutator {
 
     if (namesToAlias == null || namesToAlias.isEmpty()) {
       // There are no names to alias, just inline the arguments directly.
-      Node result = functionArgumentInjector.inject(compiler, fnTemplateRoot, null, argMap);
+      Node result = FunctionArgumentInjector.inject(
+          compiler, fnTemplateRoot, null, argMap);
       checkState(result == fnTemplateRoot);
       return result;
     } else {
@@ -331,22 +333,24 @@ class FunctionToBlockMutator {
         String name = entry.getKey();
         if (namesToAlias.contains(name)) {
           if (name.equals(THIS_MARKER)) {
-            boolean referencesThis = NodeUtil.referencesEnclosingReceiver(fnTemplateRoot);
+            boolean referencesThis = NodeUtil.referencesThis(fnTemplateRoot);
             // Update "this", this is only necessary if "this" is referenced
             // and the value of "this" is not Token.THIS, or the value of "this"
             // has side effects.
 
             Node value = entry.getValue();
             if (!value.isThis()
-                && (referencesThis || compiler.getAstAnalyzer().mayHaveSideEffects(value))) {
+                && (referencesThis
+                    || NodeUtil.mayHaveSideEffects(value, compiler))) {
               String newName = getUniqueThisName();
               Node newValue = entry.getValue().cloneTree();
-              Node newNode =
-                  NodeUtil.newVarNode(newName, newValue)
-                      .useSourceInfoIfMissingFromForTree(newValue);
+              Node newNode = NodeUtil.newVarNode(newName, newValue)
+                  .useSourceInfoIfMissingFromForTree(newValue);
               newVars.add(0, newNode);
               // Remove the parameter from the list to replace.
-              newArgMap.put(THIS_MARKER, IR.name(newName).srcrefTree(newValue));
+              newArgMap.put(THIS_MARKER,
+                  IR.name(newName)
+                      .srcrefTree(newValue));
             }
           } else {
             Node newValue = entry.getValue().cloneTree();
@@ -360,7 +364,8 @@ class FunctionToBlockMutator {
       }
 
       // Inline the arguments.
-      Node result = functionArgumentInjector.inject(compiler, fnTemplateRoot, null, newArgMap);
+      Node result = FunctionArgumentInjector.inject(
+          compiler, fnTemplateRoot, null, newArgMap);
       checkState(result == fnTemplateRoot);
 
       // Now that the names have been replaced, add the new aliases for

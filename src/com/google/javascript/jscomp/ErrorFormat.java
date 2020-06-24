@@ -18,7 +18,9 @@ package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.SourceExcerptProvider.SourceExcerpt;
 
-/** Error formats available. */
+/**
+ * Error formats available.
+ */
 public enum ErrorFormat {
   SINGLELINE {
     @Override
@@ -30,21 +32,12 @@ public enum ErrorFormat {
       return formatter;
     }
   },
-  FULL {
+  MULTILINE {
     @Override
     public MessageFormatter toFormatter(
         SourceExcerptProvider source, boolean colorize) {
-      LightweightMessageFormatter formatter =
-          new LightweightMessageFormatter(source, SourceExcerpt.FULL);
-      formatter.setColorize(colorize);
-      return formatter;
-    }
-  },
-  MULTILINE {
-    @Override
-    public MessageFormatter toFormatter(SourceExcerptProvider source, boolean colorize) {
-      LightweightMessageFormatter formatter =
-          new LightweightMessageFormatter(source, SourceExcerpt.REGION);
+      LightweightMessageFormatter formatter = new LightweightMessageFormatter(
+          source, SourceExcerpt.REGION);
       formatter.setColorize(colorize);
       return formatter;
     }

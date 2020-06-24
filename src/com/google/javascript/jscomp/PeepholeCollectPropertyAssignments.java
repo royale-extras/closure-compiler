@@ -27,6 +27,8 @@ import com.google.javascript.rhino.Node;
  * <p>
  * E.g. {@code var a = [];a[0] = 0} is optimized to {@code var a = [0]} and
  * similarly for the object constructor.
+ *
+ * @author msamuel@google.com (Mike Samuel)
  */
 final class PeepholeCollectPropertyAssignments extends AbstractPeepholeOptimization {
 
@@ -74,7 +76,7 @@ final class PeepholeCollectPropertyAssignments extends AbstractPeepholeOptimizat
     }
 
     if (codeChanged) {
-      reportChangeToEnclosingScope(subtree);
+      compiler.reportChangeToEnclosingScope(subtree);
     }
     return subtree;
   }
@@ -114,7 +116,7 @@ final class PeepholeCollectPropertyAssignments extends AbstractPeepholeOptimizat
 
     // to a property...
     Node lhs = expr.getFirstChild();
-    if (!NodeUtil.isNormalGet(lhs)) {
+    if (!NodeUtil.isGet(lhs)) {
       return false;
     }
 
@@ -233,7 +235,7 @@ final class PeepholeCollectPropertyAssignments extends AbstractPeepholeOptimizat
 
     String propertyName;
     if (property.isNumber()) {
-      propertyName = getSideEffectFreeStringValue(property);
+      propertyName = NodeUtil.getStringValue(property);
     } else {
       propertyName = property.getString();
     }
@@ -278,7 +280,7 @@ final class PeepholeCollectPropertyAssignments extends AbstractPeepholeOptimizat
     newProperty.addChildToBack(newValue);
 
     if (existingProperty != null) {
-      deleteNode(existingProperty);
+       NodeUtil.deleteNode(existingProperty, compiler);
     }
     // If the property does not already exist we can safely add it
     objectLiteral.addChildToBack(newProperty);

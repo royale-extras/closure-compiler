@@ -16,8 +16,7 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.CollapseProperties.PARTIAL_NAMESPACE_WARNING;
-import static com.google.javascript.jscomp.CollapseProperties.RECEIVER_AFFECTED_BY_COLLAPSE;
+import static com.google.javascript.jscomp.CollapseProperties.UNSAFE_NAMESPACE_WARNING;
 
 import com.google.javascript.jscomp.CompilerOptions.PropertyCollapseLevel;
 import com.google.javascript.rhino.Node;
@@ -30,6 +29,7 @@ import org.junit.runners.JUnit4;
  * Tests for {@link AggressiveInlineAliases} plus {@link CollapseProperties}.
  *
  */
+
 @RunWith(JUnit4.class)
 public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
@@ -64,6 +64,10 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   public void setUp() throws Exception {
     super.setUp();
     enableNormalize();
+  }
+
+  @Override protected int getNumRepetitions() {
+    return 1;
   }
 
   @Test
@@ -252,36 +256,32 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
   @Test
   public void testAliasCreatedForClassDepth1_1() {
-    test(
-        lines(
-            "var a = {}; /** @constructor */ a.b = function(){};",
-            "var c = a; c.b = 0; a.b == c.b;"),
-        lines(
-            "/** @constructor */ var a$b = function(){};", //
-            "var c = null; a$b = 0; a$b == a$b;"));
+    // A class's name is always collapsed, even if one of its prefixes is
+    // referenced in such a way that an alias is created for it.
+    test("var a = {}; /** @constructor */ a.b = function(){};"
+         + "var c = a; c.b = 0; a.b != c.b;",
+         "/** @constructor */ var a$b = function(){}; var c = null; a$b = 0; a$b != a$b;");
 
-    testSame(
+    test(
         lines(
             "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
             "var c = 1; c = a; c.b = 0; a.b == c.b;"),
-        PARTIAL_NAMESPACE_WARNING);
+        lines(
+            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
+            "var c = 1; c = a; c.b = 0; a.b == c.b;"),
+        warning(UNSAFE_NAMESPACE_WARNING));
+
+    test("var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+        + "var c = a; c.b = 0; a.b == c.b;",
+        "var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+        + "var c = null; a.b = 0; a.b == a.b;");
 
     test(
-        lines(
-            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
-            "var c = a; c.b = 0; a.b == c.b;"),
-        lines(
-            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
-            "var c = null; a.b = 0; a.b == a.b;"));
-
-    test(
-        lines(
-            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
-            "var c = a; c.b = 0; a.b == c.b; use(c);"),
-        lines(
-            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
-            "var c = null; a.b = 0; a.b == a.b; use(a);"),
-        warning(PARTIAL_NAMESPACE_WARNING));
+        "var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+        + "var c = a; c.b = 0; a.b == c.b; use(c);",
+        "var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+        + "var c = null; a.b = 0; a.b == a.b; use(a);",
+        warning(UNSAFE_NAMESPACE_WARNING));
   }
 
   @Test
@@ -399,14 +399,15 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         lines(
             "var a = {};",
             "/** @constructor */",
-            "a.b = function (){};",
-            "a.b.x = 0;",
+            "var a$b = function (){};",
+            "var a$b$y;",
+            "var a$b$x = 0;",
             "var c = null;",
-            "(function() {a.b.y = 1;})();",
-            "a.b.x;",
-            "a.b.y;",
+            "(function() {a$b$y = 1;})();",
+            "a$b$x;",
+            "a$b$y;",
             "use(a);"),
-        warning(PARTIAL_NAMESPACE_WARNING));
+        warning(UNSAFE_NAMESPACE_WARNING));
   }
 
   @Test
@@ -1247,34 +1248,33 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
   @Test
   public void testEs6ClassStaticProperties() {
-    // Collapsing static properties (A.foo and A.useFoo in this case) is known to be unsafe.
+    // Collapsing static properties (A.foo in this case) is known to be unsafe.
     test(
-        srcs(
-            lines(
-                "class A {",
-                "  static useFoo() {",
-                "    alert(this.foo);",
-                "  }",
-                "}",
-                "A.foo = 'bar';",
-                "const B = A;",
-                "B.foo = 'baz';",
-                "B.useFoo();")),
-        expected(
-            lines(
-                "var A$useFoo = function() { alert(this.foo); };",
-                "class A {}",
-                "var A$foo = 'bar';",
-                "const B = null;",
-                "A$foo = 'baz';",
-                "A$useFoo();")),
-        warning(RECEIVER_AFFECTED_BY_COLLAPSE));
+        lines(
+            "class A {",
+            "  static useFoo() {",
+            "    alert(this.foo);",
+            "  }",
+            "}",
+            "A.foo = 'bar';",
+            "const B = A;",
+            "B.foo = 'baz';",
+            "B.useFoo();"),
+        lines(
+            "class A {",
+            "static useFoo() {",
+            "alert(this.foo);",
+            "}",
+            "}",
+            "var A$foo = 'bar';",
+            "const B = null;",
+            "A$foo = 'baz';",
+            "A.useFoo();"));
 
     // Adding @nocollapse makes this safe.
     test(
         lines(
             "class A {",
-            "  /** @nocollapse */",
             "  static useFoo() {",
             "    alert(this.foo);",
             "  }",
@@ -1286,10 +1286,9 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
             "B.useFoo();"),
         lines(
             "class A {",
-            "  /** @nocollapse */",
-            "  static useFoo() {",
-            "    alert(this.foo);",
-            "  }",
+            "static useFoo() {",
+            "alert(this.foo);",
+            "}",
             "}",
             "/** @nocollapse */",
             "A.foo = 'bar';",
@@ -1302,15 +1301,14 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   public void testClassStaticInheritance_method() {
     test(
         "class A { static s() {} } class B extends A {} const C = B;    C.s();",
-        "var A$s = function() {}; class A {} class B extends A {} const C = null; A$s();");
+        "class A { static s() {} } class B extends A {} const C = null; B.s();");
 
-    test(
-        "class A { static s() {} } class B extends A {} B.s();",
-        "var A$s = function() {}; class A {} class B extends A {} A$s();");
+    testSame("class A { static s() {} } class B extends A {} B.s();");
 
+    // Currently we unsafely collapse A.s because we don't detect it is a class static method.
     test(
         "class A {}     A.s = function() {}; class B extends A {} B.s();",
-        "class A {} var A$s = function() {}; class B extends A {} A$s();");
+        "class A {} var A$s = function() {}; class B extends A {} B.s();");
   }
 
   @Test
@@ -1351,21 +1349,13 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
   @Test
   public void testClassStaticInheritance_cantDetermineSuperclass() {
-    // Here A.foo and B.foo are unsafely collapsed because getSuperclass() creates an alias for them
-    test(
+    // Here A.foo and B.foo are not collapsed because getSuperclass() creates an alias for them.
+    testSame(
         lines(
             "class A {}",
             "A.foo = 5;",
             "class B {}",
             "B.foo = 6;",
-            "function getSuperclass() { return 1 < 2 ? A : B; }",
-            "class C extends getSuperclass() {}",
-            "use(C.foo);"),
-        lines(
-            "class A {}",
-            "var A$foo = 5;",
-            "class B {}",
-            "var B$foo = 6;",
             "function getSuperclass() { return 1 < 2 ? A : B; }",
             "class C extends getSuperclass() {}",
             "use(C.foo);"));
@@ -1430,6 +1420,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
   @Test
   public void testDestructingAliasWithConstructor() {
+    // TODO(b/69293284): Make this not warn and correctly replace "new ctor" with "new ns$ctor".
     test(
         lines(
             "var ns = {};",
@@ -1438,51 +1429,12 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
             "const {ctor} = ns;",
             "let c = new ctor;"),
         lines(
+            "var ns = {};",
             "/** @constructor */",
             "var ns$ctor = function() {}",
-            "const ctor = null;",
-            "let c = new ns$ctor;"));
-  }
-
-  @Test
-  public void namespaceInDestructuringPattern() {
-    testSame(
-        lines(
-            "const ns = {};",
-            "ns.x = 1;",
-            "ns.y = 2;",
-            "let {x, y} = ns;",
-            "x = 4;", // enforce that we can't inline x -> ns.x because it's set multiple times
-            "use(x + y);"));
-  }
-
-  @Test
-  public void inlineDestructuringPatternConstructorWithProperty() {
-    test(
-        lines(
-            "const ns = {};",
-            "/** @constructor */",
-            "ns.Y = function() {};",
-            "ns.Y.prop = 3;",
-            "const {Y} = ns;",
-            "use(Y.prop);"),
-        lines(
-            "/** @constructor */",
-            "var ns$Y = function() {};",
-            "var ns$Y$prop = 3;",
-            "const Y = null;",
-            "use(ns$Y$prop);"));
-
-    // Only `const` destructuring aliases have special handling by AggressiveInlineAliases
-    testSame(
-        lines(
-            "const ns = {};",
-            "/** @constructor */",
-            "ns.Y = function() {};",
-            "ns.Y.prop = 3;",
-            "let {Y} = ns;",
-            "use(Y.prop);"),
-        PARTIAL_NAMESPACE_WARNING);
+            "const {ctor} = ns;",
+            "let c = new ctor;"),
+        warning(CollapseProperties.UNSAFE_NAMESPACE_WARNING));
   }
 
   @Test
@@ -1680,26 +1632,5 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
                 "ns.alias = Foo;",
                 "use(ns);",
                 "use(ns.alias.prop);")));
-  }
-
-  @Test
-  public void testClassStaticMemberAccessedWithSuper() {
-    test(
-        lines(
-            "class Bar {",
-            "  static double(n) {",
-            "    return n*2",
-            "  }",
-            "}",
-            "class Baz extends Bar {",
-            "  static quadruple(n) {",
-            "    return 2 * super.double(n);",
-            " }",
-            "}"),
-        lines(
-            "var Bar$double = function(n) { return n * 2; }",
-            "class Bar {}",
-            "var Baz$quadruple = function(n) { return 2 * Bar$double(n); }",
-            "class Baz extends Bar {}"));
   }
 }

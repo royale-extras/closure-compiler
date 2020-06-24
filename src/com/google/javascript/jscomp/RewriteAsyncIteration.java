@@ -18,15 +18,13 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.rhino.IR.getprop;
 
-import com.google.common.base.Supplier;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.JSTypeNative;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import java.util.ArrayDeque;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -61,6 +59,7 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
   static final DiagnosticType CANNOT_CONVERT_ASYNCGEN =
       DiagnosticType.error("JSC_CANNOT_CONVERT_ASYNCGEN", "Cannot convert async generator. {0}");
 
+  private static final String GENERATOR_WRAPPER_NAME = "$jscomp.AsyncGeneratorWrapper";
   private static final String ACTION_RECORD_NAME = "$jscomp.AsyncGeneratorWrapper$ActionRecord";
 
   private static final String ACTION_ENUM_AWAIT =
@@ -80,9 +79,6 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
   private final String thisVarName = "$jscomp$asyncIter$this";
   private final String argumentsVarName = "$jscomp$asyncIter$arguments";
   private final String superPropGetterPrefix = "$jscomp$asyncIter$super$get$";
-  private final JSTypeRegistry registry;
-  private final AstFactory astFactory;
-  private final JSType unknownType;
 
   /**
    * If this option is set to true, then this pass will rewrite references to properties using super
@@ -105,79 +101,42 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
    */
   private static final class LexicalContext {
 
-    // Node that creates the context
-    private final Node contextRoot;
     // The current function, or null if root scope where we are not in a function.
     private final Node function;
     // The context of the most recent definition of this/super/arguments
     private final ThisSuperArgsContext thisSuperArgsContext;
 
     // Represents the global/root scope. Should only exist on the bottom of the contextStack.
-    private LexicalContext(Node contextRoot) {
-      this.contextRoot = checkNotNull(contextRoot);
+    private LexicalContext() {
       this.function = null;
       this.thisSuperArgsContext = null;
     }
 
-    /**
-     * Represents the context of a function or its parameter list.
-     *
-     * @param parent enclosing context
-     * @param contextRoot FUNCTION or PARAM_LIST node
-     * @param function same as contextRoot or the FUNCTION containing the PARAM_LIST
-     */
-    private LexicalContext(LexicalContext parent, Node contextRoot, Node function) {
+    private LexicalContext(LexicalContext parent, Node function) {
       checkNotNull(parent);
-      checkNotNull(contextRoot);
-      checkArgument(contextRoot == function || contextRoot.isParamList(), contextRoot);
       checkNotNull(function);
-      checkArgument(function.isFunction(), function);
-      this.contextRoot = contextRoot;
+      checkArgument(function.isFunction());
       this.function = function;
 
       if (function.isArrowFunction()) {
-        // Use the parent context to inherit this, arguments, and super for an arrow function or its
-        // parameter list.
+        // Use the parent context to inherit this, arguments, and super.
         this.thisSuperArgsContext = parent.thisSuperArgsContext;
-      } else if (contextRoot.isFunction()) {
-        // Non-arrow function gets its own context defining `this`, `arguments`, and `super`.
-        this.thisSuperArgsContext = new ThisSuperArgsContext(this);
       } else {
-        // contextRoot is a parameter list.
-        // Never alias `this`, `arguments`, or `super` for normal function parameter lists.
-        // They are implicitly defined there.
-        this.thisSuperArgsContext = null;
+        // Non-arrow gets its own context defining this, arguments, and super.
+        this.thisSuperArgsContext = new ThisSuperArgsContext(this);
       }
     }
 
-    static LexicalContext newGlobalContext(Node contextRoot) {
-      return new LexicalContext(contextRoot);
+    static LexicalContext newGlobalContext() {
+      return new LexicalContext();
     }
 
     static LexicalContext newContextForFunction(LexicalContext parent, Node function) {
-      // Functions need their own context because:
-      //     - async generator functions must be transpiled
-      //     - non-async generator functions must NOT be transpiled
-      //     - arrow functions inside of async generator functions need to have
-      //       `this`, `arguments`, and `super` references aliased, including in their
-      //       parameter lists
-      return new LexicalContext(parent, function, function);
-    }
-
-    static LexicalContext newContextForParamList(LexicalContext parent, Node paramList) {
-      // Parameter lists need their own context because `this`, `arguments`, and `super` must NOT be
-      // aliased for non-arrow function parameter lists, even for async generator functions.
-      return new LexicalContext(parent, paramList, parent.function);
+      return new LexicalContext(parent, function);
     }
 
     Node getFunctionDeclaringThisArgsSuper() {
       return thisSuperArgsContext.ctx.function;
-    }
-
-    /** Is it necessary to replace `this`, `super`, and `arguments` with aliases in this context? */
-    boolean mustReplaceThisSuperArgs() {
-      return thisSuperArgsContext != null
-          && getFunctionDeclaringThisArgsSuper().isAsyncGeneratorFunction();
     }
   }
 
@@ -204,27 +163,11 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     this.contextStack = new ArrayDeque<>();
     this.rewriteSuperPropertyReferencesWithoutSuper =
         builder.rewriteSuperPropertyReferencesWithoutSuper;
-    this.registry = builder.registry;
-    this.astFactory = builder.astFactory;
-    this.unknownType = createType(() -> registry.getNativeType(JSTypeNative.UNKNOWN_TYPE));
-  }
-
-  private <T extends JSType> T createType(Supplier<T> fn) {
-    if (astFactory.isAddingTypes()) {
-      return fn.get();
-    }
-    return null;
-  }
-
-  private JSType createGenericType(JSTypeNative typeName, JSType typeArg) {
-    return Es6ToEs3Util.createGenericType(astFactory.isAddingTypes(), registry, typeName, typeArg);
   }
 
   static class Builder {
     private final AbstractCompiler compiler;
     private boolean rewriteSuperPropertyReferencesWithoutSuper = false;
-    private JSTypeRegistry registry;
-    private AstFactory astFactory;
 
     Builder(AbstractCompiler compiler) {
       checkNotNull(compiler);
@@ -237,20 +180,18 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     }
 
     RewriteAsyncIteration build() {
-      astFactory = compiler.createAstFactory();
-      registry = compiler.getTypeRegistry();
       return new RewriteAsyncIteration(this);
     }
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    process(scriptRoot, /* hotSwap= */ true);
+    process(scriptRoot);
   }
 
   @Override
   public void process(Node externs, Node root) {
-    process(root, /* hotSwap= */ false);
+    process(root);
   }
 
   /**
@@ -258,26 +199,25 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
    *
    * @param root Root of AST to rewrite
    */
-  private void process(Node root, boolean hotSwap) {
+  private void process(Node root) {
     checkState(contextStack.isEmpty());
-    contextStack.push(LexicalContext.newGlobalContext(root));
-    if (hotSwap) {
-      TranspilationPasses.hotSwapTranspile(compiler, root, transpiledFeatures, this);
-    } else {
-      TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
-    }
+    contextStack.push(LexicalContext.newGlobalContext());
+    TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
     TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
     checkState(contextStack.element().function == null);
     contextStack.remove();
     checkState(contextStack.isEmpty());
   }
 
+  private boolean isInContextOfAsyncGenerator(LexicalContext ctx) {
+    return ctx.thisSuperArgsContext != null
+        && ctx.getFunctionDeclaringThisArgsSuper().isAsyncGeneratorFunction();
+  }
+
   @Override
   public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
     if (n.isFunction()) {
       contextStack.push(LexicalContext.newContextForFunction(contextStack.element(), n));
-    } else if (n.isParamList()) {
-      contextStack.push(LexicalContext.newContextForParamList(contextStack.element(), n));
     }
     return true;
   }
@@ -287,30 +227,24 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     LexicalContext ctx = contextStack.element();
     switch (n.getToken()) {
         // Async Generators (and popping contexts)
-      case PARAM_LIST:
-        // Done handling parameter list, so pop its context
-        checkState(n.equals(ctx.contextRoot), n);
-        contextStack.pop();
-        break;
       case FUNCTION:
-        checkState(n.equals(ctx.contextRoot));
+        checkState(n.equals(ctx.function));
         if (n.isAsyncGeneratorFunction()) {
-          convertAsyncGenerator(t, n);
+          convertAsyncGenerator(n);
           prependTempVarDeclarations(ctx, t);
         }
-        // Done handling function, so pop its context
         contextStack.pop();
         break;
       case AWAIT:
         checkNotNull(ctx.function);
         if (ctx.function.isAsyncGeneratorFunction()) {
-          convertAwaitOfAsyncGenerator(t, ctx, n);
+          convertAwaitOfAsyncGenerator(ctx, n);
         }
         break;
       case YIELD: // Includes yield*
         checkNotNull(ctx.function);
         if (ctx.function.isAsyncGeneratorFunction()) {
-          convertYieldOfAsyncGenerator(t, ctx, n);
+          convertYieldOfAsyncGenerator(ctx, n);
         }
         break;
 
@@ -318,24 +252,24 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
       case FOR_AWAIT_OF:
         checkNotNull(ctx.function);
         checkState(ctx.function.isAsyncFunction());
-        replaceForAwaitOf(t, ctx, n);
-        NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.CONST_DECLARATIONS, compiler);
+        replaceForAwaitOf(ctx, n);
+        NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CONST_DECLARATIONS);
         break;
 
         // Maintaining references to this/arguments/super
       case THIS:
-        if (ctx.mustReplaceThisSuperArgs()) {
-          replaceThis(t, ctx, n);
+        if (isInContextOfAsyncGenerator(ctx)) {
+          replaceThis(ctx, n);
         }
         break;
       case NAME:
-        if (ctx.mustReplaceThisSuperArgs() && n.matchesName("arguments")) {
-          replaceArguments(t, ctx, n);
+        if (isInContextOfAsyncGenerator(ctx) && n.matchesQualifiedName("arguments")) {
+          replaceArguments(ctx, n);
         }
         break;
       case SUPER:
-        if (ctx.mustReplaceThisSuperArgs()) {
-          replaceSuper(t, ctx, n, parent);
+        if (isInContextOfAsyncGenerator(ctx)) {
+          replaceSuper(ctx, n, parent);
         }
         break;
 
@@ -366,26 +300,23 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
    *
    * @param originalFunction the original AsyncGeneratorFunction Node to be converted.
    */
-  private void convertAsyncGenerator(NodeTraversal t, Node originalFunction) {
+  private void convertAsyncGenerator(Node originalFunction) {
     checkNotNull(originalFunction);
     checkState(originalFunction.isAsyncGeneratorFunction());
 
-    Node asyncGeneratorWrapperRef =
-        astFactory.createAsyncGeneratorWrapperReference(originalFunction.getJSType(), t.getScope());
-    Node innerFunction =
-        astFactory.createEmptyAsyncGeneratorWrapperArgument(asyncGeneratorWrapperRef.getJSType());
-
     Node innerBlock = originalFunction.getLastChild();
     originalFunction.removeChild(innerBlock);
-    innerFunction.replaceChild(innerFunction.getLastChild(), innerBlock);
+    Node innerFunction = IR.function(IR.name(""), IR.paramList(), innerBlock);
+    innerFunction.setIsGeneratorFunction(true);
 
     // Body should be:
     // return new $jscomp.AsyncGeneratorWrapper((new function with original block here)());
     Node outerBlock =
-        astFactory.createBlock(
-            astFactory.createReturn(
-                astFactory.createNewNode(
-                    asyncGeneratorWrapperRef, astFactory.createCall(innerFunction))));
+        IR.block(
+            IR.returnNode(
+                IR.newNode(
+                    NodeUtil.newQName(compiler, GENERATOR_WRAPPER_NAME),
+                    NodeUtil.newCallNode(innerFunction))));
     originalFunction.addChildToBack(outerBlock);
 
     originalFunction.setIsAsyncFunction(false);
@@ -407,7 +338,7 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
    *
    * @param awaitNode the original await Node to be converted
    */
-  private void convertAwaitOfAsyncGenerator(NodeTraversal t, LexicalContext ctx, Node awaitNode) {
+  private void convertAwaitOfAsyncGenerator(LexicalContext ctx, Node awaitNode) {
     checkNotNull(awaitNode);
     checkState(awaitNode.isAwait());
     checkState(ctx != null && ctx.function != null);
@@ -416,9 +347,9 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     Node expression = awaitNode.removeFirstChild();
     checkNotNull(expression, "await needs an expression");
     Node newActionRecord =
-        astFactory.createNewNode(
-            astFactory.createQName(t.getScope(), ACTION_RECORD_NAME),
-            astFactory.createQName(t.getScope(), ACTION_ENUM_AWAIT),
+        IR.newNode(
+            NodeUtil.newQName(compiler, ACTION_RECORD_NAME),
+            NodeUtil.newQName(compiler, ACTION_ENUM_AWAIT),
             expression);
     newActionRecord.useSourceInfoIfMissingFromForTree(awaitNode);
     awaitNode.addChildToFront(newActionRecord);
@@ -444,27 +375,26 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
    *
    * @param yieldNode the Node to be converted
    */
-  private void convertYieldOfAsyncGenerator(NodeTraversal t, LexicalContext ctx, Node yieldNode) {
+  private void convertYieldOfAsyncGenerator(LexicalContext ctx, Node yieldNode) {
     checkNotNull(yieldNode);
     checkState(yieldNode.isYield());
     checkState(ctx != null && ctx.function != null);
     checkState(ctx.function.isAsyncGeneratorFunction());
 
     Node expression = yieldNode.removeFirstChild();
-    Node newActionRecord =
-        astFactory.createNewNode(astFactory.createQName(t.getScope(), ACTION_RECORD_NAME));
+    Node newActionRecord = IR.newNode(NodeUtil.newQName(compiler, ACTION_RECORD_NAME));
 
     if (yieldNode.isYieldAll()) {
       checkNotNull(expression);
       // yield* expression becomes new ActionRecord(YIELD_STAR, expression)
-      newActionRecord.addChildToBack(astFactory.createQName(t.getScope(), ACTION_ENUM_YIELD_STAR));
+      newActionRecord.addChildToBack(NodeUtil.newQName(compiler, ACTION_ENUM_YIELD_STAR));
       newActionRecord.addChildToBack(expression);
     } else {
       if (expression == null) {
         expression = NodeUtil.newUndefinedNode(null);
       }
       // yield expression becomes new ActionRecord(YIELD, expression)
-      newActionRecord.addChildToBack(astFactory.createQName(t.getScope(), ACTION_ENUM_YIELD));
+      newActionRecord.addChildToBack(NodeUtil.newQName(compiler, ACTION_ENUM_YIELD));
       newActionRecord.addChildToBack(expression);
     }
 
@@ -493,7 +423,7 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
    *
    * @param forAwaitOf
    */
-  private void replaceForAwaitOf(NodeTraversal t, LexicalContext ctx, Node forAwaitOf) {
+  private void replaceForAwaitOf(LexicalContext ctx, Node forAwaitOf) {
     int forAwaitId = nextForAwaitId++;
     String iteratorTempName = FOR_AWAIT_ITERATOR_TEMP_NAME + forAwaitId;
     String resultTempName = FOR_AWAIT_RESULT_TEMP_NAME + forAwaitId;
@@ -504,54 +434,26 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     Node rhs = forAwaitOf.removeFirstChild();
     Node originalBody = forAwaitOf.removeFirstChild();
 
-    JSType typeParam =
-        createType(
-            () ->
-                JsIterables.maybeBoxIterableOrAsyncIterable(rhs.getJSType(), registry)
-                    .orElse(unknownType));
-
     Node initializer =
-        astFactory
-            .createSingleConstNameDeclaration(
-                iteratorTempName, astFactory.createJSCompMakeAsyncIteratorCall(rhs, t.getScope()))
+        IR.constNode(
+                IR.name(iteratorTempName),
+                NodeUtil.newCallNode(NodeUtil.newQName(compiler, "$jscomp.makeAsyncIterator"), rhs))
             .useSourceInfoIfMissingFromForTree(rhs);
-
-    // IIterableResult<VALUE>
-    JSType iterableResultType = createGenericType(JSTypeNative.I_ITERABLE_RESULT_TYPE, typeParam);
 
     // const tmpRes = await tmpIterator.next()
     Node resultDeclaration =
-        astFactory.createSingleConstNameDeclaration(
-            resultTempName,
-            constructAwaitNextResult(
-                t,
-                ctx,
-                iteratorTempName,
-                initializer.getFirstChild().getJSType(),
-                iterableResultType));
-
+        IR.constNode(IR.name(resultTempName), constructAwaitNextResult(ctx, iteratorTempName));
     Node breakIfDone =
-        astFactory.createIf(
-            astFactory.createGetProp(
-                astFactory.createName(resultTempName, iterableResultType), "done"),
-            astFactory.createBlock(astFactory.createBreak()));
+        IR.ifNode(getprop(IR.name(resultTempName), "done"), IR.block(IR.breakNode()));
 
     // Assignment statement to be moved from lhs into body of new for-loop
     Node lhsAssignment;
     if (lhs.isValidAssignmentTarget()) {
       // In case of "for await (x of _)" just assign into the lhs.
-      lhsAssignment =
-          astFactory.exprResult(
-              astFactory.createAssign(
-                  lhs,
-                  astFactory.createGetProp(
-                      astFactory.createName(resultTempName, iterableResultType), "value")));
+      lhsAssignment = IR.exprResult(IR.assign(lhs, getprop(IR.name(resultTempName), "value")));
     } else if (NodeUtil.isNameDeclaration(lhs)) {
       // In case of "for await (let x of _)" add a rhs to the let, becoming "let x = res.value"
-      lhs.getFirstChild()
-          .addChildToBack(
-              astFactory.createGetProp(
-                  astFactory.createName(resultTempName, iterableResultType), "value"));
+      lhs.getFirstChild().addChildToBack(getprop(IR.name(resultTempName), "value"));
       lhsAssignment = lhs;
     } else {
       throw new AssertionError("unexpected for-await-of lhs");
@@ -559,12 +461,11 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     lhsAssignment.useSourceInfoIfMissingFromForTree(lhs);
 
     Node newForLoop =
-        astFactory.createFor(
+        IR.forNode(
             initializer,
-            astFactory.createEmpty(),
-            astFactory.createEmpty(),
-            astFactory.createBlock(
-                resultDeclaration, breakIfDone, lhsAssignment, ensureBlock(originalBody)));
+            IR.empty(),
+            IR.empty(),
+            IR.block(resultDeclaration, breakIfDone, lhsAssignment, ensureBlock(originalBody)));
     forAwaitOf.replaceWith(newForLoop);
     newForLoop.useSourceInfoIfMissingFromForTree(forAwaitOf);
     compiler.reportChangeToEnclosingScope(newForLoop);
@@ -573,72 +474,55 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
   private Node ensureBlock(Node possiblyBlock) {
     return possiblyBlock.isBlock()
         ? possiblyBlock
-        : astFactory.createBlock(possiblyBlock).useSourceInfoFrom(possiblyBlock);
+        : IR.block(possiblyBlock).useSourceInfoFrom(possiblyBlock);
   }
 
-  private Node constructAwaitNextResult(
-      NodeTraversal t,
-      LexicalContext ctx,
-      String iteratorTempName,
-      JSType iteratorType,
-      JSType iterableResultType) {
+  private Node constructAwaitNextResult(LexicalContext ctx, String iteratorTempName) {
     checkNotNull(ctx.function);
-    Node result;
-
-    Node iteratorTemp = astFactory.createName(iteratorTempName, iteratorType);
-
-    if (ctx.function.isAsyncGeneratorFunction()) {
-      // We are in an AsyncGenerator and must instead yield an "await" ActionRecord
-      result =
-          astFactory.createYield(
-              iterableResultType,
-              astFactory.createNewNode(
-                  astFactory.createQName(t.getScope(), ACTION_RECORD_NAME),
-                  astFactory.createQName(t.getScope(), ACTION_ENUM_AWAIT),
-                  astFactory.createCall(astFactory.createGetProp(iteratorTemp, "next"))));
+    if (!ctx.function.isAsyncGeneratorFunction()) {
+      return IR.await(NodeUtil.newCallNode(getprop(IR.name(iteratorTempName), "next")));
     } else {
-      result =
-          astFactory.createAwait(
-              iterableResultType,
-              astFactory.createCall(astFactory.createGetProp(iteratorTemp, "next")));
+      // We are in an AsyncGenerator and must instead yield an "await" ActionRecord
+      return IR.yield(
+          IR.newNode(
+              NodeUtil.newQName(compiler, ACTION_RECORD_NAME),
+              NodeUtil.newQName(compiler, ACTION_ENUM_AWAIT),
+              NodeUtil.newCallNode(getprop(IR.name(iteratorTempName), "next"))));
     }
-
-    return result;
   }
 
-  private void replaceThis(NodeTraversal t, LexicalContext ctx, Node n) {
+  private void replaceThis(LexicalContext ctx, Node n) {
     checkArgument(n.isThis());
-    checkArgument(ctx != null && ctx.mustReplaceThisSuperArgs());
+    checkArgument(ctx != null && isInContextOfAsyncGenerator(ctx));
     checkArgument(ctx.function != null, "Cannot prepend declarations to root scope");
     checkNotNull(ctx.thisSuperArgsContext);
 
-    n.replaceWith(astFactory.createName(t.getScope(), thisVarName).useSourceInfoFrom(n));
+    n.replaceWith(IR.name(thisVarName).useSourceInfoFrom(n));
     ctx.thisSuperArgsContext.usedThis = true;
     compiler.reportChangeToChangeScope(ctx.function);
   }
 
-  private void replaceArguments(NodeTraversal t, LexicalContext ctx, Node n) {
+  private void replaceArguments(LexicalContext ctx, Node n) {
     checkArgument(n.isName() && "arguments".equals(n.getString()));
-    checkArgument(ctx != null && ctx.mustReplaceThisSuperArgs());
+    checkArgument(ctx != null && isInContextOfAsyncGenerator(ctx));
     checkArgument(ctx.function != null, "Cannot prepend declarations to root scope");
     checkNotNull(ctx.thisSuperArgsContext);
 
-    n.replaceWith(astFactory.createName(t.getScope(), argumentsVarName).useSourceInfoFrom(n));
+    n.replaceWith(IR.name(argumentsVarName).useSourceInfoFrom(n));
     ctx.thisSuperArgsContext.usedArguments = true;
     compiler.reportChangeToChangeScope(ctx.function);
   }
 
-  private void replaceSuper(NodeTraversal t, LexicalContext ctx, Node n, Node parent) {
+  private void replaceSuper(LexicalContext ctx, Node n, Node parent) {
     if (!parent.isGetProp()) {
       compiler.report(
           JSError.make(
               parent,
               CANNOT_CONVERT_ASYNCGEN,
               "super only allowed with getprop (like super.foo(), not super['foo']())"));
-      return;
     }
     checkArgument(n.isSuper());
-    checkArgument(ctx != null && ctx.mustReplaceThisSuperArgs());
+    checkArgument(ctx != null && isInContextOfAsyncGenerator(ctx));
     checkArgument(ctx.function != null, "Cannot prepend declarations to root scope");
     checkNotNull(ctx.thisSuperArgsContext);
 
@@ -646,14 +530,12 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     String propertyReplacementNameText = superPropGetterPrefix + propertyName.getString();
 
     // super.x   =>   $super$get$x()
-    Node getPropReplacement =
-        astFactory.createCall(astFactory.createName(t.getScope(), propertyReplacementNameText));
+    Node getPropReplacement = NodeUtil.newCallNode(IR.name(propertyReplacementNameText));
     Node grandparent = parent.getParent();
     if (grandparent.isCall() && grandparent.getFirstChild() == parent) {
       // super.x(...)   =>   super.x.call($this, ...)
-      getPropReplacement = astFactory.createGetProp(getPropReplacement, "call");
-      grandparent.addChildAfter(
-          astFactory.createName(t.getScope(), thisVarName).useSourceInfoFrom(parent), parent);
+      getPropReplacement = IR.getprop(getPropReplacement, IR.string("call"));
+      grandparent.addChildAfter(IR.name(thisVarName).useSourceInfoFrom(parent), parent);
       ctx.thisSuperArgsContext.usedThis = true;
     }
     getPropReplacement.useSourceInfoFromForTree(parent);
@@ -694,16 +576,14 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
     Node function = ctx.function;
     Node block = function.getLastChild();
     checkNotNull(block, function);
-    Node prefixBlock = astFactory.createBlock(); // Temporary block to hold all declarations
+    Node prefixBlock = IR.block(); // Temporary block to hold all declarations
 
     if (thisSuperArgsCtx.usedThis) {
       // { // prefixBlock
       //   const $jscomp$asyncIter$this = this;
       // }
       prefixBlock.addChildToBack(
-          astFactory
-              .createThisAliasDeclarationForFunction(thisVarName, function)
-              .useSourceInfoFromForTree(block));
+          IR.constNode(IR.name(thisVarName), IR.thisNode()).useSourceInfoFromForTree(block));
     }
     if (thisSuperArgsCtx.usedArguments) {
       // { // prefixBlock
@@ -711,9 +591,7 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
       //   const $jscomp$asyncIter$arguments = arguments;
       // }
       prefixBlock.addChildToBack(
-          astFactory
-              .createSingleConstNameDeclaration(
-                  argumentsVarName, astFactory.createName(t.getScope(), "arguments"))
+          IR.constNode(IR.name(argumentsVarName), IR.name("arguments"))
               .useSourceInfoFromForTree(block));
     }
     for (String replacedMethodName : thisSuperArgsCtx.usedSuperProperties) {
@@ -732,23 +610,25 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
 
         // static super: Object.getPrototypeOf(this);
         superReference =
-            astFactory.createObjectGetPrototypeOfCall(astFactory.createThisForFunction(function));
+            IR.call(IR.getprop(IR.name("Object"), IR.string("getPrototypeOf")), IR.thisNode());
         if (!ctx.function.getParent().isStaticMember()) {
           // instance super: Object.getPrototypeOf(Object.getPrototypeOf(this))
-          superReference = astFactory.createObjectGetPrototypeOfCall(superReference);
+          superReference =
+              IR.call(IR.getprop(IR.name("Object"), IR.string("getPrototypeOf")), superReference);
         }
       } else {
-        superReference = astFactory.createSuperForFunction(function);
+        superReference = IR.superNode();
       }
 
       Node arrowFunction =
-          astFactory.createZeroArgArrowFunctionForExpression(
-              astFactory.createGetProp(superReference, replacedMethodName));
+          IR.arrowFunction(
+              IR.name(""),
+              IR.paramList(),
+              IR.getprop(superReference, IR.string(replacedMethodName)));
       compiler.reportChangeToChangeScope(arrowFunction);
-      NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.ARROW_FUNCTIONS, compiler);
+      NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.ARROW_FUNCTIONS);
       String superReplacementName = superPropGetterPrefix + replacedMethodName;
-      prefixBlock.addChildToBack(
-          astFactory.createSingleConstNameDeclaration(superReplacementName, arrowFunction));
+      prefixBlock.addChildToBack(IR.constNode(IR.name(superReplacementName), arrowFunction));
     }
     prefixBlock.useSourceInfoIfMissingFromForTree(block);
     // Pulls all declarations out of prefixBlock and prepends in block
@@ -762,7 +642,7 @@ public final class RewriteAsyncIteration implements NodeTraversal.Callback, HotS
         || thisSuperArgsCtx.usedArguments
         || !thisSuperArgsCtx.usedSuperProperties.isEmpty()) {
       compiler.reportChangeToChangeScope(function);
-      NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.CONST_DECLARATIONS, compiler);
+      NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CONST_DECLARATIONS);
     }
   }
 }

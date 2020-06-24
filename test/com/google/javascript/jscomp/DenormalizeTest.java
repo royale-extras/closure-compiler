@@ -46,25 +46,6 @@ public final class DenormalizeTest extends CompilerTestCase {
   }
 
   @Test
-  public void testInlineVarNullishCoalesce() {
-    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
-    test(
-        lines(
-            "function f() {",
-            "  var x;",
-            "  function g() { x = 0 ?? \"hi\"; }",
-            "  if (y) { x = -1 ?? true; }",
-            "  alert(x);",
-            "}"),
-        lines(
-            "function f() {",
-            "  function g() { x = 0 ?? \"hi\"; }",
-            "  if (y) { var x = -1 ?? true; }",
-            "  alert(x);",
-            "}"));
-  }
-
-  @Test
   public void testInlineVarKeyword1() {
     test(
         lines(

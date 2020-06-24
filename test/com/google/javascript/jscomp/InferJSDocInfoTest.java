@@ -72,9 +72,11 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
       @Override
       public void process(Node externs, Node root) {
         TypedScopeCreator scopeCreator = new TypedScopeCreator(compiler);
+        TypedScope topScope = scopeCreator.createScope(root.getParent(), null);
 
-        new TypeInferencePass(compiler, compiler.getReverseAbstractInterpreter(), scopeCreator)
-            .inferAllScopes(root.getParent());
+        new TypeInferencePass(
+                compiler, compiler.getReverseAbstractInterpreter(), topScope, scopeCreator)
+            .process(externs, root);
 
         new InferJSDocInfo(compiler).process(externs, root);
       }
@@ -346,7 +348,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
                 )));
 
     JSType xType = inferredTypeOfName("x");
-    assertThat(xType.toString()).isEqualTo("(typeof Foo)");
+    assertThat(xType.toString()).isEqualTo("function(new:Foo): undefined");
 
     // Then
     assertThat(xType.getJSDocInfo().getBlockDescription()).isEqualTo("I'm a user class.");
@@ -487,7 +489,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
   }
 
   @Test
-  public void testJSDocIsPropagatedToFunctionTypesFromMethodAssigments() {
+  public void testJSDocIsNotPropagatedToFunctionTypesFromMethodAssigments() {
     // Given
     testSame(
         srcs(
@@ -508,7 +510,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
     assertThat(xType.toString()).isEqualTo("function(this:Foo): number");
 
     // Then
-    assertThat(xType.getJSDocInfo().getBlockDescription()).isEqualTo("I'm a method.");
+    assertThat(xType.getJSDocInfo()).isNull();
   }
 
   @Test
@@ -532,7 +534,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
     JSType test0Type = inferredTypeOfName("test0");
     JSType test1Type = inferredTypeOfName("test1");
     // For some reason `test0Type` and `test1Type` aren't equal. This is good, but unexpected.
-    assertThat(test1Type).isNotSameInstanceAs(test0Type);
+    assertThat(test1Type).isNotSameAs(test0Type);
 
     // Then
     assertThat(test0Type.getJSDocInfo().getBlockDescription()).isEqualTo("I'm test0.");
@@ -566,7 +568,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
     // We really only care that they match, not about equality.
     // TODO(b/111070482): That fact that these are equal yet have different JSDocs is bad.
     assertThat(test1Type).isEqualTo(test0Type);
-    assertThat(test1Type).isNotSameInstanceAs(test0Type);
+    assertThat(test1Type).isNotSameAs(test0Type);
 
     // Then
     assertThat(test0Type.getJSDocInfo().getBlockDescription()).isEqualTo("I'm test0.");
@@ -594,7 +596,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
 
     JSType test0Type = inferredTypeOfName("test0");
     JSType test1Type = inferredTypeOfName("test1");
-    assertThat(test1Type).isSameInstanceAs(test0Type);
+    assertThat(test1Type).isSameAs(test0Type);
 
     // Then
     assertThat(test0Type.getJSDocInfo().getBlockDescription()).isEqualTo("I'm test0.");
@@ -625,7 +627,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
 
     JSType test0Type = inferredTypeOfName("test0");
     JSType test1Type = inferredTypeOfName("test1");
-    assertThat(test1Type).isSameInstanceAs(test0Type);
+    assertThat(test1Type).isSameAs(test0Type);
 
     // Then
     assertThat(test0Type.getJSDocInfo().getBlockDescription()).isEqualTo("I'm test0.");
@@ -674,59 +676,6 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
                 "",
                 "var x = new Foo();" // Just a hook to access type "Foo".
                 )));
-
-    ObjectType xType = (ObjectType) inferredTypeOfName("x");
-    assertThat(xType.toString()).isEqualTo("Foo");
-
-    // Then
-    assertThat(xType.getPropertyJSDocInfo("field").getBlockDescription()).isEqualTo("I'm a field.");
-  }
-
-  @Test
-  public void testJSDocIsNotPropagatedFromSuppressionsOnFieldProperties_Es5() {
-    // Given
-    testSame(
-        srcs(
-            lines(
-                "/** @constructor */",
-                "function Foo() {",
-                "  /**",
-                "   * I'm a field.",
-                "   * @const",
-                "   */",
-                "   this.field = 5;",
-                "};",
-                "",
-                "var x = new Foo();", // Just a hook to access type "Foo".
-                "/** @suppress {checkTypes} */",
-                "x.field = 'test';")));
-
-    ObjectType xType = (ObjectType) inferredTypeOfName("x");
-    assertThat(xType.toString()).isEqualTo("Foo");
-
-    // Then
-    assertThat(xType.getPropertyJSDocInfo("field").getBlockDescription()).isEqualTo("I'm a field.");
-  }
-
-  @Test
-  public void testJSDocIsNotPropagatedFromSuppressionsOnEarlyRefToFieldProperties_Es5() {
-    // Given
-    testSame(
-        srcs(
-            lines(
-                "/** @param {!Foo} x */",
-                "function f(x) {",
-                "  /** @suppress {checkTypes} */",
-                "  x.field = 'test';",
-                "}",
-                "/** @constructor */",
-                "function Foo() {",
-                "  /**",
-                "   * I'm a field.",
-                "   * @const",
-                "   */",
-                "   this.field = 5;",
-                "};")));
 
     ObjectType xType = (ObjectType) inferredTypeOfName("x");
     assertThat(xType.toString()).isEqualTo("Foo");
@@ -964,7 +913,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
                 )));
 
     ObjectType xType = (ObjectType) inferredTypeOfName("x");
-    assertThat(xType.toString()).isEqualTo("(typeof Foo)");
+    assertThat(xType.toString()).isEqualTo("function(new:Foo): undefined");
 
     // Then
     assertThat(xType.getPropertyJSDocInfo("static").getBlockDescription())
@@ -989,7 +938,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
                 )));
 
     ObjectType xType = (ObjectType) inferredTypeOfName("x");
-    assertThat(xType.toString()).isEqualTo("(typeof Foo)");
+    assertThat(xType.toString()).isEqualTo("function(new:Foo): undefined");
 
     // Then
     assertThat(xType.getPropertyJSDocInfo("static").getBlockDescription())
@@ -1048,7 +997,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
 
     JSType freeType = inferredTypeOfName("free");
     ObjectType xType = (ObjectType) inferredTypeOfName("x");
-    assertThat(xType).isNotSameInstanceAs(freeType);
+    assertThat(xType).isNotSameAs(freeType);
 
     // Then
     assertThat(freeType.getJSDocInfo().getBlockDescription()).isEqualTo("I'm a free function.");

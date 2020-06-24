@@ -30,8 +30,7 @@ import org.junit.runners.JUnit4;
 public final class GenerateExportsTest extends CompilerTestCase {
 
   private static final String EXTERNS =
-      "function google_exportSymbol(a, b) {}; /** @const */ var goog = {}; goog.exportProperty ="
-          + " function(a, b, c) {}; ";
+      "function google_exportSymbol(a, b) {}; goog.exportProperty = function(a, b, c) {}; ";
 
   private boolean allowNonGlobalExports = true;
 
@@ -482,8 +481,7 @@ public final class GenerateExportsTest extends CompilerTestCase {
         "/** @export */ foo.method = function(){};",
         "google_exportSymbol('foo.method', foo.method);");
     test(code, result);
-    disableCompareAsTree();
-    testExternChanges(code, "Object.prototype.foo;var goog;var google_exportSymbol");
+    testExternChanges(code, "Object.prototype.foo;");
   }
 
   @Test
@@ -501,21 +499,4 @@ public final class GenerateExportsTest extends CompilerTestCase {
         "/** @record */ function Foo() {}",
         "/** @export {number} */ Foo.prototype.myprop;"));
   }
-
-  @Test
-  public void testRequiresExportSymbolDefinition() {
-    test(
-        externs("var goog; goog.exportProperty;"),
-        srcs("/** @export */ function Foo() {}"),
-        error(GenerateExports.MISSING_GOOG_FOR_EXPORT));
-  }
-
-  @Test
-  public void testRequiresExportPropertyDefinition() {
-    test(
-        externs("var google_exportSymbol;"),
-        srcs("var a = {}; /** @export */ a.b = function() {}"),
-        error(GenerateExports.MISSING_GOOG_FOR_EXPORT));
-  }
 }
-

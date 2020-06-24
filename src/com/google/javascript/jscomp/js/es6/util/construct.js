@@ -20,15 +20,22 @@
  */
 
 'require util/objectcreate';
-'require util/polyfill';
-'require util/shouldpolyfill';
 
 /**
- * Find or create a method that implements the behavior of `Reflect.construct`.
+ * Polyfill for Reflect.construct() method:
+ * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/construct
  *
- * @return {!Function}
+ * Calls a constructor as with the 'new' operator.
+ * TODO(sdh): how to type 'target' with (new: TARGET) if opt_newTarget missing?
+ *
+ * @param {function(new: ?, ...?)} target The constructor to call.
+ * @param {!Array} argList The arguments as a list.
+ * @param {function(new: TARGET, ...?)=} opt_newTarget The constructor to instantiate.
+ * @return {TARGET} The result of the function call.
+ * @template TARGET
  */
-$jscomp.getConstructImplementation = function() {
+$jscomp.construct = /** @type {function(): !Function} */ (function() {
+
   // Check for https://github.com/Microsoft/ChakraCore/issues/3217
   /** @return {boolean} */
   function reflectConstructWorks() {
@@ -39,15 +46,13 @@ $jscomp.getConstructImplementation = function() {
     return new Base() instanceof Base;
   }
 
-  if ($jscomp.TRUST_ES6_POLYFILLS && typeof Reflect != 'undefined' &&
-      Reflect.construct) {
+  if (typeof Reflect != 'undefined' && Reflect.construct) {
     if (reflectConstructWorks()) return Reflect.construct;
     var brokenConstruct = Reflect.construct;
     /**
      * @param {function(new: ?, ...?)} target The constructor to call.
      * @param {!Array} argList The arguments as a list.
-     * @param {function(new: TARGET, ...?)=} opt_newTarget The constructor to
-     *     instantiate.
+     * @param {function(new: TARGET, ...?)=} opt_newTarget The constructor to instantiate.
      * @return {TARGET} The result of the function call.
      * @template TARGET
      * @suppress {reportUnknownTypes}
@@ -63,8 +68,7 @@ $jscomp.getConstructImplementation = function() {
   /**
    * @param {function(new: ?, ...?)} target The constructor to call.
    * @param {!Array} argList The arguments as a list.
-   * @param {function(new: TARGET, ...?)=} opt_newTarget The constructor to
-   *     instantiate.
+   * @param {function(new: TARGET, ...?)=} opt_newTarget The constructor to instantiate.
    * @return {TARGET} The result of the function call.
    * @template TARGET
    * @suppress {reportUnknownTypes}
@@ -78,18 +82,4 @@ $jscomp.getConstructImplementation = function() {
     return out || obj;
   }
   return construct;
-};
-
-/**
- * Polyfill for Reflect.construct() method:
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/construct
- *
- * The call to `$jscomp.getConstructImplementation()` is wrapped up as an object
- * literal `valueOf()` call in order to hide the (meaningless) side-effects
- * it contains that would otherwise prevent its definition from being removed,
- * even when nothing refers to `$jscomp.construct`.
- * @const
- */
-$jscomp.construct =
-    /** @type {typeof Reflect.construct} */ (
-        {valueOf: $jscomp.getConstructImplementation}.valueOf());
+})();

@@ -43,6 +43,7 @@ import java.util.List;
  *
  * <p>This class enforces the policy that message variable names must be unique
  * across all JS files.
+ *
  */
 @GwtIncompatible("JsMessage.Builder")
 public final class JsMessageExtractor {
@@ -133,13 +134,13 @@ public final class JsMessageExtractor {
 
     ExtractMessagesVisitor extractCompilerPass =
         new ExtractMessagesVisitor(compiler);
-    if (compiler.getErrors().isEmpty()) {
+    if (compiler.getErrors().length == 0) {
       extractCompilerPass.process(null, compiler.getRoot());
     }
 
-    ImmutableList<JSError> errors = compiler.getErrors();
+    JSError[] errors = compiler.getErrors();
     // Check for errors.
-    if (!errors.isEmpty()) {
+    if (errors.length > 0) {
       StringBuilder msg = new StringBuilder("JSCompiler errors\n");
       MessageFormatter formatter = new LightweightMessageFormatter(compiler);
       for (JSError e : errors) {

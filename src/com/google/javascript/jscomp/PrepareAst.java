@@ -28,6 +28,8 @@ import com.google.javascript.rhino.Node;
  * and add annotations where necessary. It should not make any transformations
  * on the tree that would lose source information, since we need that source
  * information for checks.
+ *
+ * @author johnlenz@google.com (John Lenz)
  */
 class PrepareAst implements CompilerPass {
 
@@ -117,7 +119,6 @@ class PrepareAst implements CompilerPass {
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
         case CALL:
-        case OPTCHAIN_CALL:
           annotateCalls(n);
           break;
         default:
@@ -130,7 +131,7 @@ class PrepareAst implements CompilerPass {
      * "this" values (what we are call "free" calls) and direct call to eval.
      */
     private static void annotateCalls(Node n) {
-      checkState(n.isCall() || n.isOptChainCall(), n);
+      checkState(n.isCall(), n);
 
       // Keep track of of the "this" context of a call.  A call without an
       // explicit "this" is a free call.
@@ -141,7 +142,7 @@ class PrepareAst implements CompilerPass {
         first = first.getFirstChild();
       }
 
-      if (!NodeUtil.isNormalOrOptChainGet(first)) {
+      if (!NodeUtil.isGet(first)) {
         n.putBooleanProp(Node.FREE_CALL, true);
       }
 
