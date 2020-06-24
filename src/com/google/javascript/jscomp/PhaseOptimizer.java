@@ -33,11 +33,14 @@ import java.util.logging.Logger;
 
 /**
  * An object that optimizes the order of compiler passes.
- *
- * @author nicksantos@google.com (Nick Santos)
- * @author dimvar@google.com (Dimitris Vardoulakis)
  */
 class PhaseOptimizer implements CompilerPass {
+
+  static final DiagnosticType FEATURES_NOT_SUPPORTED_BY_PASS =
+      DiagnosticType.error(
+          "JSC_FEATURES_NOT_SUPPORTED_BY_PASS",
+          "Attempted to run pass \"{0}\" on input with features it does not support. {1}\n"
+              + "Unsupported features: {2}");
 
   private static final Logger logger = Logger.getLogger(PhaseOptimizer.class.getName());
   private final AbstractCompiler compiler;
@@ -97,8 +100,6 @@ class PhaseOptimizer implements CompilerPass {
           PassNames.DEAD_ASSIGNMENT_ELIMINATION,
           PassNames.COLLAPSE_OBJECT_LITERALS,
           PassNames.REMOVE_UNUSED_CODE,
-          PassNames.REMOVE_UNUSED_PROTOTYPE_PROPERTIES,
-          PassNames.REMOVE_UNUSED_CLASS_PROPERTIES,
           PassNames.PEEPHOLE_OPTIMIZATIONS,
           PassNames.REMOVE_UNREACHABLE_CODE);
 
@@ -152,14 +153,14 @@ class PhaseOptimizer implements CompilerPass {
   void consume(List<PassFactory> factories) {
     Loop currentLoop = new Loop();
     for (PassFactory factory : factories) {
-      if (factory.isOneTimePass()) {
+      if (factory.isRunInFixedPointLoop()) {
+        currentLoop.addLoopedPass(factory);
+      } else {
         if (currentLoop.isPopulated()) {
           passes.add(currentLoop);
           currentLoop = new Loop();
         }
         addOneTimePass(factory);
-      } else {
-        currentLoop.addLoopedPass(factory);
       }
     }
 
@@ -278,17 +279,23 @@ class PhaseOptimizer implements CompilerPass {
     @Override
     public void process(Node externs, Node root) {
       FeatureSet featuresInAst = compiler.getFeatureSet();
-      FeatureSet featuresSupportedByPass = factory.featureSet();
-      if (compiler.getOptions().shouldSkipUnsupportedPasses()
-          && !featuresSupportedByPass.contains(featuresInAst)) {
-        // NOTE: this warning ONLY appears in code using the Google-internal runner.
-        // Both CommandLineRunner.java and gwt/client/GwtRunner.java explicitly set the logging
-        // level to Level.OFF to avoid seeing this warning.
-        // See https://github.com/google/closure-compiler/pull/2998 for why.
-        logger.warning("Skipping pass " + name);
+      FeatureSet featuresSupportedByPass = factory.getFeatureSet();
+
+      if (!featuresSupportedByPass.contains(featuresInAst)) {
         FeatureSet unsupportedFeatures = featuresInAst.without(featuresSupportedByPass);
-        logger.warning("AST contains unsupported features: " + unsupportedFeatures);
-        return;
+
+        compiler.report(
+            JSError.make(
+                FEATURES_NOT_SUPPORTED_BY_PASS,
+                name,
+                compiler.getOptions().shouldSkipUnsupportedPasses()
+                    ? "Skipping pass."
+                    : "Running pass anyway.",
+                unsupportedFeatures.toString()));
+
+        if (compiler.getOptions().shouldSkipUnsupportedPasses()) {
+          return;
+        }
       }
 
       logger.fine("Running pass " + name);
@@ -298,7 +305,7 @@ class PhaseOptimizer implements CompilerPass {
         changeVerifier = new ChangeVerifier(compiler).snapshot(jsRoot);
       }
       if (tracker != null) {
-        tracker.recordPassStart(name, factory.isOneTimePass());
+        tracker.recordPassStart(name, !factory.isRunInFixedPointLoop());
       }
       tracer = new Tracer("Compiler", name);
 

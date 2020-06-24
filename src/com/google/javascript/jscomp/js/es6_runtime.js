@@ -22,6 +22,7 @@
 'require es6/async_generator_wrapper';
 'require es6/execute_async_generator';
 'require es6/generator_engine';
+'require es6/globalthis';
 'require es6/map';
 'require es6/math';
 'require es6/number';
@@ -31,6 +32,7 @@
 'require es6/set';
 'require es6/string';
 'require es6/symbol';
+'require es6/util/createtemplatetagfirstarg';
 'require es6/util/arrayfromiterable';
 'require es6/util/arrayfromiterator';
 'require es6/util/inherits';

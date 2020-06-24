@@ -71,11 +71,6 @@ public final class ClosureRewriteClassTest extends CompilerTestCase {
     enableRunTypeCheckAfterProcessing();
   }
 
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
-  }
-
   private void testRewrite(String code, String expected, LanguageMode lang) {
     setAcceptedLanguage(lang);
     test(code, expected);
@@ -540,6 +535,26 @@ public final class ClosureRewriteClassTest extends CompilerTestCase {
   }
 
   @Test
+  public void testGoogModuleGet() {
+    // This pattern can be produced by goog.scope processing from code that originally looks like:
+    // goog.scope(function() {
+    //   var super = goog.module.get('ns.Foo');
+    //   var y = goog.defineClass(super, {
+    //     // ...
+    //   });
+    // };
+    testRewrite(
+        lines(
+            "var y = goog.defineClass(goog.module.get('ns.Foo'), {",
+            "  constructor: function(){}",
+            "});"),
+        lines(
+            "/** @struct @constructor @extends {ns.Foo} */",
+            "var y = function(){};",
+            "goog.inherits(y, goog.module.get('ns.Foo'));"));
+  }
+
+  @Test
   public void testNgInject() {
     testRewrite(
         "var x = goog.defineClass(Object, {\n"
@@ -558,6 +573,22 @@ public final class ClosureRewriteClassTest extends CompilerTestCase {
         + "});",
         "/** @ngInject @constructor @struct */\n"
         + "var x = function(x, y) {};",
+        warning(GOOG_CLASS_NG_INJECT_ON_CLASS));
+  }
+
+  @Test
+  public void testNgInject_onClass_inAssign() {
+    testRewriteWarning(
+        lines(
+            "var x = {};", //
+            "/** @ngInject */",
+            "x.y = goog.defineClass(Object, {",
+            "  constructor: function(x, y) {}",
+            "});"),
+        lines(
+            "var x = {};", //
+            "/** @ngInject @constructor @struct */",
+            "x.y = function(x, y) {};"),
         warning(GOOG_CLASS_NG_INJECT_ON_CLASS));
   }
 
@@ -743,63 +774,43 @@ public final class ClosureRewriteClassTest extends CompilerTestCase {
   }
 
   @Test
-  public void testExtendedObjLitSuperCall1() {
+  public void testNoExportInModule() {
+    // TODO(b/138324343): This should keep the @export so that we later warn on this code.
     testRewrite(
         lines(
-            "var FancyClass = goog.defineClass(null, {",
-            "  constructor: function() {},",
-            "  someMethod: function() {",
-            "    super.someMethod();",
-            "  }",
+            "goog.module('m');",
+            "var x = goog.defineClass(null, {",
+            "/** @export */",
+            "  constructor: function(){}",
             "});"),
         lines(
-            "/** @constructor @struct */",
-            "  var FancyClass = function() {};",
-            "  FancyClass.prototype.someMethod = function() {",
-            "    super.someMethod();",
-            "  };"),
-        LanguageMode.ECMASCRIPT_2015);
+            "goog.module('m');", //
+            "/** @public @constructor @struct */",
+            "var x = function() {};"));
   }
 
   @Test
-  public void testExtendedObjLitSuperCall2() {
+  public void testIncludeExportForGlobal() {
     testRewrite(
         lines(
-            "var FancyClass = goog.defineClass(null, {",
-            "  constructor: function() {super();},",
-            "  someMethod: function() {}",
+            "var x = goog.defineClass(null, {",
+            "/** @export */",
+            "  constructor: function(){}",
             "});"),
         lines(
-            "/** @constructor @struct */",
-            "  var FancyClass = function() {super();};",
-            "  FancyClass.prototype.someMethod = function() {};"),
-        LanguageMode.ECMASCRIPT_2015);
+            "/** @export @public @constructor @struct */", //
+            "var x = function() {};"));
   }
 
-  @Test
-  public void testExtendedObjLitSuperCall3() {
-    testRewrite(
-        lines(
-            "var FancyClass = goog.defineClass(null, {",
-            "  constructor: function() {},",
-            "  someMethod: function() {super();}",
-            "});"),
-        lines(
-            "/** @constructor @struct */",
-            "var FancyClass = function() {};",
-            "FancyClass.prototype.someMethod = function() {super();};"),
-        LanguageMode.ECMASCRIPT_2015);
-  }
-
-  //public void testNestedObjectLiteral(){
-  //testRewriteError(
+  // public void testNestedObjectLiteral(){
+  // testRewriteError(
   //    lines(
   //        "var FancyClass = goog.defineClass(null, {",
   //        "  constructor: function() {},",
   //        "  someNestedObjLit:{}",
   //        "});"),
   //    GOOG_CLASS_NESTED_OBJECT_LITERAL_FOUND, LanguageMode.ECMASCRIPT_2015);
-  //testRewriteError(
+  // testRewriteError(
   //    lines(
   //        "var FancyClass = goog.defineClass(null, {",
   //        "  constructor() {},",
@@ -808,5 +819,5 @@ public final class ClosureRewriteClassTest extends CompilerTestCase {
   //        "  }",
   //        "});"),
   //    GOOG_CLASS_NESTED_OBJECT_LITERAL_FOUND, LanguageMode.ECMASCRIPT_2015);
-  //}
+  // }
 }

@@ -32,7 +32,6 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 /** @author johnlenz@google.com (John Lenz) */
-
 @RunWith(JUnit4.class)
 public final class SourceMapTest extends SourceMapTestCase {
 
@@ -55,7 +54,7 @@ public final class SourceMapTest extends SourceMapTestCase {
                 "\"version\":3,",
                 "\"file\":\"testcode\",",
                 "\"lineCount\":1,",
-                "\"mappings\":\"AAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
+                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
                 "\"sources\":[\"file1\",\"file2\"],",
                 "\"names\":[\"alert\"]",
                 "}\n"));
@@ -76,7 +75,7 @@ public final class SourceMapTest extends SourceMapTestCase {
                 "\"version\":3,",
                 "\"file\":\"testcode\",",
                 "\"lineCount\":1,",
-                "\"mappings\":\"AAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
+                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
                 "\"sources\":[\"src1\",\"src2\"],",
                 "\"names\":[\"alert\"]",
                 "}\n"));
@@ -100,7 +99,7 @@ public final class SourceMapTest extends SourceMapTestCase {
                 "\"version\":3,",
                 "\"file\":\"testcode\",",
                 "\"lineCount\":1,",
-                "\"mappings\":\"AAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
+                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
                 "\"sources\":[\"x\",\"y\"],",
                 "\"names\":[\"alert\"]",
                 "}\n"));
@@ -124,7 +123,7 @@ public final class SourceMapTest extends SourceMapTestCase {
                 "\"version\":3,",
                 "\"file\":\"testcode\",",
                 "\"lineCount\":1,",
-                "\"mappings\":\"AAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
+                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
                 "\"sources\":[\"x\",\"y2\"],",
                 "\"names\":[\"alert\"]",
                 "}\n"));
@@ -144,7 +143,7 @@ public final class SourceMapTest extends SourceMapTestCase {
                 "\"version\":3,",
                 "\"file\":\"mapped/testcode\",",
                 "\"lineCount\":1,",
-                "\"mappings\":\"AAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
+                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
                 "\"sources\":[\"mapped/file1\",\"mapped/file2\"],",
                 "\"names\":[\"alert\"]",
                 "}\n"));

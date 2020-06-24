@@ -57,11 +57,9 @@ import java.util.Set;
  *   <li>Marks constants with the IS_CONSTANT_NAME annotation.
  *   <li>Finds properties marked @expose, and rewrites them in [] notation.
  *   <li>Rewrite body of arrow function as a block.
- *   <li>Take var statements out from for-loop initializer.
- *       This: for(var a = 0;a<0;a++) {} becomes: var a = 0; for(var a;a<0;a++) {}
+ *   <li>Take var statements out from for-loop initializer. This: for(var a = 0;a<0;a++) {} becomes:
+ *       var a = 0; for(a;a<0;a++) {}
  * </ol>
- *
- * @author johnlenz@google.com (johnlenz)
  */
 class Normalize implements CompilerPass {
 
@@ -108,12 +106,14 @@ class Normalize implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverse(compiler, root, new RemoveEmptyClassMembers());
-    NodeTraversal.traverseRoots(
-        compiler, new NormalizeStatements(compiler, assertOnChange), externs, root);
-    removeDuplicateDeclarations(externs, root);
     MakeDeclaredNamesUnique renamer = new MakeDeclaredNamesUnique();
     NodeTraversal.traverseRoots(compiler, renamer, externs, root);
+
+    NodeTraversal.traverseRoots(
+        compiler, new NormalizeStatements(compiler, assertOnChange), externs, root);
+
+    removeDuplicateDeclarations(externs, root);
+
     new PropagateConstantAnnotationsOverVars(compiler, assertOnChange)
         .process(externs, root);
 
@@ -127,16 +127,6 @@ class Normalize implements CompilerPass {
 
     if (!compiler.getLifeCycleStage().isNormalized()) {
       compiler.setLifeCycleStage(LifeCycleStage.NORMALIZED);
-    }
-  }
-
-  private class RemoveEmptyClassMembers extends AbstractPostOrderCallback {
-    @Override
-    public void visit(NodeTraversal t, Node n, Node parent) {
-      if (n.isEmpty() && parent.isClassMembers()) {
-        reportCodeChange("empty member in class", n);
-        n.detach();
-      }
     }
   }
 
@@ -419,7 +409,7 @@ class Normalize implements CompilerPass {
       // There are only two cases where a string token
       // may be a variable reference: The right side of a GETPROP
       // or an OBJECTLIT key.
-      boolean isObjLitKey = NodeUtil.isObjectLitKey(n);
+      boolean isObjLitKey = NodeUtil.mayBeObjectLitKey(n);
       boolean isProperty = isObjLitKey || (parent.isGetProp() && parent.getLastChild() == n);
       if (n.isName() || isProperty) {
         boolean isMarkedConstant = n.getBooleanProp(Node.IS_CONSTANT_NAME);
@@ -590,6 +580,7 @@ class Normalize implements CompilerPass {
         case FOR:
         case FOR_IN:
         case FOR_OF:
+        case FOR_AWAIT_OF:
         case WHILE:
         case DO:
           return;
@@ -627,6 +618,7 @@ class Normalize implements CompilerPass {
             break;
           case FOR_IN:
           case FOR_OF:
+          case FOR_AWAIT_OF:
             Node first = c.getFirstChild();
             if (first.isVar()) {
               Node lhs = first.getFirstChild();
@@ -791,16 +783,14 @@ class Normalize implements CompilerPass {
   private void removeDuplicateDeclarations(Node externs, Node root) {
     Callback tickler = new ScopeTicklingCallback();
     ScopeCreator scopeCreator =
-        new Es6SyntacticScopeCreator(compiler, new DuplicateDeclarationHandler());
+        new SyntacticScopeCreator(compiler, new DuplicateDeclarationHandler());
     NodeTraversal t = new NodeTraversal(compiler, tickler, scopeCreator);
     t.traverseRoots(externs, root);
   }
 
-  /**
-   * ScopeCreator duplicate declaration handler.
-   */
-  private final class DuplicateDeclarationHandler implements
-      Es6SyntacticScopeCreator.RedeclarationHandler {
+  /** ScopeCreator duplicate declaration handler. */
+  private final class DuplicateDeclarationHandler
+      implements SyntacticScopeCreator.RedeclarationHandler {
 
     private final Set<Var> hasOkDuplicateDeclaration = new HashSet<>();
 
@@ -828,7 +818,7 @@ class Normalize implements CompilerPass {
       if (parent.isFunction()) {
         if (v.getParentNode().isVar()) {
           s.undeclare(v);
-          s.declare(name, n, v.input);
+          s.declare(name, n, v.getInput());
           replaceVarWithAssignment(v.getNameNode(), v.getParentNode(),
               v.getParentNode().getParent());
         }

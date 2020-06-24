@@ -16,8 +16,11 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
+import com.google.javascript.jscomp.CodingConvention.AssertionFunctionSpec;
 import com.google.javascript.jscomp.CodingConvention.SubclassRelationship;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
@@ -39,8 +42,7 @@ public final class DefaultCodingConventionTest {
     Node optArgs = IR.paramList(
         IR.name("opt_a"),
         IR.name("opt_b"));
-   Node rest = IR.paramList(
-        IR.rest(IR.name("more")));
+    Node rest = IR.paramList(IR.iterRest(IR.name("more")));
 
     assertThat(conv.isVarArgsParameter(args.getFirstChild())).isFalse();
     assertThat(conv.isVarArgsParameter(args.getLastChild())).isFalse();
@@ -194,6 +196,44 @@ public final class DefaultCodingConventionTest {
     assertPackageName("foo/bar/baz/quux.js", "foo/bar/baz");
     assertPackageName("foo/test/bar.js", "foo/test");
     assertPackageName("foo/testxyz/bar.js", "foo/testxyz");
+  }
+
+  @Test
+  public void makeReturnTypeAssertion_assertsOnFirstArg() {
+    AssertionFunctionSpec spec =
+        AssertionFunctionSpec.forMatchesReturn().setFunctionName("assertNumber").build();
+    Node callNode = parseTestCode("assertNumber(0, 1, 2, 3);").getFirstChild();
+    checkState(callNode.isCall(), callNode);
+    Node firstArg = NodeUtil.getArgumentForCallOrNew(callNode, /* index= */ 0);
+
+    Node assertedArg = spec.getAssertedArg(firstArg);
+    assertNode(assertedArg).isNumber(0);
+  }
+
+  @Test
+  public void makeTruthyAssertion_assertsOnFirstArg() {
+    AssertionFunctionSpec spec =
+        AssertionFunctionSpec.forTruthy().setFunctionName("assertTruthy").build();
+    Node callNode = parseTestCode("assertTruthy(0, 1, 2, 3);").getFirstChild();
+    checkState(callNode.isCall(), callNode);
+    Node firstArg = NodeUtil.getArgumentForCallOrNew(callNode, /* index= */ 0);
+
+    Node assertedArg = spec.getAssertedArg(firstArg);
+
+    assertNode(assertedArg).isNumber(0);
+  }
+
+  @Test
+  public void makeTruthyAssertion_withParamIndexOfTwo_assertsOnThirdArg() {
+    AssertionFunctionSpec spec =
+        AssertionFunctionSpec.forTruthy().setFunctionName("assertTruthy").setParamIndex(2).build();
+    Node callNode = parseTestCode("assertTruthy(0, 1, 2, 3);").getFirstChild();
+    checkState(callNode.isCall(), callNode);
+    Node firstArg = NodeUtil.getArgumentForCallOrNew(callNode, /* index= */ 0);
+
+    Node assertedArg = spec.getAssertedArg(firstArg);
+
+    assertNode(assertedArg).isNumber(2);
   }
 
   private void assertPackageName(String filename, String expectedPackageName) {

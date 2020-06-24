@@ -27,8 +27,6 @@ import java.util.Map;
 /**
  * This code implements the instrumentation pass over the AST
  * (returned by JSCompiler).
- * @author praveenk@google.com (Praveen Kumashi)
- *
  */
 @GwtIncompatible("FileInstrumentationData")
 class CoverageInstrumentationPass implements CompilerPass {
@@ -95,6 +93,11 @@ class CoverageInstrumentationPass implements CompilerPass {
       }
       Node firstScript = rootNode.getFirstChild();
       checkState(firstScript.isScript());
+      // If any passes run after we need to preserve the MODULE_BODY structure of scripts - we can't
+      // just add to a script if it is a module.
+      if (firstScript.hasChildren() && firstScript.getFirstChild().isModuleBody()) {
+        firstScript = firstScript.getFirstChild();
+      }
       addHeaderCode(firstScript);
     }
   }

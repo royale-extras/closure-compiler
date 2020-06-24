@@ -47,11 +47,7 @@ public final class CheckAccessControlsPolymerTest extends CompilerTestCase {
     enableParseTypeInfo();
     enablePolymerPass();
     allowExternsChanges();
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
+    enableCreateModuleMap();
   }
 
   @Override

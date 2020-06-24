@@ -26,7 +26,6 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 /** Unit tests for {@link ProcessCommonJSModules} */
-
 @RunWith(JUnit4.class)
 public final class ProcessCommonJSModulesTest extends CompilerTestCase {
 
@@ -50,11 +49,6 @@ public final class ProcessCommonJSModulesTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new ProcessCommonJSModules(compiler);
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
   }
 
   void testModules(String filename, String input, String expected) {
@@ -654,9 +648,7 @@ public final class ProcessCommonJSModulesTest extends CompilerTestCase {
         CompilerOptions.LanguageMode.ECMASCRIPT_2015, CompilerOptions.LanguageMode.ECMASCRIPT5);
     testModules(
         "test.js",
-        lines(
-            "const {foo, bar: {baz}} = require('./other');",
-            "module.exports = true;"),
+        lines("const {foo, bar: {baz}} = require('./other');", "module.exports = true;"),
         lines(
             "/** @const */ var module$test = {};",
             "const {foo: foo$$module$test, bar: {baz: baz$$module$test}} = module$other.default;",
@@ -1147,19 +1139,14 @@ public final class ProcessCommonJSModulesTest extends CompilerTestCase {
 
   @Test
   public void testDontSplitVarsInFor() {
-    testModules(
-        "test.js",
-        "for (var a, b, c; ;) {}",
-        "for (var a, b, c; ;) {}");
+    testModules("test.js", "for (var a, b, c; ;) {}", "for (var a, b, c; ;) {}");
   }
 
   @Test
   public void testIssue2918() {
     testModules(
         "test.js",
-        lines(
-            "for (var a, b; a < 4; a++) {};",
-            "module.exports = {}"),
+        lines("for (var a, b; a < 4; a++) {};", "module.exports = {}"),
         lines(
             "/** @const */ var module$test = {/** @const */ default:{}};",
             "for(var a$$module$test,b$$module$test;a$$module$test<4;a$$module$test++) {};"));
@@ -1346,8 +1333,7 @@ public final class ProcessCommonJSModulesTest extends CompilerTestCase {
     testModules(
         "test.js",
         LINE_JOINER.join(
-            "module.exports = 'foo';",
-            "function foobar(module) { return module.id; }"),
+            "module.exports = 'foo';", "function foobar(module) { return module.id; }"),
         LINE_JOINER.join(
             "/** @const */ var module$test = {};",
             "/** @const */ module$test.default = 'foo';",
@@ -1564,5 +1550,50 @@ public final class ProcessCommonJSModulesTest extends CompilerTestCase {
             "};",
             "const {b: b$$module$test} = {b: 1};",
             "module$test.default.b = b$$module$test;"));
+  }
+
+  @Test
+  public void testWebpackRequireNamespace() {
+    Map<String, String> webpackModulesById =
+        ImmutableMap.of(
+            "1", "other.js",
+            "yet_another.js", "yet_another.js",
+            "3", "test.js");
+    setWebpackModulesById(webpackModulesById);
+    resolutionMode = ModuleLoader.ResolutionMode.WEBPACK;
+
+    testModules(
+        "test.js",
+        lines("var name = __webpack_require__.t('yet_another.js');", "exports.foo = 1;"),
+        lines(
+            "/** @const */ var module$test = {/** @const */ default: {}};",
+            "var name$$module$test = module$yet_another;",
+            "module$test.default.foo = 1;"));
+  }
+
+  @Test
+  public void testGoogModuleUnaffected() {
+    testModules(
+        "test.js", "goog.module('foo'); exports.y = 123;", "goog.module('foo'); exports.y = 123;");
+  }
+
+  @Test
+  public void testGoogProvideUnaffected() {
+    testModules("test.js", "goog.provide('foo'); foo = 123;", "goog.provide('foo'); foo = 123;");
+  }
+
+  @Test
+  public void testTopModuleCallNotRewritten() {
+    // This test the case when some JS doesn't use common js but uses top-level module calls.
+    // For example in Jasmine test framwork.
+    testModules("test.js", "module('foo.bar');", "module('foo.bar');");
+  }
+
+  @Test
+  public void testEsModuleExportsNotRewritten() {
+    // There was a bug where logic in the ProcessCommonJsModules incorrectly split this double
+    // declaration.
+    String code = "export var foo = 1, bar = 2;";
+    testModules("test.js", code, code);
   }
 }

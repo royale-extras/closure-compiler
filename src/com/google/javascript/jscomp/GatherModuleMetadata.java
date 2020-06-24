@@ -22,11 +22,12 @@ import static com.google.javascript.jscomp.ClosureCheckModule.DECLARE_LEGACY_NAM
 import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_REQUIRE_NAMESPACE;
 
 import com.google.common.collect.LinkedHashMultiset;
-import com.google.javascript.jscomp.ModuleMetadataMap.ModuleMetadata;
-import com.google.javascript.jscomp.ModuleMetadataMap.ModuleType;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.deps.ModuleLoader.ModulePath;
 import com.google.javascript.jscomp.deps.ModuleLoader.ResolutionMode;
+import com.google.javascript.jscomp.modules.ModuleMetadataMap;
+import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
+import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleType;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.HashMap;
@@ -37,7 +38,7 @@ import javax.annotation.Nullable;
  * Gathers metadata around modules that is useful for checking imports / requires and creates a
  * {@link ModuleMetadataMap}.
  */
-public final class GatherModuleMetadata implements CompilerPass {
+public final class GatherModuleMetadata implements HotSwapCompilerPass {
   static final DiagnosticType MIXED_MODULE_TYPE =
       DiagnosticType.error("JSC_MIXED_MODULE_TYPE", "A file cannot be both {0} and {1}.");
 
@@ -121,16 +122,20 @@ public final class GatherModuleMetadata implements CompilerPass {
 
   private class ModuleMetadataBuilder {
     private boolean ambiguous;
+    private boolean hasModuleBody;
     private Node declaredModuleId;
     private Node declaresLegacyNamespace;
-    private final Node rootNode;
     final ModuleMetadata.Builder metadataBuilder;
     LinkedHashMultiset<String> googNamespaces = LinkedHashMultiset.create();
 
     ModuleMetadataBuilder(Node rootNode, @Nullable ModulePath path) {
-      this.metadataBuilder = ModuleMetadata.builder();
-      this.rootNode = rootNode;
-      metadataBuilder.path(path).moduleType(ModuleType.SCRIPT).usesClosure(false).isTestOnly(false);
+      this.metadataBuilder =
+          ModuleMetadata.builder()
+              .path(path)
+              .rootNode(rootNode)
+              .moduleType(ModuleType.SCRIPT)
+              .usesClosure(false)
+              .isTestOnly(false);
     }
 
     void moduleType(ModuleType type, NodeTraversal t, Node n) {
@@ -164,6 +169,11 @@ public final class GatherModuleMetadata implements CompilerPass {
     ModuleMetadata build() {
       metadataBuilder.googNamespacesBuilder().addAll(googNamespaces);
       if (!ambiguous) {
+        if (hasModuleBody && metadataBuilder.moduleType() == ModuleType.SCRIPT) {
+          // A script with no imports or exports, but has a module body, must be an ES module.
+          metadataBuilder.moduleType(ModuleType.ES6_MODULE);
+        }
+
         if (declaredModuleId != null && metadataBuilder.moduleType() != ModuleType.ES6_MODULE) {
           compiler.report(JSError.make(declaredModuleId, DECLARE_MODULE_ID_OUTSIDE_ES6_MODULE));
         }
@@ -199,6 +209,9 @@ public final class GatherModuleMetadata implements CompilerPass {
             loadModuleCall = n;
             enterModule(n, null);
           }
+          break;
+        case MODULE_BODY:
+          currentModule.hasModuleBody = true;
           break;
         default:
           break;
@@ -248,8 +261,9 @@ public final class GatherModuleMetadata implements CompilerPass {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       if (processCommonJsModules && currentModule != null && currentModule.isScript()) {
-        if (ProcessCommonJSModules.isCommonJsExport(t, n, moduleResolutionMode)
-            || ProcessCommonJSModules.isCommonJsImport(n, moduleResolutionMode)) {
+        // A common JS import (call to "require") does not force a module to be rewritten as
+        // commonJS. Only an export statement.
+        if (ProcessCommonJSModules.isCommonJsExport(t, n, moduleResolutionMode)) {
           currentModule.moduleType(ModuleType.COMMON_JS, t, n);
           return;
         }
@@ -319,11 +333,23 @@ public final class GatherModuleMetadata implements CompilerPass {
       }
 
       Var root = t.getScope().getVar("goog");
-      if (root != null && root.input == t.getInput() && !isFromGoogImport(root)) {
+
+      // If this is a locally defined variable it can't be the global "goog", so exit early.
+      if (root != null && root.isLocal() && !root.getScope().isModuleScope()) {
         return;
       }
 
-      currentModule.metadataBuilder.usesClosure(true);
+      // If this is a module-level variable but wasn't created by importing goog.js, return.
+      if (root != null && root.getScope().isModuleScope() && !isFromGoogImport(root)) {
+        return;
+      }
+
+      // If goog is defined in this script then it does not use Closure. If this is a bundle with
+      // base.js in it, then it doesn't need base.js again.
+      if (root == null
+          || NodeUtil.getEnclosingScript(root.getNameNode()) != NodeUtil.getEnclosingScript(n)) {
+        currentModule.metadataBuilder.usesClosure(true);
+      }
 
       if (getprop.matchesQualifiedName(GOOG_PROVIDE)) {
         currentModule.moduleType(ModuleType.GOOG_PROVIDE, t, n);
@@ -359,14 +385,17 @@ public final class GatherModuleMetadata implements CompilerPass {
         if (n.hasTwoChildren() && n.getLastChild().isString()) {
           currentModule
               .metadataBuilder
-              .requiredGoogNamespacesBuilder()
+              .stronglyRequiredGoogNamespacesBuilder()
               .add(n.getLastChild().getString());
         } else {
           t.report(n, INVALID_REQUIRE_NAMESPACE);
         }
       } else if (getprop.matchesQualifiedName(GOOG_REQUIRE_TYPE)) {
         if (n.hasTwoChildren() && n.getLastChild().isString()) {
-          currentModule.metadataBuilder.requiredTypesBuilder().add(n.getLastChild().getString());
+          currentModule
+              .metadataBuilder
+              .weaklyRequiredGoogNamespacesBuilder()
+              .add(n.getLastChild().getString());
         } else {
           t.report(n, INVALID_REQUIRE_TYPE);
         }
@@ -386,12 +415,15 @@ public final class GatherModuleMetadata implements CompilerPass {
     private void addNamespace(
         ModuleMetadataBuilder module, String namespace, NodeTraversal t, Node n) {
       ModuleType existingType = null;
+      String existingFileSource = null;
       if (module.googNamespaces.contains(namespace)) {
         existingType = module.metadataBuilder.moduleType();
+        existingFileSource = t.getSourceName();
       } else {
         ModuleMetadata existingModule = modulesByGoogNamespace.get(namespace);
         if (existingModule != null) {
           existingType = existingModule.moduleType();
+          existingFileSource = existingModule.rootNode().getSourceFileName();
         }
       }
       currentModule.googNamespaces.add(namespace);
@@ -400,10 +432,10 @@ public final class GatherModuleMetadata implements CompilerPass {
           case ES6_MODULE:
           case GOOG_MODULE:
           case LEGACY_GOOG_MODULE:
-            t.report(n, ClosureRewriteModule.DUPLICATE_MODULE, namespace);
+            t.report(n, ClosurePrimitiveErrors.DUPLICATE_MODULE, namespace, existingFileSource);
             return;
           case GOOG_PROVIDE:
-            t.report(n, ClosureRewriteModule.DUPLICATE_NAMESPACE, namespace);
+            t.report(n, ClosurePrimitiveErrors.DUPLICATE_NAMESPACE, namespace, existingFileSource);
             return;
           case COMMON_JS:
           case SCRIPT:
@@ -418,6 +450,28 @@ public final class GatherModuleMetadata implements CompilerPass {
   public void process(Node externs, Node root) {
     NodeTraversal.traverse(compiler, externs, new Finder());
     NodeTraversal.traverse(compiler, root, new Finder());
+    compiler.setModuleMetadataMap(new ModuleMetadataMap(modulesByPath, modulesByGoogNamespace));
+  }
+
+  @Override
+  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
+    // This pass is run as either a hot swap or full pass. So if we're running in hot swap this is
+    // a different instance from the full pass, and we need to populate these again.
+    modulesByPath.putAll(compiler.getModuleMetadataMap().getModulesByPath());
+    modulesByGoogNamespace.putAll(compiler.getModuleMetadataMap().getModulesByGoogNamespace());
+
+    ModuleMetadata oldMetadata =
+        modulesByPath.remove(compiler.getInput(originalRoot.getInputId()).getPath().toString());
+
+    if (oldMetadata != null) {
+      modulesByGoogNamespace.keySet().removeAll(oldMetadata.googNamespaces());
+
+      for (ModuleMetadata nestedMetadata : oldMetadata.nestedModules()) {
+        modulesByGoogNamespace.keySet().removeAll(nestedMetadata.googNamespaces());
+      }
+    }
+
+    NodeTraversal.traverse(compiler, scriptRoot, new Finder());
     compiler.setModuleMetadataMap(new ModuleMetadataMap(modulesByPath, modulesByGoogNamespace));
   }
 }

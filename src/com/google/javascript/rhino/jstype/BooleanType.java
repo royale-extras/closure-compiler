@@ -54,14 +54,20 @@ public class BooleanType extends ValueType {
   }
 
   @Override
+  JSTypeClass getTypeClass() {
+    return JSTypeClass.BOOLEAN;
+  }
+
+  @Override
   public TernaryValue testForEquality(JSType that) {
     TernaryValue result = super.testForEquality(that);
     if (result != null) {
       return result;
     }
-    if (that.isUnknownType() || that.isSubtypeOf(
-            getNativeType(JSTypeNative.NUMBER_STRING_BOOLEAN)) ||
-        that.isObject()) {
+    if (that.isUnknownType()
+        || that.isSubtypeOf(getNativeType(JSTypeNative.NUMBER_STRING_BOOLEAN))
+        || that.isSubtypeOf(getNativeType(JSTypeNative.BIGINT_TYPE))
+        || that.isObject()) {
       return UNKNOWN;
     }
     return FALSE;
@@ -91,11 +97,6 @@ public class BooleanType extends ValueType {
   @Override
   public JSType autoboxesTo() {
     return getNativeType(JSTypeNative.BOOLEAN_OBJECT_TYPE);
-  }
-
-  @Override
-  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
-    return sb.append(getDisplayName());
   }
 
   @Override

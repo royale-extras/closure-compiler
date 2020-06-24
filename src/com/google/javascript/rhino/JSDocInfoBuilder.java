@@ -99,6 +99,46 @@ public final class JSDocInfoBuilder {
   }
 
   /**
+   * Returns a JSDocInfoBuilder that contains a copy of the given JSDocInfo in which only the
+   * {@code @type} field of the JSDocInfo is replaced with the given typeExpression. This is done to
+   * prevent generating code in the client module which references local variables from another
+   * module.
+   */
+  public static JSDocInfoBuilder maybeCopyFromWithNewType(
+      JSDocInfo info, JSTypeExpression typeExpression) {
+    if (info == null) {
+      JSDocInfo temp = new JSDocInfo(true);
+      return copyFromWithNewType(temp, typeExpression);
+    }
+    return copyFromWithNewType(info, typeExpression);
+  }
+
+  public static JSDocInfoBuilder copyFromWithNewType(
+      JSDocInfo info, JSTypeExpression typeExpression) {
+    JSDocInfo newTypeInfo = info.cloneWithNewType(false, typeExpression);
+    return new JSDocInfoBuilder(newTypeInfo, info.isDocumentationIncluded(), true);
+  }
+
+  /**
+   * Returns a JSDocInfoBuilder that contains a JSDoc in which all module local types (which may be
+   * inside {@code @param}, {@code @type} or {@code @returns} are replaced with unknown. This is
+   * done to prevent generating code in the client module which references local variables from
+   * another module.
+   */
+  public static JSDocInfoBuilder maybeCopyFromAndReplaceNames(
+      JSDocInfo info, Set<String> moduleLocalNamesToReplace) {
+    if (info == null) {
+      info = new JSDocInfo(true);
+    }
+    return copyFromAndReplaceNames(info, moduleLocalNamesToReplace);
+  }
+
+  private static JSDocInfoBuilder copyFromAndReplaceNames(JSDocInfo info, Set<String> oldNames) {
+    JSDocInfo newTypeInfo = info.cloneAndReplaceTypeNames(oldNames);
+    return new JSDocInfoBuilder(newTypeInfo, info.isDocumentationIncluded(), true);
+  }
+
+  /**
    * Sets the original JSDoc comment string. This is a no-op if the builder
    * isn't configured to record documentation.
    */
@@ -351,11 +391,15 @@ public final class JSDocInfoBuilder {
   /**
    * Records a template type name.
    *
-   * @return {@code true} if the template type name was recorded and
-   *     {@code false} if the input template type name was already defined.
+   * @return {@code true} if the template type name was recorded and {@code false} if the input
+   *     template type name was already defined.
    */
   public boolean recordTemplateTypeName(String name) {
-    if (currentInfo.declareTemplateTypeName(name)) {
+    return recordTemplateTypeName(name, null);
+  }
+
+  public boolean recordTemplateTypeName(String name, JSTypeExpression bound) {
+    if (currentInfo.declareTemplateTypeName(name, bound)) {
       populated = true;
       return true;
     } else {
@@ -747,6 +791,22 @@ public final class JSDocInfoBuilder {
   }
 
   /**
+   * Records that the {@link JSDocInfo} being built should have its {@link JSDocInfo#isConstant()}
+   * flag set to {@code false}.
+   *
+   * @return {@code true} if the mutability was recorded and {@code false} if it was already defined
+   */
+  public boolean recordMutable() {
+    if (currentInfo.hasConstAnnotation()) {
+      currentInfo.setConstant(false);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
    * Records that the {@link JSDocInfo} being built should have its
    * {@link JSDocInfo#isFinal()} flag set to {@code true}.
    *
@@ -787,6 +847,36 @@ public final class JSDocInfoBuilder {
   public boolean recordMeaning(String meaning) {
     if (meaning != null && currentInfo.getMeaning() == null) {
       currentInfo.setMeaning(meaning);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * Records an ID for an alternate message to be used if this message is not yet translated.
+   *
+   * @return {@code true} If the alternate message ID was successfully updated.
+   */
+  public boolean recordAlternateMessageId(String alternateMessageId) {
+    if (alternateMessageId != null && currentInfo.getAlternateMessageId() == null) {
+      currentInfo.setAlternateMessageId(alternateMessageId);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * Records an identifier for a Closure Primitive. function.
+   *
+   * @return {@code true} If the id was successfully updated.
+   */
+  public boolean recordClosurePrimitiveId(String closurePrimitiveId) {
+    if (closurePrimitiveId != null && currentInfo.getClosurePrimitiveId() == null) {
+      currentInfo.setClosurePrimitiveId(closurePrimitiveId);
       populated = true;
       return true;
     } else {
@@ -1088,6 +1178,20 @@ public final class JSDocInfoBuilder {
   public boolean recordExport() {
     if (!currentInfo.isExport()) {
       currentInfo.setExport(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * Records that the {@link JSDocInfo} being built should have its {@link JSDocInfo#isExport()}
+   * flag set to {@code false}.
+   */
+  public boolean removeExport() {
+    if (currentInfo.isExport()) {
+      currentInfo.setExport(false);
       populated = true;
       return true;
     } else {

@@ -26,8 +26,6 @@ import java.util.Locale;
 
 /**
  * Util functions for converting Es6 to Es5
- *
- * @author tbreisacher@google.com (Tyler Breisacher)
  */
 public final class Es6ToEs3Util {
 
@@ -37,9 +35,9 @@ public final class Es6ToEs3Util {
 
   // TODO(tbreisacher): Remove this once we have implemented transpilation for all the features
   // we intend to support.
-  static final DiagnosticType CANNOT_CONVERT_YET = DiagnosticType.error(
-      "JSC_CANNOT_CONVERT_YET",
-      "ES6 transpilation of ''{0}'' is not yet implemented.");
+  public static final DiagnosticType CANNOT_CONVERT_YET =
+      DiagnosticType.error(
+          "JSC_CANNOT_CONVERT_YET", "ES6 transpilation of ''{0}'' is not yet implemented.");
 
   static void cannotConvert(AbstractCompiler compiler, Node n, String message) {
     compiler.report(JSError.make(n, CANNOT_CONVERT, message));
@@ -62,13 +60,6 @@ public final class Es6ToEs3Util {
   }
 
   /**
-   * Returns a call to {@code $jscomp.arrayFromIterator} with {@code iterator} as its argument.
-   */
-  static Node arrayFromIterator(AbstractCompiler compiler, Node iterator) {
-    return callEs6RuntimeFunction(compiler, iterator, "arrayFromIterator");
-  }
-
-  /**
    * Returns a call to $jscomp.arrayFromIterable with {@code iterable} as its argument.
    */
   static Node arrayFromIterable(AbstractCompiler compiler, Node iterable) {
@@ -82,7 +73,7 @@ public final class Es6ToEs3Util {
   }
 
   static void preloadEs6RuntimeFunction(AbstractCompiler compiler, String function) {
-    compiler.ensureLibraryInjected("es6/util/" + function.toLowerCase(Locale.US), false);
+    compiler.ensureLibraryInjected("es6/util/" + function.toLowerCase(Locale.ROOT), false);
   }
 
   static Node callEs6RuntimeFunction(
@@ -123,6 +114,6 @@ public final class Es6ToEs3Util {
     }
     ObjectType genericType = (ObjectType) (registry.getNativeType(typeName));
     ObjectType uninstantiated = genericType.getRawType();
-    return registry.instantiateGenericType(uninstantiated, ImmutableList.of(typeArg));
+    return registry.createTemplatizedType(uninstantiated, ImmutableList.of(typeArg));
   }
 }

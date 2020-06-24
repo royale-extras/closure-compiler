@@ -21,7 +21,9 @@ import static com.google.javascript.rhino.testing.TypeSubject.assertType;
 
 import com.google.javascript.jscomp.type.ClosureReverseAbstractInterpreter;
 import com.google.javascript.jscomp.type.FlowScope;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.Outcome;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.JSType;
 import org.junit.Test;
@@ -51,11 +53,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
 
   @Test
   public void testGoogIsDef3() {
-    testClosureFunction(
-        "goog.isDef",
-        getNativeAllType(),
-        createUnionType(getNativeObjectNumberStringBooleanSymbolType(), getNativeNullType()),
-        getNativeVoidType());
+    testClosureFunction("goog.isDef", getNativeAllType(), getNativeAllType(), getNativeVoidType());
   }
 
   @Test
@@ -64,7 +62,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
         "goog.isDef",
         getNativeUnknownType(),
         getNativeUnknownType(), // TODO(johnlenz): should be getNativeCheckedUnknownType()
-        getNativeUnknownType());
+        getNativeVoidType());
   }
 
   @Test
@@ -87,11 +85,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
 
   @Test
   public void testGoogIsNull3() {
-    testClosureFunction(
-        "goog.isNull",
-        getNativeAllType(),
-        getNativeNullType(),
-        createUnionType(getNativeObjectNumberStringBooleanSymbolType(), getNativeVoidType()));
+    testClosureFunction("goog.isNull", getNativeAllType(), getNativeNullType(), getNativeAllType());
   }
 
   @Test
@@ -99,7 +93,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
     testClosureFunction(
         "goog.isNull",
         getNativeUnknownType(),
-        getNativeUnknownType(),
+        getNativeNullType(),
         getNativeUnknownType()); // TODO(johnlenz): this should be CHECK_UNKNOWN
   }
 
@@ -133,10 +127,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
   @Test
   public void testGoogIsDefAndNotNull4() {
     testClosureFunction(
-        "goog.isDefAndNotNull",
-        getNativeAllType(),
-        getNativeObjectNumberStringBooleanSymbolType(),
-        getNativeNullVoidType());
+        "goog.isDefAndNotNull", getNativeAllType(), getNativeAllType(), getNativeNullVoidType());
   }
 
   @Test
@@ -145,7 +136,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
         "goog.isDefAndNotNull",
         getNativeUnknownType(),
         getNativeUnknownType(), // TODO(johnlenz): this should be "CHECKED_UNKNOWN"
-        getNativeUnknownType());
+        createNullableType(getNativeVoidType()));
   }
 
   @Test
@@ -226,7 +217,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
     testClosureFunction(
         "goog.isFunction",
         getNativeObjectNumberStringBooleanType(),
-        getNativeU2UConstructorType(),
+        getNativeFunctionType(),
         getNativeObjectNumberStringBooleanType());
   }
 
@@ -235,7 +226,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
     testClosureFunction(
         "goog.isFunction",
         getNativeObjectNumberStringBooleanSymbolType(),
-        getNativeU2UConstructorType(),
+        getNativeFunctionType(),
         getNativeObjectNumberStringBooleanSymbolType());
   }
 
@@ -243,14 +234,14 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
   public void testGoogIsFunction3() {
     testClosureFunction(
         "goog.isFunction",
-        createUnionType(getNativeU2UConstructorType(), getNativeNumberStringBooleanType()),
-        getNativeU2UConstructorType(),
+        createUnionType(getNativeFunctionType(), getNativeNumberStringBooleanType()),
+        getNativeFunctionType(),
         getNativeNumberStringBooleanType());
   }
 
   @Test
   public void testGoogIsFunctionOnNull() {
-    testClosureFunction("goog.isFunction", null, getNativeU2UConstructorType(), null);
+    testClosureFunction("goog.isFunction", null, getNativeFunctionType(), null);
   }
 
   @Test
@@ -299,8 +290,7 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
         "goog.isObject",
         getNativeAllType(),
         getNativeNoObjectType(),
-        createUnionType(
-            getNativeNumberStringBooleanSymbolType(), getNativeNullType(), getNativeVoidType()));
+        getNativeAllType());
   }
 
   @Test
@@ -316,9 +306,9 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
   public void testGoogIsObject2b() {
     testClosureFunction(
         "goog.isObject",
-        createUnionType(getNativeObjectType(), getNativeNumberStringBooleanSymbolType()),
+        createUnionType(getNativeObjectType(), getNativeValueTypes()),
         getNativeObjectType(),
-        getNativeNumberStringBooleanSymbolType());
+        getNativeValueTypes());
   }
 
   @Test
@@ -340,13 +330,9 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
     testClosureFunction(
         "goog.isObject",
         createUnionType(
-            getNativeObjectType(),
-            getNativeNumberStringBooleanSymbolType(),
-            getNativeNullType(),
-            getNativeVoidType()),
+            getNativeObjectType(), getNativeValueTypes(), getNativeNullType(), getNativeVoidType()),
         getNativeObjectType(),
-        createUnionType(
-            getNativeNumberStringBooleanSymbolType(), getNativeNullType(), getNativeVoidType()));
+        createUnionType(getNativeValueTypes(), getNativeNullType(), getNativeVoidType()));
   }
 
   @Test
@@ -365,8 +351,9 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
     Node call = n.getLastChild().getLastChild();
     Node name = call.getLastChild();
 
-    TypedScope scope = (TypedScope) SyntacticScopeCreator.makeTyped(compiler).createScope(n, null);
-    FlowScope flowScope = LinkedFlowScope.createEntryLattice(scope);
+    Node root = IR.root(IR.root(), IR.root(n));
+    TypedScope scope = new TypedScopeCreator(compiler).createScope(root, null);
+    FlowScope flowScope = LinkedFlowScope.createEntryLattice(compiler, scope);
 
     assertThat(call.getToken()).isEqualTo(Token.CALL);
     assertThat(name.getToken()).isEqualTo(Token.NAME);
@@ -376,18 +363,20 @@ public final class ClosureReverseAbstractInterpreterTest extends CompilerTypeTes
 
     // trueScope
     assertType(
-            rai.getPreciserScopeKnowingConditionOutcome(call, flowScope, true)
+            rai.getPreciserScopeKnowingConditionOutcome(call, flowScope, Outcome.TRUE)
                 .getSlot("a")
                 .getType())
-        .isStructurallyEqualTo(trueType);
+        .isEqualTo(trueType);
 
     // falseScope
-    JSType aType = rai.getPreciserScopeKnowingConditionOutcome(call, flowScope, false)
-        .getSlot("a").getType();
+    JSType aType =
+        rai.getPreciserScopeKnowingConditionOutcome(call, flowScope, Outcome.FALSE)
+            .getSlot("a")
+            .getType();
     if (falseType == null) {
       assertThat(aType).isNull();
     } else {
-      assertType(aType).isStructurallyEqualTo(falseType);
+      assertType(aType).isEqualTo(falseType);
     }
   }
 }

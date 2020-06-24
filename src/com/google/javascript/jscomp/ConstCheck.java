@@ -16,7 +16,13 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
+
+import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.modules.ModuleMetadataMap;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import java.util.HashSet;
@@ -27,7 +33,6 @@ import java.util.Set;
  * e.g. var XX = 5;
  * XX = 3;    // error!
  * XX++;      // error!
- *
  */
 // TODO(tbreisacher): Consider merging this with CheckAccessControls so that all
 // const-related checks are in the same place.
@@ -42,17 +47,32 @@ class ConstCheck extends AbstractPostOrderCallback
 
   private final AbstractCompiler compiler;
   private final Set<Var> initializedConstants;
+  private final ModuleMetadataMap moduleMetadataMap;
+  private Set<String> providedNames;
 
-  /**
-   * Creates an instance.
-   */
-  public ConstCheck(AbstractCompiler compiler) {
+  /** Creates an instance. */
+  public ConstCheck(AbstractCompiler compiler, ModuleMetadataMap moduleMetadataMap) {
+    checkNotNull(moduleMetadataMap);
     this.compiler = compiler;
     this.initializedConstants = new HashSet<>();
+    this.moduleMetadataMap = moduleMetadataMap;
   }
 
   @Override
   public void process(Node externs, Node root) {
+    ImmutableSet.Builder<String> providedNames = ImmutableSet.builder();
+    for (ModuleMetadata metadata : this.moduleMetadataMap.getAllModuleMetadata()) {
+      if (!(metadata.isGoogProvide() || metadata.isLegacyGoogModule())) {
+        continue;
+      }
+      for (String namespace : metadata.googNamespaces()) {
+        int dot = namespace.indexOf('.');
+        String rootName = dot != -1 ? namespace.substring(0, dot) : namespace;
+        providedNames.add(rootName);
+      }
+    }
+    this.providedNames = providedNames.build();
+
     NodeTraversal.traverseRoots(compiler, this, externs, root);
   }
 
@@ -60,17 +80,17 @@ class ConstCheck extends AbstractPostOrderCallback
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
       case NAME:
-        if (parent != null && NodeUtil.isNameDeclaration(parent)) {
+        if (NodeUtil.isNameDeclaration(parent)) {
           String name = n.getString();
           Var var = t.getScope().getVar(name);
-          if (isConstant(var)) {
+          if (isConstant(var, n)) {
             // If a constant is declared in externs, add it to initializedConstants to indicate
             // that it is initialized externally.
             if (n.isFromExterns()) {
               initializedConstants.add(var);
             } else if (n.hasChildren()) {
               if (!initializedConstants.add(var)) {
-                reportError(t, n, var, name);
+                reportError(n, var, name);
               }
             }
           }
@@ -95,8 +115,11 @@ class ConstCheck extends AbstractPostOrderCallback
           if (lhs.isName()) {
             String name = lhs.getString();
             Var var = t.getScope().getVar(name);
-            if (var.isConst() || (isConstant(var) && !initializedConstants.add(var))) {
-              reportError(t, n, var, name);
+            if (isConstant(var, lhs) && !initializedConstants.add(var)) {
+              reportError(n, var, name);
+            } else if (var != null && var.isGoogModuleExports() && !initializedConstants.add(var)) {
+              compiler.report(
+                  JSError.make(n, CONST_REASSIGNED_VALUE_ERROR, "exports", n.getSourceFileName()));
             }
           }
           break;
@@ -109,8 +132,8 @@ class ConstCheck extends AbstractPostOrderCallback
           if (lhs.isName()) {
             String name = lhs.getString();
             Var var = t.getScope().getVar(name);
-            if (var.isConst() || isConstant(var)) {
-              reportError(t, n, var, name);
+            if (isConstant(var, lhs)) {
+              reportError(n, var, name);
             }
           }
           break;
@@ -121,22 +144,27 @@ class ConstCheck extends AbstractPostOrderCallback
   }
 
   /**
-   * Gets whether a variable is a constant initialized to a literal value at
-   * the point where it is declared.
+   * Gets whether a variable is a constant initialized to a literal value at the point where it is
+   * declared.
    */
-  private static boolean isConstant(Var var) {
-    return var != null && var.isInferredConst();
+  private boolean isConstant(Var var, Node nameNode) {
+    if (var == null) {
+      checkState(
+          this.providedNames.contains(nameNode.getString()),
+          "Found unexpected undeclared name %s",
+          nameNode);
+      return false;
+    }
+    return var.isConst() || var.isDeclaredOrInferredConst();
   }
 
-  /**
-   * Reports a reassigned constant error.
-   */
-  void reportError(NodeTraversal t, Node n, Var var, String name) {
+  /** Reports a reassigned constant error. */
+  private void reportError(Node n, Var var, String name) {
     JSDocInfo info = NodeUtil.getBestJSDocInfo(n);
     if (info == null || !info.getSuppressions().contains("const")) {
       Node declNode = var.getNode();
       String declaredPosition = declNode.getSourceFileName() + ":" + declNode.getLineno();
-      compiler.report(t.makeError(n, CONST_REASSIGNED_VALUE_ERROR, name, declaredPosition));
+      compiler.report(JSError.make(n, CONST_REASSIGNED_VALUE_ERROR, name, declaredPosition));
     }
   }
 }

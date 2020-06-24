@@ -15,10 +15,14 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.jscomp.CompilerTestCase.lines;
+import static com.google.javascript.jscomp.testing.JSCompCorrespondences.DIAGNOSTIC_EQUALITY;
+import static com.google.javascript.jscomp.testing.JSErrorSubject.assertError;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.junit.Assert.fail;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -54,7 +58,6 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 /** @author johnlenz@google.com (John Lenz) */
-
 @RunWith(JUnit4.class)
 public final class CompilerTest {
 
@@ -105,7 +108,7 @@ public final class CompilerTest {
             "mix", "goog.require('gin'); goog.require('tonic');"));
     CompilerOptions options = new CompilerOptions();
     options.setIdeMode(true);
-    options.setManageClosureDependencies(true);
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(ImmutableList.of()));
     Compiler compiler = new Compiler();
     compiler.init(ImmutableList.<SourceFile>of(), inputs, options);
     compiler.parseInputs();
@@ -452,8 +455,8 @@ public final class CompilerTest {
     // Default is warning.
     compiler.compile(SourceFile.fromCode("extern.js", ""),
         SourceFile.fromCode("test.js", badJsDoc), options);
-    assertThat(compiler.getWarningCount()).isEqualTo(1);
-    assertThat(compiler.getErrorCount()).isEqualTo(0);
+    assertThat(compiler.getWarnings()).hasSize(1);
+    assertThat(compiler.getErrors()).isEmpty();
   }
 
   /**
@@ -470,8 +473,8 @@ public final class CompilerTest {
         DiagnosticGroups.NON_STANDARD_JSDOC, CheckLevel.OFF);
     compiler.compile(SourceFile.fromCode("extern.js", ""),
         SourceFile.fromCode("test.js", badJsDoc), options);
-    assertThat(compiler.getWarningCount()).isEqualTo(0);
-    assertThat(compiler.getErrorCount()).isEqualTo(0);
+    assertThat(compiler.getWarnings()).isEmpty();
+    assertThat(compiler.getErrors()).isEmpty();
   }
 
   /**
@@ -489,8 +492,8 @@ public final class CompilerTest {
         DiagnosticGroups.NON_STANDARD_JSDOC, CheckLevel.ERROR);
     compiler.compile(SourceFile.fromCode("extern.js", ""),
         SourceFile.fromCode("test.js", badJsDoc), options);
-    assertThat(compiler.getWarningCount()).isEqualTo(0);
-    assertThat(compiler.getErrorCount()).isEqualTo(1);
+    assertThat(compiler.getWarnings()).isEmpty();
+    assertThat(compiler.getErrors()).hasSize(1);
   }
 
   @Test
@@ -962,8 +965,8 @@ public final class CompilerTest {
       String outputSource = compiler.toSource();
       assertThat(outputSource).isEqualTo(expected);
     } else {
-      assertThat(result.errors).hasLength(1);
-      assertThat(result.errors[0].getType()).isEqualTo(error);
+      assertThat(result.errors).hasSize(1);
+      assertThat(result.errors.get(0).getType()).isEqualTo(error);
     }
     return result;
   }
@@ -992,6 +995,24 @@ public final class CompilerTest {
     assertThat(hasOutput("foo", "foo/bar.js", CheckLevel.WARNING)).isTrue();
     assertThat(hasOutput("baz", "foo/bar.js", CheckLevel.ERROR)).isTrue();
     assertThat(hasOutput("foo", "foo/bar.js", CheckLevel.ERROR)).isTrue();
+  }
+
+  @Test
+  public void testErrorLeveling_forFeaturesNotSupportedByPass_controlledByOptions() {
+    JSError error = JSError.make(PhaseOptimizer.FEATURES_NOT_SUPPORTED_BY_PASS, "");
+    CompilerOptions options = new CompilerOptions();
+    Compiler compiler = new Compiler();
+
+    compiler.initOptions(options);
+    assertThat(compiler.getErrorLevel(error)).isNull();
+
+    options.setSkipUnsupportedPasses(false);
+    compiler.initOptions(options);
+    assertThat(compiler.getErrorLevel(error)).isNull();
+
+    options.setSkipUnsupportedPasses(true);
+    compiler.initOptions(options);
+    assertThat(compiler.getErrorLevel(error)).isEqualTo(CheckLevel.WARNING);
   }
 
   @Test
@@ -1065,13 +1086,13 @@ public final class CompilerTest {
     }
 
     @Override
-    public JSError[] getErrors() {
-      return null;
+    public ImmutableList<JSError> getErrors() {
+      return ImmutableList.of();
     }
 
     @Override
-    public JSError[] getWarnings() {
-      return null;
+    public ImmutableList<JSError> getWarnings() {
+      return ImmutableList.of();
     }
 
     @Override public void setTypedPercent(double typedPercent) {}
@@ -1167,16 +1188,17 @@ public final class CompilerTest {
             SourceFile.fromCode("hops", "/** @fileoverview @typeSummary */ goog.provide('hops');"));
 
     CompilerOptions options = createNewFlagBasedOptions();
-    options.dependencyOptions.setDependencySorting(true);
+    options.setDependencyOptions(DependencyOptions.sortOnly());
 
     List<SourceFile> externs = ImmutableList.of();
     Compiler compiler = new Compiler();
     compiler.compile(externs, inputs, options);
 
-    assertThat(compiler.externsRoot.getChildCount()).isEqualTo(3);
-    assertExternIndex(compiler, 0, "hops");
-    assertExternIndex(compiler, 1, "beer");
-    assertExternIndex(compiler, 2, "leaf");
+    assertThat(compiler.externsRoot.getChildCount()).isEqualTo(4);
+    assertExternIndex(compiler, 0, "{SyntheticVarsDeclar}"); // added by VarCheck
+    assertExternIndex(compiler, 1, "hops");
+    assertExternIndex(compiler, 2, "beer");
+    assertExternIndex(compiler, 3, "leaf");
   }
 
   @Test
@@ -1359,20 +1381,21 @@ public final class CompilerTest {
                 "something", "/** @fileoverview @typeSummary */ goog.provide('something');"));
 
     CompilerOptions options = createNewFlagBasedOptions();
-    options.dependencyOptions.setDependencyPruning(true);
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(ImmutableList.of()));
 
     List<SourceFile> externs = ImmutableList.of();
     Compiler compiler = new Compiler();
     compiler.compile(externs, inputs, options);
 
-    assertThat(compiler.externsRoot.getChildCount()).isEqualTo(2);
-    assertExternIndex(compiler, 0, "something");
-    assertExternIndex(compiler, 1, "moocher");
+    assertThat(compiler.externsRoot.getChildCount()).isEqualTo(3);
+    assertExternIndex(compiler, 0, "{SyntheticVarsDeclar}"); // added by VarCheck
+    assertExternIndex(compiler, 1, "something");
+    assertExternIndex(compiler, 2, "moocher");
   }
 
   private void assertExternIndex(Compiler compiler, int index, String name) {
     assertThat(compiler.externsRoot.getChildAtIndex(index))
-        .isSameAs(compiler.getInput(new InputId(name)).getAstRoot(compiler));
+        .isSameInstanceAs(compiler.getInput(new InputId(name)).getAstRoot(compiler));
   }
 
   @Test
@@ -1387,9 +1410,7 @@ public final class CompilerTest {
     CompilerOptions options = createNewFlagBasedOptions();
     options.setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2017);
     options.setLanguageOut(CompilerOptions.LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setEntryPoints(entryPoints);
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(entryPoints));
 
     List<SourceFile> externs =
         AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
@@ -1418,9 +1439,7 @@ public final class CompilerTest {
     CompilerOptions options = createNewFlagBasedOptions();
     options.setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2017);
     options.setLanguageOut(CompilerOptions.LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setEntryPoints(entryPoints);
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(entryPoints));
     options.processCommonJSModules = true;
 
     List<SourceFile> externs =
@@ -1447,9 +1466,7 @@ public final class CompilerTest {
 
     CompilerOptions options = createNewFlagBasedOptions();
     options.setLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2017);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setEntryPoints(entryPoints);
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(entryPoints));
 
     List<SourceFile> externs =
         AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
@@ -1459,6 +1476,167 @@ public final class CompilerTest {
 
     Result result = compiler.getResult();
     assertThat(result.errors).isEmpty();
+  }
+
+  @Test
+  public void testExternsFileAsEntryPoint() throws Exception {
+    // Test that you can specify externs as entry points.
+    // This allows all inputs to be passed to the compiler under the --js flag,
+    // relying on dependency management to sort out which ones are externs or weak files
+    List<SourceFile> inputs =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "/externs.js", "/** @fileoverview @externs */ /** @const {number} */ var bar = 1;"),
+            SourceFile.fromCode("/foo.js", "console.log(0);"));
+
+    List<ModuleIdentifier> entryPoints = ImmutableList.of(ModuleIdentifier.forFile("/externs.js"));
+
+    CompilerOptions options = createNewFlagBasedOptions();
+    options.setDependencyOptions(DependencyOptions.pruneForEntryPoints(entryPoints));
+
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+
+    Compiler compiler = new Compiler();
+    compiler.compile(externs, inputs, options);
+
+    Result result = compiler.getResult();
+    assertThat(result.errors).isEmpty();
+    assertThat(compiler.toSource()).isEmpty(); // Empty since srcs are pruned.
+  }
+
+  @Test
+  public void testExternsFileAsEntryPoint2() throws Exception {
+    // Test code reference to an extern that doesn't exist,
+    // but the extern is still the sole entry point.
+    List<SourceFile> inputs =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "/externs.js", "/** @fileoverview @externs */ /** @const {number} */ var bar = 1;"),
+            SourceFile.fromCode("/foo.js", "console.log(nonexistentExtern);"));
+
+    List<ModuleIdentifier> entryPoints = ImmutableList.of(ModuleIdentifier.forFile("/externs.js"));
+
+    CompilerOptions options = createNewFlagBasedOptions();
+    options.setDependencyOptions(DependencyOptions.pruneForEntryPoints(entryPoints));
+
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+
+    Compiler compiler = new Compiler();
+    compiler.compile(externs, inputs, options);
+
+    Result result = compiler.getResult();
+    assertThat(result.errors).isEmpty();
+    assertThat(compiler.toSource()).isEmpty();
+  }
+
+  @Test
+  public void testExternsFileAsEntryPoint3() throws Exception {
+    // Test code reference to an extern that doesn't exist,
+    // but the extern and source files are both entry points
+    List<SourceFile> inputs =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "/externs.js", "/** @fileoverview @externs */ /** @const {number} */ var bar = 1;"),
+            SourceFile.fromCode("/foo.js", "console.log(nonexistentExtern);"));
+
+    List<ModuleIdentifier> entryPoints =
+        ImmutableList.of(
+            ModuleIdentifier.forFile("/externs.js"), ModuleIdentifier.forFile("/foo.js"));
+
+    CompilerOptions options = createNewFlagBasedOptions();
+    options.setDependencyOptions(DependencyOptions.pruneForEntryPoints(entryPoints));
+
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+
+    Compiler compiler = new Compiler();
+    compiler.compile(externs, inputs, options);
+
+    Result result = compiler.getResult();
+    assertThat(result.errors).hasSize(1);
+    assertThat(result.errors.get(0).getType()).isEqualTo(VarCheck.UNDEFINED_VAR_ERROR);
+  }
+
+  @Test
+  public void testExternsFileAsEntryPoint4() throws Exception {
+    // Test that has a code reference to an extern that does exist,
+    // and the extern and source files are both entry points
+    List<SourceFile> inputs =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "/externs.js", "/** @fileoverview @externs */ /** @const {number} */ var bar = 1;"),
+            SourceFile.fromCode("/foo.js", "console.log(bar);"));
+
+    List<ModuleIdentifier> entryPoints =
+        ImmutableList.of(
+            ModuleIdentifier.forFile("/externs.js"), ModuleIdentifier.forFile("/foo.js"));
+
+    CompilerOptions options = createNewFlagBasedOptions();
+    options.setDependencyOptions(DependencyOptions.pruneForEntryPoints(entryPoints));
+
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+
+    Compiler compiler = new Compiler();
+    compiler.compile(externs, inputs, options);
+
+    Result result = compiler.getResult();
+    assertThat(result.errors).isEmpty();
+    assertThat(compiler.toSource()).isEqualTo("console.log(bar);");
+  }
+
+  @Test
+  public void testExternsFileAsEntryPoint5() throws Exception {
+    // Test that has a code reference to an extern that does exist,
+    // and only the source source file is an entry point
+    List<SourceFile> inputs =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "/externs.js", "/** @fileoverview @externs */ /** @const {number} */ var bar = 1;"),
+            SourceFile.fromCode("/foo.js", "console.log(bar);"));
+
+    List<ModuleIdentifier> entryPoints = ImmutableList.of(ModuleIdentifier.forFile("/foo.js"));
+
+    CompilerOptions options = createNewFlagBasedOptions();
+    options.setDependencyOptions(DependencyOptions.pruneForEntryPoints(entryPoints));
+
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+
+    Compiler compiler = new Compiler();
+    compiler.compile(externs, inputs, options);
+
+    Result result = compiler.getResult();
+    assertThat(result.errors).isEmpty();
+    assertThat(compiler.toSource()).isEqualTo("console.log(bar);");
+  }
+
+  @Test
+  public void testWeakExternsFileAsEntryPointNoError() throws Exception {
+    // Test that if a weak extern file is passed in as entry point, there is no error thrown.
+    List<SourceFile> inputs =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "/externs.js",
+                "/** @fileoverview @externs */ /** @const {number} */ var bar = 1;",
+                SourceKind.WEAK));
+
+    List<ModuleIdentifier> entryPoints = ImmutableList.of(ModuleIdentifier.forFile("/externs.js"));
+
+    CompilerOptions options = createNewFlagBasedOptions();
+    options.setDependencyOptions(DependencyOptions.pruneForEntryPoints(entryPoints));
+
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+
+    Compiler compiler = new Compiler();
+    compiler.compile(externs, inputs, options);
+
+    Result result = compiler.getResult();
+    assertThat(result.errors).isEmpty();
+    assertThat(compiler.toSource()).isEmpty();
   }
 
   @Test
@@ -1761,11 +1939,9 @@ public final class CompilerTest {
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT_2015);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setEntryPoints(
-        ImmutableList.of(ModuleIdentifier.forFile("/entry.js")));
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setMoocherDropping(true);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forFile("/entry.js"))));
     List<SourceFile> externs =
         AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
     Compiler compiler = new Compiler();
@@ -1807,11 +1983,9 @@ public final class CompilerTest {
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT_2015);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setEntryPoints(
-        ImmutableList.of(ModuleIdentifier.forFile("/entry.js")));
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setMoocherDropping(true);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forFile("/entry.js"))));
     List<SourceFile> externs =
         AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
     Compiler compiler = new Compiler();
@@ -1856,11 +2030,10 @@ public final class CompilerTest {
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT_2015);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setEntryPoints(
-        ImmutableList.of(ModuleIdentifier.forFile("entry.js")));
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setMoocherDropping(false);
+    options.setLanguageOut(LanguageMode.ECMASCRIPT5);
+    options.setDependencyOptions(
+        DependencyOptions.pruneLegacyForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forFile("entry.js"))));
     List<SourceFile> externs =
         AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
 
@@ -1904,11 +2077,10 @@ public final class CompilerTest {
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT_2015);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setEntryPoints(
-        ImmutableList.of(ModuleIdentifier.forFile("/entry.js")));
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setMoocherDropping(true);
+    options.setLanguageOut(LanguageMode.ECMASCRIPT5);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forFile("/entry.js"))));
     options.setProcessCommonJSModules(true);
     options.setModuleResolutionMode(ResolutionMode.WEBPACK);
     List<SourceFile> externs =
@@ -1949,11 +2121,10 @@ public final class CompilerTest {
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT_2015);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
-    options.dependencyOptions.setEntryPoints(
-        ImmutableList.of(ModuleIdentifier.forFile("/entry.js")));
-    options.dependencyOptions.setDependencySorting(true);
-    options.dependencyOptions.setDependencyPruning(true);
-    options.dependencyOptions.setMoocherDropping(true);
+    options.setLanguageOut(LanguageMode.ECMASCRIPT5);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forFile("/entry.js"))));
     options.setProcessCommonJSModules(true);
     options.setModuleResolutionMode(ResolutionMode.WEBPACK);
     List<SourceFile> externs =
@@ -1969,6 +2140,85 @@ public final class CompilerTest {
     }
 
     assertThat(orderedInputs).containsExactly("/a.js", "/entry.js", "/b.js").inOrder();
+  }
+
+  @Test
+  public void testDynamicImportOrdering3() throws Exception {
+    List<SourceFile> sources = new ArrayList<>();
+    sources.add(SourceFile.fromCode("/entry.js", "__webpack_require__(2);"));
+    sources.add(
+        SourceFile.fromCode(
+            "/a.js",
+            lines(
+                "console.log(module.id);",
+                "Promise.all([__webpack_require__.e(0)]).then(function() {",
+                "  return __webpack_require__(3);",
+                "});")));
+    sources.add(SourceFile.fromCode("/b.js", "console.log(module.id); module.exports = 'foo';"));
+
+    HashMap<String, String> webpackModulesById = new HashMap<>();
+    webpackModulesById.put("1", "/entry.js");
+    webpackModulesById.put("2", "/a.js");
+    webpackModulesById.put("3", "/b.js");
+
+    CompilerOptions options = new CompilerOptions();
+    options.setLanguageIn(LanguageMode.ECMASCRIPT_2015);
+    options.setLanguageOut(LanguageMode.ECMASCRIPT5);
+    options.setLanguageOut(LanguageMode.ECMASCRIPT5);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forFile("/entry.js"))));
+    options.setProcessCommonJSModules(true);
+    options.setModuleResolutionMode(ResolutionMode.WEBPACK);
+    List<SourceFile> externs =
+        AbstractCommandLineRunner.getBuiltinExterns(options.getEnvironment());
+    Compiler compiler = new Compiler();
+    compiler.initWebpackMap(ImmutableMap.copyOf(webpackModulesById));
+    Result result = compiler.compile(externs, ImmutableList.copyOf(sources), options);
+    assertThat(result.success).isTrue();
+
+    List<String> orderedInputs = new ArrayList<>();
+    for (CompilerInput input : compiler.getInputsInOrder()) {
+      orderedInputs.add(input.getName());
+    }
+
+    assertThat(orderedInputs).containsExactly("/a.js", "/entry.js", "/b.js").inOrder();
+  }
+
+  @Test
+  public void testCodeReferenceToTypeImport() throws Exception {
+    List<SourceFile> externs =
+        ImmutableList.of(SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}"));
+    List<SourceFile> sources =
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "type.js",
+                lines(
+                    "goog.module('type');", //
+                    "",
+                    "exports.Type = class {}")),
+            SourceFile.fromCode(
+                "main.js",
+                lines(
+                    "goog.module('main');",
+                    "",
+                    "const {Type} = goog.requireType('type');",
+                    "",
+                    "alert(new Type());")));
+
+    CompilerOptions options = new CompilerOptions();
+    options.setClosurePass(true);
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(externs, sources, options);
+    compiler.parse();
+    compiler.check();
+
+    assertThat(compiler.getWarnings()).isEmpty();
+    assertThat(compiler.getErrors())
+        .comparingElementsUsing(DIAGNOSTIC_EQUALITY)
+        .containsExactly(CheckTypeImportCodeReferences.TYPE_IMPORT_CODE_REFERENCE);
   }
 
   @Test
@@ -2050,5 +2300,358 @@ public final class CompilerTest {
   @Test
   public void testWeakSourcesSaveRestore() throws Exception {
     weakSourcesModulesHelper(/* saveAndRestore= */ true);
+  }
+
+  @Test
+  public void testWeakSourcesEntryPoint() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}");
+    SourceFile strong =
+        SourceFile.fromCode(
+            "strong.js",
+            lines(
+                "goog.module('strong');",
+                "const T = goog.requireType('weak');",
+                "/** @param {!T} x */ function f(x) { alert(x); }"),
+            SourceKind.STRONG);
+    SourceFile weak =
+        SourceFile.fromCode(
+            "type.js",
+            lines(
+                "goog.module('weak');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideeffect();"),
+            SourceKind.WEAK);
+
+    CompilerOptions options = new CompilerOptions();
+    options.setEmitUseStrict(false);
+    options.setClosurePass(true);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forClosure("strong"))));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(ImmutableList.of(extern), ImmutableList.of(strong, weak), options);
+
+    compiler.parse();
+    compiler.check();
+    compiler.performOptimizations();
+
+    assertThat(compiler.toSource())
+        .isEqualTo("var module$exports$strong={};function module$contents$strong_f(x){alert(x)};");
+  }
+
+  @Test
+  public void testPreexistingWeakModule() throws Exception {
+    JSModule strong = new JSModule("m");
+    strong.add(SourceFile.fromCode("strong.js", "goog.provide('a');", SourceKind.STRONG));
+    JSModule weak = new JSModule(JSModule.WEAK_MODULE_NAME);
+    weak.add(SourceFile.fromCode("weak.js", "goog.provide('b');", SourceKind.WEAK));
+    weak.addDependency(strong);
+
+    CompilerOptions options = new CompilerOptions();
+    options.setEmitUseStrict(false);
+    options.setClosurePass(true);
+
+    Compiler compiler = new Compiler();
+
+    compiler.initModules(ImmutableList.of(), ImmutableList.of(strong, weak), options);
+
+    compiler.parse();
+    compiler.check();
+    compiler.performOptimizations();
+
+    assertThat(compiler.getModuleGraph().getModuleCount()).isEqualTo(2);
+    assertThat(Iterables.get(compiler.getModuleGraph().getAllModules(), 0).getName())
+        .isEqualTo("m");
+    assertThat(Iterables.get(compiler.getModuleGraph().getAllModules(), 1).getName())
+        .isEqualTo(JSModule.WEAK_MODULE_NAME);
+
+    assertThat(compiler.toSource()).isEqualTo("var a={};");
+  }
+
+  @Test
+  public void testPreexistingWeakModuleWithAdditionalStrongSources() throws Exception {
+    JSModule strong = new JSModule("m");
+    strong.add(SourceFile.fromCode("strong.js", "goog.provide('a');", SourceKind.STRONG));
+    JSModule weak = new JSModule(JSModule.WEAK_MODULE_NAME);
+    weak.add(SourceFile.fromCode("weak.js", "goog.provide('b');", SourceKind.WEAK));
+    weak.add(
+        SourceFile.fromCode(
+            "weak_but_actually_strong.js", "goog.provide('c');", SourceKind.STRONG));
+    weak.addDependency(strong);
+
+    CompilerOptions options = new CompilerOptions();
+    Compiler compiler = new Compiler();
+
+    try {
+      compiler.initModules(ImmutableList.of(), ImmutableList.of(strong, weak), options);
+      fail();
+    } catch (RuntimeException e) {
+      assertThat(e)
+          .hasMessageThat()
+          .contains(
+              "Found these strong sources in the weak module:\n  weak_but_actually_strong.js");
+    }
+  }
+
+  @Test
+  public void testPreexistingWeakModuleWithMissingWeakSources() throws Exception {
+    JSModule strong = new JSModule("m");
+    strong.add(SourceFile.fromCode("strong.js", "goog.provide('a');", SourceKind.STRONG));
+    strong.add(
+        SourceFile.fromCode("strong_but_actually_weak.js", "goog.provide('b');", SourceKind.WEAK));
+    JSModule weak = new JSModule(JSModule.WEAK_MODULE_NAME);
+    weak.add(SourceFile.fromCode("weak.js", "goog.provide('c');", SourceKind.WEAK));
+    weak.addDependency(strong);
+
+    CompilerOptions options = new CompilerOptions();
+    Compiler compiler = new Compiler();
+
+    try {
+      compiler.initModules(ImmutableList.of(), ImmutableList.of(strong, weak), options);
+      fail();
+    } catch (RuntimeException e) {
+      assertThat(e)
+          .hasMessageThat()
+          .contains(
+              "Found these weak sources in other modules:\n"
+                  + "  strong_but_actually_weak.js (in module m)");
+    }
+  }
+
+  @Test
+  public void testPreexistingWeakModuleWithIncorrectDependencies() throws Exception {
+    JSModule m1 = new JSModule("m1");
+    JSModule m2 = new JSModule("m2");
+    JSModule weak = new JSModule(JSModule.WEAK_MODULE_NAME);
+    weak.addDependency(m1);
+
+    CompilerOptions options = new CompilerOptions();
+    Compiler compiler = new Compiler();
+
+    try {
+      compiler.initModules(ImmutableList.of(), ImmutableList.of(m1, m2, weak), options);
+      fail();
+    } catch (RuntimeException e) {
+      assertThat(e)
+          .hasMessageThat()
+          .isEqualTo("A weak module already exists but it does not depend on every other module.");
+    }
+  }
+
+  @Test
+  public void testImplicitWeakSourcesWithEntryPoint() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}");
+    SourceFile strong =
+        SourceFile.fromCode(
+            "strong.js",
+            lines(
+                "goog.module('strong');",
+                "const T = goog.requireType('weak');",
+                "/** @param {!T} x */ function f(x) { alert(x); }"));
+    SourceFile weak =
+        SourceFile.fromCode(
+            "type.js",
+            lines(
+                "goog.module('weak');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideeffect();"));
+
+    CompilerOptions options = new CompilerOptions();
+    options.setEmitUseStrict(false);
+    options.setClosurePass(true);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forClosure("strong"))));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(ImmutableList.of(extern), ImmutableList.of(strong, weak), options);
+
+    compiler.parse();
+    compiler.check();
+    compiler.performOptimizations();
+
+    assertThat(compiler.toSource())
+        .isEqualTo("var module$exports$strong={};function module$contents$strong_f(x){alert(x)};");
+  }
+
+  @Test
+  public void testImplicitWeakSourcesWithEntryPointLegacyPrune() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}");
+    SourceFile strong =
+        SourceFile.fromCode(
+            "moocher.js",
+            lines(
+                "goog.requireType('weak');",
+                "/** @param {!weak.T} x */ function f(x) { alert(x); }"));
+    SourceFile weak =
+        SourceFile.fromCode(
+            "type.js",
+            lines(
+                "goog.module('weak');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideeffect();"));
+
+    CompilerOptions options = new CompilerOptions();
+    options.setEmitUseStrict(false);
+    options.setClosurePass(true);
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(ImmutableList.of()));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(ImmutableList.of(extern), ImmutableList.of(strong, weak), options);
+
+    compiler.parse();
+    compiler.check();
+    compiler.performOptimizations();
+
+    assertThat(compiler.toSource()).isEqualTo("function f(x){alert(x)};");
+  }
+
+  @Test
+  public void testTransitiveImplicitWeakSourcesWithEntryPoint() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}");
+    SourceFile strong =
+        SourceFile.fromCode(
+            "strong.js",
+            lines(
+                "goog.module('strong');",
+                "const T = goog.requireType('weakEntry');",
+                "/** @param {!T} x */ function f(x) { alert(x); }"));
+    SourceFile weakEntry =
+        SourceFile.fromCode(
+            "weakEntry.js",
+            lines(
+                "goog.module('weakEntry');",
+                "const w = goog.require('weakByAssociation');",
+                "exports = w;"));
+    SourceFile weakByAssociation =
+        SourceFile.fromCode(
+            "weakByAssociation.js",
+            lines(
+                "goog.module('weakByAssociation');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideEffect();"));
+
+    CompilerOptions options = new CompilerOptions();
+    options.setEmitUseStrict(false);
+    options.setClosurePass(true);
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forClosure("strong"))));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(
+        ImmutableList.of(extern), ImmutableList.of(strong, weakEntry, weakByAssociation), options);
+
+    compiler.parse();
+    compiler.check();
+    compiler.performOptimizations();
+
+    assertThat(compiler.getWarnings()).isEmpty();
+    assertThat(compiler.getErrors()).isEmpty();
+
+    assertThat(compiler.toSource())
+        .isEqualTo("var module$exports$strong={};function module$contents$strong_f(x){alert(x)};");
+  }
+
+  @Test
+  public void testExplicitWeakEntryPointIsError() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "");
+    SourceFile weakEntry =
+        SourceFile.fromCode(
+            "weakEntry.js",
+            lines(
+                "goog.module('weakEntry');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideEffect();"),
+            SourceKind.WEAK);
+
+    CompilerOptions options = new CompilerOptions();
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forClosure("weakEntry"))));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(ImmutableList.of(extern), ImmutableList.of(weakEntry), options);
+    compiler.parse();
+
+    assertThat(compiler.getWarnings()).isEmpty();
+    assertThat(compiler.getErrors()).hasSize(1);
+    assertError(getOnlyElement(compiler.getErrors()))
+        .hasMessage("Explicit entry point input must not be weak: weakEntry.js");
+  }
+
+  @Test
+  public void testImplicitWeakEntryPointIsWarning() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}");
+    SourceFile weakMoocher =
+        SourceFile.fromCode(
+            "weakMoocher.js",
+            lines(
+                "const {T} = goog.require('weakByAssociation');",
+                "/** @param {!T} x */ function f(x) { alert(x); }"),
+            SourceKind.WEAK);
+    SourceFile weakByAssociation =
+        SourceFile.fromCode(
+            "weakByAssociation.js",
+            lines(
+                "goog.module('weakByAssociation');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideeffect();"));
+
+    CompilerOptions options = new CompilerOptions();
+    options.setDependencyOptions(DependencyOptions.pruneLegacyForEntryPoints(ImmutableList.of()));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(
+        ImmutableList.of(extern), ImmutableList.of(weakMoocher, weakByAssociation), options);
+    compiler.parse();
+
+    assertThat(compiler.getErrors()).isEmpty();
+    assertThat(compiler.getWarnings()).hasSize(1);
+    assertError(getOnlyElement(compiler.getWarnings()))
+        .hasMessage("Implicit entry point input should not be weak: weakMoocher.js");
+  }
+
+  @Test
+  public void testWeakStronglyReachableIsError() throws Exception {
+    SourceFile extern = SourceFile.fromCode("extern.js", "/** @externs */ function alert(x) {}");
+    SourceFile strong =
+        SourceFile.fromCode(
+            "strong.js",
+            lines(
+                "goog.module('strong');",
+                "const T = goog.require('weak');",
+                "/** @param {!T} x */ function f(x) { alert(x); }"),
+            SourceKind.STRONG);
+    SourceFile weak =
+        SourceFile.fromCode(
+            "weak.js",
+            lines(
+                "goog.module('weak');",
+                "/** @typedef {number|string} */ exports.T;",
+                "sideEffect();"),
+            SourceKind.WEAK);
+
+    CompilerOptions options = new CompilerOptions();
+    options.setDependencyOptions(
+        DependencyOptions.pruneForEntryPoints(
+            ImmutableList.of(ModuleIdentifier.forClosure("strong"))));
+
+    Compiler compiler = new Compiler();
+
+    compiler.init(ImmutableList.of(extern), ImmutableList.of(strong, weak), options);
+    compiler.parse();
+
+    assertThat(compiler.getWarnings()).isEmpty();
+    assertThat(compiler.getErrors()).hasSize(1);
+    assertError(getOnlyElement(compiler.getErrors()))
+        .hasMessage("File strongly reachable from an entry point must not be weak: weak.js");
   }
 }

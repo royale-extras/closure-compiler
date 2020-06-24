@@ -17,7 +17,6 @@
 package com.google.javascript.refactoring;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.Joiner;
@@ -29,6 +28,7 @@ import com.google.javascript.jscomp.SourceFile;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -46,7 +46,6 @@ import org.junit.runners.JUnit4;
  * @author mknichel@google.com (Mark Knichel)
  */
 // TODO(mknichel): Make this a SmallTest by disabling threads in the JS Compiler.
-
 @RunWith(JUnit4.class)
 public class RefasterJsScannerTest {
 
@@ -157,15 +156,16 @@ public class RefasterJsScannerTest {
     String originalCode = "f(1 || 2) && f(3) && f(4) == 5 && 6 == f(7) && 8 + f(9);";
     String expectedCode =
         "(1 || 2) == 0 && 3 == 0 && (4 == 0) == 5 && 6 == (7 == 0) && 8 + (9 == 0);";
-    String template = Joiner.on("\n").join(
-        "/** @param {?} x */",
-        "function before_foo(x) {",
-        "  f(x);",
-        "};",
-        "/** @param {?} x */",
-        "function after_foo(x) {",
-        "  x == 0;",
-        "}");
+    String template =
+        lines(
+            "/** @param {?} x */",
+            "function before_foo(x) {",
+            "  f(x);",
+            "};",
+            "/** @param {?} x */",
+            "function after_foo(x) {",
+            "  x == 0;",
+            "}");
     assertChanges("", originalCode, template, expectedCode);
   }
 
@@ -737,10 +737,7 @@ public class RefasterJsScannerTest {
   public void test_importConstGoogRequire() throws Exception {
     String externs = "";
     String originalCode =
-        Joiner.on('\n').join(
-            "goog.module('testcase');",
-            "",
-            "function f() { var loc = 'str'; }");
+        Joiner.on('\n').join("goog.module('testcase');", "", "function f() { var loc = 'str'; }");
     String expectedCode =
         Joiner.on('\n').join(
         "goog.module('testcase');",
@@ -790,6 +787,40 @@ public class RefasterJsScannerTest {
             "function after_foo() {",
             "  var a = goog.foo.f();",
             "}");
+    assertChanges(externs, originalCode, template, expectedCode);
+  }
+
+  @Test
+  public void test_importDestructureConstGoogRequire() throws Exception {
+    // TODO(b/139953612): Respect existing destructured goog.requires
+    String externs = "";
+    String originalCode =
+        Joiner.on('\n')
+            .join(
+                "goog.module('testcase');",
+                "const {bar} = goog.require('goog.foo');",
+                "",
+                "function f() { var loc = 'str'; }");
+    String expectedCode =
+        Joiner.on('\n')
+            .join(
+                "goog.module('testcase');",
+                "const foo = goog.require('goog.foo');",
+                "const {bar} = goog.require('goog.foo');",
+                "",
+                "function f() { var loc = foo.f(); }");
+    String template =
+        Joiner.on('\n')
+            .join(
+                "/**",
+                "* +require {goog.foo}",
+                "*/",
+                "function before_foo() {",
+                "  var a = 'str';",
+                "};",
+                "function after_foo() {",
+                "  var a = goog.foo.f();",
+                "}");
     assertChanges(externs, originalCode, template, expectedCode);
   }
 
@@ -977,13 +1008,17 @@ public class RefasterJsScannerTest {
                 "foo.js")
             .build();
     List<SuggestedFix> fixes = driver.drive(scanner);
-    ImmutableList<ImmutableMap<String, String>> outputChoices =
+    List<String> outputChoices =
         ApplySuggestedFixes.applyAllSuggestedFixChoicesToCode(
-            fixes, ImmutableMap.of("input", originalCode));
-    assertThat(outputChoices).hasSize(expectedChoices.length);
+                fixes, ImmutableMap.of("input", originalCode))
+            .stream()
+            .map((m) -> m.get("input"))
+            .collect(Collectors.toList());
 
-    for (int i = 0; i < outputChoices.size(); i++) {
-      assertEquals("Choice " + i, expectedChoices[i], outputChoices.get(i).get("input"));
-    }
+    assertThat(outputChoices).containsExactlyElementsIn(expectedChoices).inOrder();
+  }
+
+  private String lines(String... lines) {
+    return String.join("\n", lines);
   }
 }

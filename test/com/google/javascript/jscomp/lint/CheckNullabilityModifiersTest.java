@@ -35,8 +35,8 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerOptions getOptions(CompilerOptions options) {
-    super.getOptions(options);
+  protected CompilerOptions getOptions() {
+    CompilerOptions options = super.getOptions();
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
     return options;
   }
@@ -127,6 +127,30 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
         lines(
             "/** @constructor @template T */ function Foo(){}",
             "/** @param {T} x */ Foo.prototype.bar = function(x){};"));
+  }
+
+  @Test
+  public void testTemplateDefinitionTypeWithTtl() {
+    checkNoWarning(
+        lines(
+            "/**",
+            " * @param {T} x",
+            " * @param {U} y",
+            " * @template T",
+            " * @template U := T =:",
+            " */",
+            "function f(x, y) {}"));
+
+    checkNoWarning(
+        lines(
+            "/**",
+            " * @param {T} x",
+            " * @param {U} y",
+            " * @template T",
+            // note that "Object" below is /not/ nullable
+            " * @template U := cond(isUnknown(T), \"Object\", T) =:",
+            " */",
+            "function f(x, y) {}"));
   }
 
   @Test
@@ -235,12 +259,30 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
         "/** @param {T} x */ function g(x){}");
   }
 
+  @Test
+  public void testSetToNull() {
+    checkNullMissingWarning("/** @type {Object} */ var x = null;");
+    checkNullMissingWarning(
+        "/** @constructor */ function C() {} /** @private {Object} */ C.prop = null;");
+    checkNullMissingWarning(
+        "/** @constructor */ function C() { /** @private {Object} */ this.foo = null; }");
+
+    checkNoWarning("/** @type {?Object} */ var x = null;");
+    checkNoWarning("/** @constructor */ function C() {} /** @private {?Symbol} */ C.prop = null;");
+    checkNoWarning(
+        "/** @constructor */ function C() { /** @private {?Object} */ this.foo = null; }");
+  }
+
   private void checkNoWarning(String... js) {
     testSame(js);
   }
 
   private void checkMissingWarning(String... js) {
     testWarning(js, CheckNullabilityModifiers.MISSING_NULLABILITY_MODIFIER_JSDOC);
+  }
+
+  private void checkNullMissingWarning(String... js) {
+    testWarning(js, CheckNullabilityModifiers.NULL_MISSING_NULLABILITY_MODIFIER_JSDOC);
   }
 
   private void checkRedundantWarning(String... js) {

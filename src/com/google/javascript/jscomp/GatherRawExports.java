@@ -26,8 +26,6 @@ import java.util.Set;
 /**
  * External references of the form: "window['xx']" indicate names that must
  * be reserved when variable renaming to avoid conflicts.
- *
- * @author johnlenz@google.com (John Lenz)
  */
 class GatherRawExports extends AbstractPostOrderCallback
     implements CompilerPass {
@@ -57,7 +55,9 @@ class GatherRawExports extends AbstractPostOrderCallback
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     Node sibling = n.getNext();
-    if (sibling != null && sibling.isString() && NodeUtil.isGet(parent)
+    if (sibling != null
+        && sibling.isString()
+        && NodeUtil.isNormalGet(parent)
         && isGlobalThisObject(t, n)) {
       exportedVariables.add(sibling.getString());
     }

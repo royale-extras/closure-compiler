@@ -26,7 +26,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-
 @RunWith(JUnit4.class)
 public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCase {
   private List<String> moduleRoots;
@@ -40,7 +39,9 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
     super.setUp();
     // ECMASCRIPT5 to trigger module processing after parsing.
     setLanguage(LanguageMode.ECMASCRIPT_2015, LanguageMode.ECMASCRIPT5);
-    enableRunTypeCheckAfterProcessing();
+    // Pass doesn't need to update these as it should only be used for bundling and thus
+    // optimizations never run after it.
+    disableGetterAndSetterUpdateValidation();
     moduleRoots = ImmutableList.of();
     resolutionMode = ModuleLoader.ResolutionMode.BROWSER;
     prefixReplacements = ImmutableMap.of();
@@ -63,11 +64,6 @@ public final class Es6RewriteModulesToCommonJsModulesTest extends CompilerTestCa
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new Es6RewriteModulesToCommonJsModules(compiler, "test pragma");
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    return 1;
   }
 
   @Test

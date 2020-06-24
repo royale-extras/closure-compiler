@@ -21,7 +21,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-
 @RunWith(JUnit4.class)
 public final class J2clIntegrationTest extends IntegrationTestCase {
   @Test
@@ -75,7 +74,7 @@ public final class J2clIntegrationTest extends IntegrationTestCase {
   CompilerOptions createCompilerOptions() {
     CompilerOptions options = new CompilerOptions();
     CompilationLevel.ADVANCED_OPTIMIZATIONS.setOptionsForCompilationLevel(options);
-    options.setLanguageIn(LanguageMode.ECMASCRIPT6_TYPED);
+    options.setLanguageIn(LanguageMode.ECMASCRIPT_2017);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
     return options;
   }

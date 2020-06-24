@@ -16,10 +16,8 @@
 package com.google.javascript.jscomp;
 
 import com.google.common.collect.ImmutableCollection;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.Immutable;
-import com.google.javascript.jscomp.ClosureCodingConvention.AssertInstanceofSpec;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.NominalTypeBuilder;
 import com.google.javascript.rhino.jstype.FunctionType;
@@ -62,19 +60,5 @@ public final class ChromeCodingConvention extends CodingConventions.Proxy {
   @Override
   public ImmutableCollection<String> getIndirectlyDeclaredProperties() {
     return indirectlyDeclaredProperties;
-  }
-
-  @Override
-  public ImmutableCollection<AssertionFunctionSpec> getAssertionFunctions() {
-    return ImmutableList.of(
-      new AssertionFunctionSpec("assert"),
-      new AssertInstanceofSpec("cr.ui.decorate")
-    );
-  }
-
-  @Override
-  public boolean isFunctionCallThatAlwaysThrows(Node n) {
-    return CodingConventions.defaultIsFunctionCallThatAlwaysThrows(
-        n, "assertNotReached");
   }
 }

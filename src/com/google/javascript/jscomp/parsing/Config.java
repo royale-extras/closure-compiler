@@ -25,8 +25,6 @@ import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 /**
  * Configuration for the AST factory. Should be shared across AST creation for all files of a
  * compilation process.
- *
- * @author nicksantos@google.com (Nick Santos)
  */
 @Immutable @AutoValue @AutoValue.CopyAnnotations
 public abstract class Config {
@@ -53,7 +51,11 @@ public abstract class Config {
     ECMASCRIPT7(FeatureSet.ES7_MODULES),
     ECMASCRIPT8(FeatureSet.ES8_MODULES),
     ECMASCRIPT_2018(FeatureSet.ES2018_MODULES),
+    ECMASCRIPT_2019(FeatureSet.ES2019_MODULES),
+    ECMASCRIPT_2020(FeatureSet.ES2020_MODULES),
     ES_NEXT(FeatureSet.ES_NEXT),
+    ES_NEXT_IN(FeatureSet.ES_NEXT_IN),
+    UNSUPPORTED(FeatureSet.ES_UNSUPPORTED),
     TYPESCRIPT(FeatureSet.TYPESCRIPT),
     ;
 
@@ -97,14 +99,15 @@ public abstract class Config {
   public enum JsDocParsing {
     TYPES_ONLY,
     INCLUDE_DESCRIPTIONS_NO_WHITESPACE,
-    INCLUDE_DESCRIPTIONS_WITH_WHITESPACE;
+    INCLUDE_DESCRIPTIONS_WITH_WHITESPACE,
+    INCLUDE_ALL_COMMENTS;
 
     boolean shouldParseDescriptions() {
       return this != TYPES_ONLY;
     }
 
     boolean shouldPreserveWhitespace() {
-      return this == INCLUDE_DESCRIPTIONS_WITH_WHITESPACE;
+      return this == INCLUDE_DESCRIPTIONS_WITH_WHITESPACE || this == INCLUDE_ALL_COMMENTS;
     }
   }
 
@@ -117,31 +120,34 @@ public abstract class Config {
   }
 
   /** Language level to accept. */
-  abstract LanguageMode languageMode();
+  public abstract LanguageMode languageMode();
 
   /** Whether to assume input is strict mode compliant. */
-  abstract StrictMode strictMode();
+  public abstract StrictMode strictMode();
 
   /** How to parse the descriptions of JsDoc comments. */
-  abstract JsDocParsing jsDocParsingMode();
+  public abstract JsDocParsing jsDocParsingMode();
 
   /** Whether to keep going after encountering a parse error. */
-  abstract RunMode runMode();
+  public abstract RunMode runMode();
 
   /** Recognized JSDoc annotations, mapped from their name to their internal representation. */
-  abstract ImmutableMap<String, Annotation> annotations();
+  public abstract ImmutableMap<String, Annotation> annotations();
 
   /** Set of recognized names in a {@code @suppress} tag. */
-  abstract ImmutableSet<String> suppressionNames();
+  public abstract ImmutableSet<String> suppressionNames();
+
+  /** Set of recognized names in a {@code @closurePrimitive} tag. */
+  abstract ImmutableSet<String> closurePrimitiveNames();
 
   /** Whether to parse inline source maps (//# sourceMappingURL=data:...). */
-  abstract boolean parseInlineSourceMaps();
+  public abstract boolean parseInlineSourceMaps();
 
   final ImmutableSet<String> annotationNames() {
     return annotations().keySet();
   }
 
-  static Builder builder() {
+  public static Builder builder() {
     return new AutoValue_Config.Builder()
         .setLanguageMode(LanguageMode.TYPESCRIPT)
         .setStrictMode(StrictMode.STRICT)
@@ -149,38 +155,42 @@ public abstract class Config {
         .setRunMode(RunMode.STOP_AFTER_ERROR)
         .setExtraAnnotationNames(ImmutableSet.<String>of())
         .setSuppressionNames(ImmutableSet.<String>of())
+        .setClosurePrimitiveNames(ImmutableSet.of())
         .setParseInlineSourceMaps(false);
   }
 
+  /** Builder for a Config. */
   @AutoValue.Builder
-  abstract static class Builder {
-    abstract Builder setLanguageMode(LanguageMode mode);
+  public abstract static class Builder {
+    public abstract Builder setLanguageMode(LanguageMode mode);
 
-    abstract Builder setStrictMode(StrictMode mode);
+    public abstract Builder setStrictMode(StrictMode mode);
 
-    abstract Builder setJsDocParsingMode(JsDocParsing mode);
+    public abstract Builder setJsDocParsingMode(JsDocParsing mode);
 
-    abstract Builder setRunMode(RunMode mode);
+    public abstract Builder setRunMode(RunMode mode);
 
-    abstract Builder setParseInlineSourceMaps(boolean parseInlineSourceMaps);
+    public abstract Builder setParseInlineSourceMaps(boolean parseInlineSourceMaps);
 
-    abstract Builder setSuppressionNames(Iterable<String> names);
+    public abstract Builder setSuppressionNames(Iterable<String> names);
+
+    abstract Builder setClosurePrimitiveNames(Iterable<String> names);
 
     final Builder setExtraAnnotationNames(Iterable<String> names) {
       return setAnnotations(buildAnnotations(names));
     }
 
-    abstract Config build();
+    public abstract Config build();
 
     // The following is intended to be used internally only (but isn't private due to AutoValue).
-    abstract Builder setAnnotations(ImmutableMap<String, Annotation> names);
+    public abstract Builder setAnnotations(ImmutableMap<String, Annotation> names);
   }
 
-  /** Create the annotation names from the user-specified annotation whitelist. */
-  private static ImmutableMap<String, Annotation> buildAnnotations(Iterable<String> whitelist) {
+  /** Create the annotation names from the user-specified annotation allowlist. */
+  private static ImmutableMap<String, Annotation> buildAnnotations(Iterable<String> allowlist) {
     ImmutableMap.Builder<String, Annotation> annotationsBuilder = ImmutableMap.builder();
     annotationsBuilder.putAll(Annotation.recognizedAnnotations);
-    for (String unrecognizedAnnotation : whitelist) {
+    for (String unrecognizedAnnotation : allowlist) {
       if (!unrecognizedAnnotation.isEmpty()
           && !Annotation.recognizedAnnotations.containsKey(unrecognizedAnnotation)) {
         annotationsBuilder.put(unrecognizedAnnotation, Annotation.NOT_IMPLEMENTED);

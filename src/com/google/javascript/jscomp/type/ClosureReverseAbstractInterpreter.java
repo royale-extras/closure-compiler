@@ -20,13 +20,13 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.ARRAY_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.NO_OBJECT_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.NULL_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.NULL_VOID;
-import static com.google.javascript.rhino.jstype.JSTypeNative.NUMBER_STRING_BOOLEAN_SYMBOL;
 import static com.google.javascript.rhino.jstype.JSTypeNative.OBJECT_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.VOID_TYPE;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableMap;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.Outcome;
 import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
@@ -37,8 +37,7 @@ import javax.annotation.CheckReturnValue;
 
 /**
  * A reverse abstract interpreter (RAI) for specific closure patterns such as
- * {@code goog.isDef}.
- *
+ * {@code goog.isObject}.
  */
 public final class ClosureReverseAbstractInterpreter
     extends ChainableReverseAbstractInterpreter {
@@ -65,18 +64,9 @@ public final class ClosureReverseAbstractInterpreter
         }
       };
 
-  /**
-   * For when {@code goog.isObject} returns false.
-   */
+  /** For when {@code goog.isObject} returns false. */
   private final Visitor<JSType> restrictToNotObjectVisitor =
       new RestrictByFalseTypeOfResultVisitor() {
-
-        @Override
-        public JSType caseAllType() {
-          return typeRegistry.createUnionType(
-              getNativeType(NUMBER_STRING_BOOLEAN_SYMBOL), getNativeType(NULL_VOID));
-        }
-
         @Override
         public JSType caseObjectType(ObjectType type) {
           return null;
@@ -99,7 +89,7 @@ public final class ClosureReverseAbstractInterpreter
                 "isDef",
                 p -> {
                   if (p.outcome) {
-                    return getRestrictedWithoutUndefined(p.type);
+                    return p.type != null ? p.type.restrictByNotUndefined() : null;
                   } else {
                     return p.type != null
                         ? getNativeType(VOID_TYPE).getGreatestSubtype(p.type)
@@ -114,14 +104,14 @@ public final class ClosureReverseAbstractInterpreter
                         ? getNativeType(NULL_TYPE).getGreatestSubtype(p.type)
                         : null;
                   } else {
-                    return getRestrictedWithoutNull(p.type);
+                    return p.type != null ? p.type.restrictByNotNull() : null;
                   }
                 })
             .put(
                 "isDefAndNotNull",
                 p -> {
                   if (p.outcome) {
-                    return getRestrictedWithoutUndefined(getRestrictedWithoutNull(p.type));
+                    return p.type != null ? p.type.restrictByNotNullOrUndefined() : null;
                   } else {
                     return p.type != null
                         ? getNativeType(NULL_VOID).getGreatestSubtype(p.type)
@@ -158,8 +148,8 @@ public final class ClosureReverseAbstractInterpreter
   }
 
   @Override
-  public FlowScope getPreciserScopeKnowingConditionOutcome(Node condition,
-      FlowScope blindScope, boolean outcome) {
+  public FlowScope getPreciserScopeKnowingConditionOutcome(
+      Node condition, FlowScope blindScope, Outcome outcome) {
     if (condition.isCall() && condition.hasTwoChildren()) {
       Node callee = condition.getFirstChild();
       Node param = condition.getLastChild();
@@ -172,8 +162,7 @@ public final class ClosureReverseAbstractInterpreter
           Function<TypeRestriction, JSType> restricter =
               restricters.get(right.getString());
           if (restricter != null) {
-            return restrictParameter(param, paramType, blindScope, restricter,
-                outcome);
+            return restrictParameter(param, paramType, blindScope, restricter, outcome.isTruthy());
           }
         }
       }

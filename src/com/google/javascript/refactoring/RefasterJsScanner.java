@@ -33,7 +33,6 @@ import com.google.javascript.jscomp.TypeMatchingStrategy;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
@@ -52,8 +51,6 @@ import java.util.stream.Stream;
  * Class that drives the RefasterJs refactoring by matching against a provided
  * template JS file and then applying a transformation based off the template
  * JS.
- *
- * @author mknichel@google.com (Mark Knichel)
  */
 public final class RefasterJsScanner extends Scanner {
   /** The JS code that contains the RefasterJs templates. */
@@ -153,10 +150,13 @@ public final class RefasterJsScanner extends Scanner {
         return ImmutableList.of();
       }
 
-      HashMap<String, String> shortNames = new HashMap<>();
+      Node script = NodeUtil.getEnclosingScript(match.getNode());
+      ScriptMetadata scriptMetadata = ScriptMetadata.create(script, match.getMetadata());
+
       for (String require : matchedTemplate.getGoogRequiresToAdd()) {
-        fix.addGoogRequire(match, require);
-        shortNames.put(require, fix.getRequireName(match, require));
+        if (scriptMetadata.getAlias(require) == null) {
+          fix.addGoogRequire(match, require, scriptMetadata);
+        }
       }
 
       // Re-match to compute getTemplateNodeToMatchMap.
@@ -169,7 +169,7 @@ public final class RefasterJsScanner extends Scanner {
           transformNode(
               matchedTemplate.afterTemplate.getLastChild(),
               matchedTemplate.matcher.getTemplateNodeToMatchMap(),
-              shortNames);
+              scriptMetadata);
       Node nodeToReplace = match.getNode();
       fix.attachMatchedNodeInfo(nodeToReplace, match.getMetadata().getCompiler());
       fix.replace(nodeToReplace, newNode, match.getMetadata().getCompiler());
@@ -207,9 +207,7 @@ public final class RefasterJsScanner extends Scanner {
    * that were matched against in the JsSourceMatcher.
    */
   private Node transformNode(
-      Node templateNode,
-      Map<String, Node> templateNodeToMatchMap,
-      Map<String, String> shortNames) {
+      Node templateNode, Map<String, Node> templateNodeToMatchMap, ScriptMetadata scriptMetadata) {
     Node clone = templateNode.cloneNode();
     if (templateNode.isName()) {
       String name = templateNode.getString();
@@ -237,15 +235,13 @@ public final class RefasterJsScanner extends Scanner {
     }
     if (templateNode.isQualifiedName()) {
       String name = templateNode.getQualifiedName();
-      if (shortNames.containsKey(name)) {
-        String shortName = shortNames.get(name);
-        if (!shortName.equals(name)) {
-          return IR.name(shortNames.get(name));
-        }
+      String alias = scriptMetadata.getAlias(name);
+      if (alias != null && !name.equals(alias)) {
+        return IR.name(alias);
       }
     }
     for (Node child : templateNode.children()) {
-      clone.addChildToBack(transformNode(child, templateNodeToMatchMap, shortNames));
+      clone.addChildToBack(transformNode(child, templateNodeToMatchMap, scriptMetadata));
     }
     return clone;
   }
@@ -336,7 +332,7 @@ public final class RefasterJsScanner extends Scanner {
       for (Node afterTemplateOption : afterTemplates.get(templateName).values()) {
         builder.add(
             new RefasterJsTemplate(
-                compiler.getTypeRegistry(),
+                compiler,
                 typeMatchingStrategy,
                 beforeTemplates.get(templateName),
                 afterTemplateOption));
@@ -360,11 +356,11 @@ public final class RefasterJsScanner extends Scanner {
     final Node afterTemplate;
 
     RefasterJsTemplate(
-        JSTypeRegistry typeRegistry,
+        AbstractCompiler compiler,
         TypeMatchingStrategy typeMatchingStrategy,
         Node beforeTemplate,
         Node afterTemplate) {
-      this.matcher = new JsSourceMatcher(typeRegistry, beforeTemplate, typeMatchingStrategy);
+      this.matcher = new JsSourceMatcher(compiler, beforeTemplate, typeMatchingStrategy);
       this.beforeTemplate = beforeTemplate;
       this.afterTemplate = afterTemplate;
     }

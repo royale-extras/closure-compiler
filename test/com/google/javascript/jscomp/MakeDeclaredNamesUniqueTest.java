@@ -61,6 +61,13 @@ public final class MakeDeclaredNamesUniqueTest extends CompilerTestCase {
   }
 
   @Override
+  public CompilerOptions getOptions() {
+    CompilerOptions options = super.getOptions();
+    options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
+    return options;
+  }
+
+  @Override
   protected int getNumRepetitions() {
     // The normalize pass is only run once.
     return 1;
@@ -110,6 +117,17 @@ public final class MakeDeclaredNamesUniqueTest extends CompilerTestCase {
 
   private void testInFunction(String original, String expected) {
     test(wrapInFunction(original), wrapInFunction(expected));
+  }
+
+  @Test
+  public void testMakeDeclaredNamesUniqueNullishCoalesce() {
+    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
+    this.useDefaultRenamer = true;
+
+    test(
+        "var foo; var x = function foo(){var foo = false ?? {};}",
+        "var foo; var x = function foo$jscomp$1(){var foo$jscomp$2 = false ?? {}}");
+    testSameWithInversion("var a = b ?? c;");
   }
 
   @Test
@@ -569,6 +587,14 @@ public final class MakeDeclaredNamesUniqueTest extends CompilerTestCase {
     removeConst = true;
     test("var CONST = 3; var b = CONST;",
          "var CONST$jscomp$unique_0 = 3; var b$jscomp$unique_1 = CONST$jscomp$unique_0;");
+  }
+
+  @Test
+  public void testConstRemovingRenameAlsoRemovesAnnotation() {
+    removeConst = true;
+    test(
+        "/** @const */ var c = 3; var b = c;",
+        "/** blank */ var c$jscomp$unique_0 = 3; var b$jscomp$unique_1 = c$jscomp$unique_0;");
   }
 
   @Test

@@ -15,19 +15,21 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.jstype.JSType;
 
 /** An optimization pass to re-write J2CL Equality.$same. */
 public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
 
-  /** Whether to use "==" or "===". */
-  private static enum Eq {
-    DOUBLE,
-    TRIPLE
-  }
+  private final boolean useTypes;
+  private boolean shouldRunJ2clPasses;
 
-  private boolean shouldRunJ2clPasses = false;
+  J2clEqualitySameRewriterPass(boolean useTypes) {
+    this.useTypes = useTypes;
+  }
 
   @Override
   void beginTraversal(AbstractCompiler compiler) {
@@ -46,36 +48,134 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
     }
 
     Node replacement = trySubstituteEqualitySame(node);
-    if (replacement != node) {
-      replacement = replacement.useSourceInfoIfMissingFrom(node);
-      node.replaceWith(replacement);
-      compiler.reportChangeToEnclosingScope(replacement);
+    if (replacement == null) {
+      return node;
     }
+
+    replacement.useSourceInfoIfMissingFrom(node);
+    node.replaceWith(replacement);
+    reportChangeToEnclosingScope(replacement);
     return replacement;
   }
 
   private Node trySubstituteEqualitySame(Node callNode) {
     Node firstExpr = callNode.getSecondChild();
+    NodeValue firstExprValue = getKnownLiteralValue(firstExpr);
     Node secondExpr = callNode.getLastChild();
+    NodeValue secondExprValue = getKnownLiteralValue(secondExpr);
 
-    if (NodeUtil.isNullOrUndefined(firstExpr) || NodeUtil.isNullOrUndefined(secondExpr)) {
-      // At least one side is null or undefined so no coercion danger.
-      return rewriteToEq(firstExpr, secondExpr, Eq.DOUBLE);
+    if (firstExprValue == NodeValue.UNKNOWN && secondExprValue == NodeValue.UNKNOWN) {
+      return null;
     }
 
-    if (NodeUtil.isLiteralValue(firstExpr, true) || NodeUtil.isLiteralValue(secondExpr, true)) {
-      // There is a coercion danger but since at least one side is not null, we can use === that
-      // will not trigger any coercion.
-      return rewriteToEq(firstExpr, secondExpr, Eq.TRIPLE);
+    if (firstExprValue == NodeValue.NULL_OR_UNDEFINED) {
+      return rewriteNullCheck(secondExpr, firstExpr);
     }
 
-    return callNode;
+    if (secondExprValue == NodeValue.NULL_OR_UNDEFINED) {
+      return rewriteNullCheck(firstExpr, secondExpr);
+    }
+
+    if (firstExprValue == NodeValue.NON_NULL || secondExprValue == NodeValue.NON_NULL) {
+      // There is a coercion danger (e.g. 0 == null) but since at least one side is not null, we can
+      // safely use === that will not trigger any coercion.
+      return rewriteAsStrictEq(firstExpr, secondExpr);
+    }
+
+    checkState(firstExprValue == NodeValue.NUMBER || secondExprValue == NodeValue.NUMBER);
+    return rewriteNumberCheck(firstExpr, secondExpr);
   }
 
-  private Node rewriteToEq(Node firstExpr, Node secondExpr, Eq eq) {
+  private Node rewriteNullCheck(Node expr, Node nullExpression) {
+    expr.detach();
+    nullExpression.detach();
+    if (useTypes && canOnlyBeObject(expr)) {
+      return IR.not(expr);
+    }
+    // At least one side is null or undefined so no coercion danger with ==.
+    return IR.eq(expr, nullExpression);
+  }
+
+  private boolean canOnlyBeObject(Node n) {
+    JSType type = n.getJSType();
+    if (type == null) {
+      return false;
+    }
+    type = type.restrictByNotNullOrUndefined();
+    return !type.isUnknownType() && !type.isEmptyType() && !type.isAllType() && type.isObjectType();
+  }
+
+  private Node rewriteAsStrictEq(Node firstExpr, Node secondExpr) {
     firstExpr.detach();
     secondExpr.detach();
-    return eq == Eq.DOUBLE ? IR.eq(firstExpr, secondExpr) : IR.sheq(firstExpr, secondExpr);
+    return IR.sheq(firstExpr, secondExpr);
+  }
+
+  private Node rewriteNumberCheck(Node firstExpr, Node secondExpr) {
+    Double firstValue = NodeUtil.getNumberValue(firstExpr);
+    Double secondValue = NodeUtil.getNumberValue(secondExpr);
+
+    if (firstValue != null && secondValue != null) {
+      firstExpr.detach();
+      secondExpr.detach();
+      return NodeUtil.booleanNode(firstValue.equals(secondValue));
+    }
+
+    if (isSafeNumber(firstValue) || isSafeNumber(secondValue)) {
+      // Since one side is not 0, -0 or NaN, there is no risk of -0 vs 0 or NaN vs NaN comparison.
+      return rewriteAsStrictEq(firstExpr, secondExpr);
+    }
+
+    if (useTypes && (!canBeNumber(firstExpr) || !canBeNumber(secondExpr))) {
+      // Since one side is not number, there is no risk of -0 vs 0 or NaN vs NaN comparision.
+      return rewriteAsStrictEq(firstExpr, secondExpr);
+    }
+
+    return null;
+  }
+
+  private static boolean isSafeNumber(Double d) {
+    return d != null && d != 0 && !d.isNaN();
+  }
+
+  private static boolean canBeNumber(Node n) {
+    JSType type = n.getJSType();
+    if (type == null) {
+      return true;
+    }
+    type = type.restrictByNotNullOrUndefined();
+    return type.isUnknownType() || type.isEmptyType() || type.isAllType() || !type.isObjectType();
+  }
+
+  private enum NodeValue {
+    UNKNOWN,
+    NULL_OR_UNDEFINED,
+    // JavaScript number. Needs special treatment to preserve Object.is semantics.
+    NUMBER,
+    // Non-null and also known to be not a number.
+    NON_NULL,
+  }
+
+  private static NodeValue getKnownLiteralValue(Node n) {
+    switch (NodeUtil.getKnownValueType(n)) {
+      case VOID:
+        return NodeUtil.canBeSideEffected(n) ? NodeValue.UNKNOWN : NodeValue.NULL_OR_UNDEFINED;
+      case NULL:
+        return NodeValue.NULL_OR_UNDEFINED;
+
+      case STRING:
+      case BOOLEAN:
+      case OBJECT:
+      case BIGINT:
+        return NodeValue.NON_NULL;
+
+      case NUMBER:
+        return NodeValue.NUMBER;
+
+      case UNDETERMINED:
+        return NodeValue.UNKNOWN;
+    }
+    throw new AssertionError("Unknown ValueType");
   }
 
   private static boolean isEqualitySameCall(Node node) {

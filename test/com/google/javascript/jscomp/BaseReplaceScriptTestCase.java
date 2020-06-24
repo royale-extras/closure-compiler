@@ -68,7 +68,6 @@ public abstract class BaseReplaceScriptTestCase {
   protected CompilerOptions getOptions(DiagnosticGroup... typesOfGuard) {
     CompilerOptions options = new CompilerOptions();
     options.setLanguageIn(LanguageMode.ECMASCRIPT3);
-    options.declaredGlobalExternsOnWindow = false;
     options.setClosurePass(true);
     // These are the options that are always on in JsDev which is the only
     // use-case for replaceScript currently.
@@ -101,7 +100,7 @@ public abstract class BaseReplaceScriptTestCase {
     Result result =
         runReplaceScript(getOptions(), sources, 0, 0, newSource, newSourceInd, true).getResult();
     assertNumWarningsAndErrors(result, 1, 0);
-    assertError(result.errors[0]).hasType(errorType);
+    assertError(result.errors.get(0)).hasType(errorType);
   }
 
   /**
@@ -173,10 +172,10 @@ public abstract class BaseReplaceScriptTestCase {
       assertThat(compiler.getErrors()).isEmpty();
       assertThat(result.success).isTrue();
     } else {
-      assertThat(compiler.getErrors()).hasLength(expectedCompileErrors);
+      assertThat(compiler.getErrors()).hasSize(expectedCompileErrors);
       assertThat(result.success).isFalse();
     }
-    assertThat(compiler.getWarnings()).hasLength(expectedCompileWarnings);
+    assertThat(compiler.getWarnings()).hasSize(expectedCompileWarnings);
     if (flushResults) {
       flushResults(compiler);
     }
@@ -201,13 +200,13 @@ public abstract class BaseReplaceScriptTestCase {
   }
 
   protected void assertNumWarningsAndErrors(Result result, int e, int w) {
-    assertThat(result.warnings).hasLength(w);
-    assertThat(result.errors).hasLength(e);
+    assertThat(result.warnings).hasSize(w);
+    assertThat(result.errors).hasSize(e);
     assertThat(result.success).isEqualTo(e == 0);
   }
 
   protected void assertErrorType(JSError e, DiagnosticType type, int lineNumber) {
     assertError(e).hasType(type);
-    assertThat(lineNumber).isEqualTo(e.lineNumber);
+    assertThat(lineNumber).isEqualTo(e.getLineNumber());
   }
 }

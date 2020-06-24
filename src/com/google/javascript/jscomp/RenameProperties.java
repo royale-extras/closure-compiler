@@ -62,7 +62,6 @@ import javax.annotation.Nullable;
  * references. Here are two examples:
  *    JSCompiler_renameProperty('propertyName') -> 'jYq'
  *    JSCompiler_renameProperty('myProp.nestedProp.innerProp') -> 'e4.sW.C$'
- *
  */
 class RenameProperties implements CompilerPass {
   private static final Splitter DOT_SPLITTER = Splitter.on('.');
@@ -254,6 +253,8 @@ class RenameProperties implements CompilerPass {
     }
 
     compiler.setLifeCycleStage(LifeCycleStage.NORMALIZED_OBFUSCATED);
+    // This pass may rename getter or setter properties
+    GatherGetterAndSetterProperties.update(compiler, externs, root);
   }
 
   /**
@@ -344,35 +345,34 @@ class RenameProperties implements CompilerPass {
           }
           break;
         case OBJECTLIT:
-          for (Node key = n.getFirstChild(); key != null; key = key.getNext()) {
-            if (key.isComputedProp()) {
-              // We don't want to rename computed properties
-              continue;
-            } else if (key.isQuotedString()) {
-              // Ensure that we never rename some other property in a way
-              // that could conflict with this quoted key.
-              quotedNames.add(key.getString());
-            } else if (compiler.getCodingConvention().blockRenamingForProperty(key.getString())) {
-              externedNames.add(key.getString());
-            } else {
-              maybeMarkCandidate(key);
-            }
-          }
-          break;
         case OBJECT_PATTERN:
-          // Iterate through all the nodes in the object pattern
+          // Iterate through all the properties.
           for (Node key = n.getFirstChild(); key != null; key = key.getNext()) {
-            if (key.isComputedProp()) {
-              // We don't want to rename computed properties
-              continue;
-            } else if (key.isQuotedString()) {
-              // Ensure that we never rename some other property in a way
-              // that could conflict with this quoted key.
-              quotedNames.add(key.getString());
-            } else if (compiler.getCodingConvention().blockRenamingForProperty(key.getString())) {
-              externedNames.add(key.getString());
-            } else {
-              maybeMarkCandidate(key);
+            switch (key.getToken()) {
+              case COMPUTED_PROP: // We don't want to rename computed properties
+              case OBJECT_REST:
+              case OBJECT_SPREAD:
+                break;
+
+              case GETTER_DEF:
+              case MEMBER_FUNCTION_DEF:
+              case SETTER_DEF:
+              case STRING_KEY:
+                String propName = key.getString();
+                if (key.isQuotedString()) {
+                  // Ensure that we never rename some other property in a way
+                  // that could conflict with this quoted key.
+                  quotedNames.add(propName);
+                } else if (compiler.getCodingConvention().blockRenamingForProperty(propName)) {
+                  externedNames.add(propName);
+                } else {
+                  maybeMarkCandidate(key);
+                }
+                break;
+
+              default:
+                throw new IllegalStateException(
+                    "Unexpected child of " + n.getToken() + ": " + key.toStringTree());
             }
           }
           break;
@@ -412,7 +412,7 @@ class RenameProperties implements CompilerPass {
                   Node fnName = member.getFirstChild();
                   if (compiler.getCodingConvention().blockRenamingForProperty(memberDefName)) {
                     externedNames.add(fnName.getString());
-                  } else if (memberDefName.equals("constructor")
+                  } else if (NodeUtil.isEs6ConstructorMemberFunctionDef(key)
                       || memberDefName.equals("superClass_")) {
                     // TODO (simarora) is there a better way to identify these externs?
                     externedNames.add(fnName.getString());

@@ -43,9 +43,6 @@ import java.util.Set;
  * backwards-compatibility with compiler clients that don't want --inline_variables.
  *
  * <p>The approach of this pass is similar to {@link CrossChunkCodeMotion}
- *
- * @author kushal@google.com (Kushal Dave)
- * @author nicksantos@google.com (Nick Santos)
  */
 class InlineVariables implements CompilerPass {
 
@@ -53,18 +50,23 @@ class InlineVariables implements CompilerPass {
 
   enum Mode {
     // Only inline things explicitly marked as constant.
-    CONSTANTS_ONLY,
+    CONSTANTS_ONLY(Var::isDeclaredOrInferredConst),
     // Locals only
-    LOCALS_ONLY,
-    ALL
+    LOCALS_ONLY(Var::isLocal),
+    ALL(Predicates.alwaysTrue());
+
+    @SuppressWarnings("ImmutableEnumChecker")
+    private final Predicate<Var> varPredicate;
+
+    private Mode(Predicate<Var> varPredicate) {
+      this.varPredicate = varPredicate;
+    }
   }
 
   private final Mode mode;
 
   // Inlines all strings, even if they increase the size of the gzipped binary.
   private final boolean inlineAllStrings;
-
-  private final IdentifyConstants identifyConstants = new IdentifyConstants();
 
   InlineVariables(
       AbstractCompiler compiler,
@@ -81,47 +83,9 @@ class InlineVariables implements CompilerPass {
         new ReferenceCollectingCallback(
             compiler,
             new InliningBehavior(),
-            new Es6SyntacticScopeCreator(compiler),
-            getFilterForMode());
+            new SyntacticScopeCreator(compiler),
+            mode.varPredicate);
     callback.process(externs, root);
-  }
-
-  private Predicate<Var> getFilterForMode() {
-    switch (mode) {
-      case ALL:
-        return Predicates.alwaysTrue();
-      case LOCALS_ONLY:
-        return new IdentifyLocals();
-      case CONSTANTS_ONLY:
-        return new IdentifyConstants();
-      default:
-        throw new IllegalStateException();
-    }
-  }
-
-  /**
-   * Filters variables declared as "constant", and declares them in the outer
-   * declaredConstants map.
-   *
-   * In Google coding conventions, this means anything declared with @const
-   * or named in all caps, and initialized to an immutable value.
-   * CheckConsts has already verified that these are truly constants.
-   */
-  private static class IdentifyConstants implements Predicate<Var> {
-    @Override
-    public boolean apply(Var var) {
-      return var.isInferredConst();
-    }
-  }
-
-  /**
-   * Filters non-global variables.
-   */
-  private static class IdentifyLocals implements Predicate<Var> {
-    @Override
-    public boolean apply(Var var) {
-      return var.isLocal();
-    }
   }
 
   private static class AliasCandidate {
@@ -228,23 +192,15 @@ class InlineVariables implements CompilerPass {
             Node refParent = ref.getParent();
             // Any reference that is not a read of the arguments property
             // consider a escape of the arguments object.
-            if (!(NodeUtil.isGet(refParent)
+            if (!(NodeUtil.isNormalGet(refParent)
                 && refNode == ref.getParent().getFirstChild()
-                && !isLValue(refParent))) {
+                && !NodeUtil.isLValue(refParent))) {
               return true;
             }
           }
         }
       }
       return false;
-    }
-
-    private boolean isLValue(Node n) {
-      Node parent = n.getParent();
-      return (parent.isInc()
-          || parent.isDec()
-          || (NodeUtil.isAssignmentOp(parent)
-          && parent.getFirstChild() == n));
     }
 
     private void inlineNonConstants(
@@ -317,12 +273,12 @@ class InlineVariables implements CompilerPass {
     }
 
     /**
-     * If there are any variable references in the given node tree, blacklist
-     * them to prevent the pass from trying to inline the variable.
+     * If there are any variable references in the given node tree, skiplist them to prevent the
+     * pass from trying to inline the variable.
      */
-    private void blacklistVarReferencesInTree(Node root, Scope scope) {
+    private void recordStaleVarReferencesInTree(Node root, Scope scope) {
       for (Node c = root.getFirstChild(); c != null; c = c.getNext()) {
-        blacklistVarReferencesInTree(c, scope);
+        recordStaleVarReferencesInTree(c, scope);
       }
 
       if (root.isName()) {
@@ -341,10 +297,10 @@ class InlineVariables implements CompilerPass {
       //    have a good way to update the reference. Just punt on it.
       // 3) Don't inline the special property rename functions.
       return var.isExtern()
-          || compiler.getCodingConvention().isExported(var.name)
+          || compiler.getCodingConvention().isExported(var.getName(), var.isLocal())
           || compiler
               .getCodingConvention()
-              .isPropertyRenameFunction(var.nameNode.getOriginalQualifiedName())
+              .isPropertyRenameFunction(var.getNameNode().getOriginalQualifiedName())
           || staleVars.contains(var)
           || hasNoInlineAnnotation(var);
     }
@@ -443,7 +399,7 @@ class InlineVariables implements CompilerPass {
       } else {
         replaceChildPreserveCast(ref.getParent(), ref.getNode(), value);
       }
-      blacklistVarReferencesInTree(value, v.scope);
+      recordStaleVarReferencesInTree(value, v.getScope());
     }
 
     private void replaceChildPreserveCast(Node parent, Node child, Node replacement) {
@@ -456,13 +412,9 @@ class InlineVariables implements CompilerPass {
       NodeUtil.markFunctionsDeleted(child, compiler);
     }
 
-    /**
-     * Determines whether the given variable is declared as a constant
-     * and may be inlined.
-     */
-    private boolean isInlineableDeclaredConstant(Var var,
-        ReferenceCollection refInfo) {
-      if (!identifyConstants.apply(var)) {
+    /** Determines whether the given variable is declared as a constant and may be inlined. */
+    private boolean isInlineableDeclaredConstant(Var var, ReferenceCollection refInfo) {
+      if (!Mode.CONSTANTS_ONLY.varPredicate.apply(var)) {
         return false;
       }
 
@@ -618,16 +570,19 @@ class InlineVariables implements CompilerPass {
       if (NodeUtil.isNameDeclaration(initialization.getParent())) {
         it =
             NodeIterators.LocalVarMotion.forVar(
+                compiler,
                 initialization.getNode(), // NAME
                 initialization.getParent(), // VAR/LET/CONST
                 initialization.getGrandparent()); // VAR/LET/CONST container
       } else if (initialization.getParent().isAssign()) {
         checkState(initialization.getGrandparent().isExprResult());
-        it = NodeIterators.LocalVarMotion.forAssign(
-            initialization.getNode(),     // NAME
-            initialization.getParent(),       // ASSIGN
-            initialization.getGrandparent(),  // EXPR_RESULT
-            initialization.getGrandparent().getParent()); // EXPR container
+        it =
+            NodeIterators.LocalVarMotion.forAssign(
+                compiler,
+                initialization.getNode(), // NAME
+                initialization.getParent(), // ASSIGN
+                initialization.getGrandparent(), // EXPR_RESULT
+                initialization.getGrandparent().getParent()); // EXPR container
       } else {
         throw new IllegalStateException("Unexpected initialization parent\n"
             + initialization.getParent().toStringTree());
@@ -662,7 +617,7 @@ class InlineVariables implements CompilerPass {
         // The reference is a FUNCTION declaration or normal VAR declaration
         // with a value.
         if (!NodeUtil.isFunctionDeclaration(initialization.getParent())
-            && initialization.getNode().getFirstChild() == null) {
+            && !initialization.getNode().hasChildren()) {
           return false;
         }
       } else {

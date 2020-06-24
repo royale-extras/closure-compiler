@@ -5,6 +5,8 @@ Array.prototype.entries es6 es3 es6/array/entries
 Array.prototype.fill es6 es3 es6/array/fill
 Array.prototype.find es6 es3 es6/array/find
 Array.prototype.findIndex es6 es3 es6/array/findindex
+Array.prototype.flat es9 es5 es6/array/flat
+Array.prototype.flatMap es9 es5 es6/array/flatmap
 Array.prototype.includes es7 es3 es6/array/includes
 Array.prototype.keys es6 es3 es6/array/keys
 Array.prototype.values es8 es3 es6/array/values
@@ -16,6 +18,7 @@ Math.cbrt es6 es3 es6/math/cbrt
 Math.clz32 es6 es3 es6/math/clz32
 Math.cosh es6 es3 es6/math/cosh
 Math.expm1 es6 es3 es6/math/expm1
+Math.fround es6 es3 es6/math/fround
 Math.hypot es6 es3 es6/math/hypot
 Math.imul es6 es3 es6/math/imul
 Math.log10 es6 es3 es6/math/log10
@@ -36,14 +39,17 @@ Number.parseFloat es6 es3 es6/number/parsefloat
 Number.parseInt es6 es3 es6/number/parseint
 Object.assign es6 es3 es6/object/assign
 Object.entries es8 es3 es6/object/entries
+Object.fromEntries es_2019 es3 es6/object/fromentries
 Object.getOwnPropertyDescriptors es8 es5 es6/object/getownpropertydescriptors
 Object.getOwnPropertySymbols es6 es5 es6/object/getownpropertysymbols
 Object.is es6 es3 es6/object/is
 Object.setPrototypeOf es6 es5 es6/object/setprototypeof
 Object.values es8 es3 es6/object/values
 Promise es6 es3 es6/promise/promise
+Promise.allSettled es_2020 es3 es6/promise/allSettled
 Promise.prototype.finally es9 es3 es6/promise/finally
 Proxy es6 es6
+Reflect es6 es3 es6/reflect/reflect
 Reflect.apply es6 es3 es6/reflect/apply
 Reflect.construct es6 es3 es6/reflect/construct
 Reflect.defineProperty es6 es5 es6/reflect/defineproperty
@@ -62,11 +68,20 @@ String.fromCodePoint es6 es3 es6/string/fromcodepoint
 String.prototype.codePointAt es6 es3 es6/string/codepointat
 String.prototype.endsWith es6 es3 es6/string/endswith
 String.prototype.includes es6 es3 es6/string/includes
+String.prototype.matchAll es_2020 es3 es6/string/matchall
 String.prototype.normalize es6 es6
 String.prototype.padEnd es8 es3 es6/string/padend
 String.prototype.padStart es8 es3 es6/string/padstart
 String.prototype.repeat es6 es3 es6/string/repeat
 String.prototype.startsWith es6 es3 es6/string/startswith
+String.prototype.trimEnd es_2019 es3 es6/string/trimend
+String.prototype.trimLeft es_2019 es3 es6/string/trimstart
+String.prototype.trimRight es_2019 es3 es6/string/trimend
+String.prototype.trimStart es_2019 es3 es6/string/trimstart
 String.raw es6 es6
+Symbol es6 es3 es6/symbol
+Symbol.asyncIterator es9 es3 es6/symbol
+Symbol.iterator es6 es3 es6/symbol
 WeakMap es6 es3 es6/weakmap
 WeakSet es6 es3 es6/weakset
+globalThis es_2020 es3 es6/globalthis
