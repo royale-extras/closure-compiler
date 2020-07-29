@@ -1069,6 +1069,7 @@ Element.prototype.fireEvent;
 Element.prototype.hideFocus;
 
 /**
+ * @type {string}
  * @see http://msdn.microsoft.com/en-us/library/ms533899.aspx
  */
 Element.prototype.innerText;
