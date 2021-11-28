@@ -1069,6 +1069,16 @@ function postMessage(message, opt_targetOriginOrTransfer,
     opt_targetOriginOrPortsOrTransfer) {}
 
 /**
+ * @param {*} message
+ * @param {(string|!Array<!Transferable>)=} opt_targetOriginOrTransfer
+ * @param {(string|!Array<!MessagePort>|!Array<!Transferable>)=}
+ *     opt_targetOriginOrPortsOrTransfer
+ * @return {void}
+ */
+Window.prototype.postMessage = function(message, opt_targetOriginOrTransfer,
+    opt_targetOriginOrPortsOrTransfer) {}
+
+/**
  * The postMessage method (as implemented in Opera).
  * @param {string} message
  */
