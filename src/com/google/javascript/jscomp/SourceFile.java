@@ -16,13 +16,19 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.isNullOrEmpty;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.common.annotations.GwtIncompatible;
 import com.google.common.io.CharStreams;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import com.google.errorprone.annotations.InlineMe;
+import com.google.javascript.jscomp.serialization.SourceFileProto;
+import com.google.javascript.jscomp.serialization.SourceFileProto.FileOnDisk;
+import com.google.javascript.jscomp.serialization.SourceFileProto.ZipEntryOnDisk;
 import com.google.javascript.rhino.StaticSourceFile;
 import java.io.File;
 import java.io.FileInputStream;
@@ -32,77 +38,78 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.Serializable;
 import java.io.StringReader;
-import java.net.MalformedURLException;
-import java.net.URI;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.function.Supplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An abstract representation of a source file that provides access to language-neutral features.
- * The source file can be loaded from various locations, such as from disk or from a preloaded
- * string.
+ *
+ * <p>The source file can be loaded from various locations, such as from disk or from a preloaded
+ * string. Loading is done as lazily as possible to minimize IO delays and memory cost of source
+ * text.
  */
-public class SourceFile implements StaticSourceFile, Serializable {
-
-  private static final long serialVersionUID = 1L;
+public final class SourceFile implements StaticSourceFile {
   private static final String UTF8_BOM = "\uFEFF";
 
-  /** A JavaScript source code provider.  The value should
-   * be cached so that the source text stays consistent throughout a single
-   * compile. */
-  public interface Generator {
-    String getCode();
-  }
+  private static final String BANG_SLASH = "!" + Platform.getFileSeperator();
 
-  /**
-   * Number of lines in the region returned by {@link #getRegion(int)}.
-   * This length must be odd.
-   */
+  /** Number of lines in the region returned by {@link #getRegion(int)}. This length must be odd. */
   private static final int SOURCE_EXCERPT_REGION_LENGTH = 5;
 
+  /**
+   * The file name of the source file.
+   *
+   * <p>It does not necessarily need to correspond to a real path. But it should be unique. Will
+   * appear in warning messages emitted by the compiler.
+   */
   private final String fileName;
+
   private SourceKind kind;
 
-  // The fileName may not always identify the original file - for example,
-  // supersourced Java inputs, or Java inputs that come from Jar files. This
-  // is an optional field that the creator of an AST or SourceFile can set.
-  // It could be a path to the original file, or in case this SourceFile came
-  // from a Jar, it could be the path to the Jar.
-  private String originalPath = null;
+  private final CodeLoader loader;
+
+  private boolean isStubSourceFileForAlreadyProvidedInput = false;
 
   // Source Line Information
-  private transient int[] lineOffsets = null;
+  private int @Nullable [] lineOffsets = null;
 
-  private transient String code = null;
+  private volatile @Nullable String code = null;
 
-  /**
-   * Construct a new abstract source file.
-   *
-   * @param fileName The file name of the source file. It does not necessarily need to correspond to
-   *     a real path. But it should be unique. Will appear in warning messages emitted by the
-   *     compiler.
-   * @param kind The source kind.
-   */
-  public SourceFile(String fileName, SourceKind kind) {
+  // Code statistics used for metrics.
+  // For both of these, a negative value means we haven't counted yet.
+  private int numLines = -1;
+  private int numBytes = -1;
+
+  private SourceFile(CodeLoader loader, String fileName, SourceKind kind) {
     if (isNullOrEmpty(fileName)) {
       throw new IllegalArgumentException("a source must have a name");
     }
 
-    if (!"/".equals(File.separator)) {
-      this.fileName = fileName.replace(File.separator, "/");
-    } else {
-      this.fileName = fileName;
+    if (!"/".equals(Platform.getFileSeperator())) {
+      fileName = fileName.replace(Platform.getFileSeperator(), "/");
     }
 
+    this.loader = loader;
+    this.fileName = fileName;
     this.kind = kind;
+  }
+
+  public boolean isStubSourceFileForAlreadyProvidedInput() {
+    return isStubSourceFileForAlreadyProvidedInput;
+  }
+
+  private void setIsStubSourceFileForAlreadyProvidedInput(
+      boolean isStubSourceFileForAlreadyProvidedInput) {
+    this.isStubSourceFileForAlreadyProvidedInput = isStubSourceFileForAlreadyProvidedInput;
   }
 
   @Override
@@ -110,85 +117,179 @@ public class SourceFile implements StaticSourceFile, Serializable {
     findLineOffsets();
     if (lineno < 1 || lineno > lineOffsets.length) {
       throw new IllegalArgumentException(
-          "Expected line number between 1 and " + lineOffsets.length +
-          "\nActual: " + lineno);
+          "Expected line number between 1 and " + lineOffsets.length + "\nActual: " + lineno);
     }
     return lineOffsets[lineno - 1];
   }
 
-  /** @return The number of lines in this source file. */
+  /**
+   * Returns the number of lines in the source file.
+   *
+   * <p>NOTE: this may be stale if the SourceFile has been {@link #clearCachedSource cleared} and
+   * the file has changed on disk. If being fully accurate is required call {@link #getCode} and
+   * then call this method.
+   */
   int getNumLines() {
-    findLineOffsets();
-    return lineOffsets.length;
+    if (numLines < 0) {
+      // A negative value means we need to read in the code and calculate this information.
+      // Otherwise, assume the file hasn't changed since we read it.
+      try {
+        var unused = getCode();
+      } catch (IOException e) {
+        // this is consistent with old behavior of this method.
+        return 0;
+      }
+    }
+    return numLines;
+  }
+
+  /**
+   * Returns the number of bytes in the source file
+   *
+   * <p>Oddly, bytes is defined as 'length of code as a Java String' this is accurate assuming files
+   * only use Latin1 characters but may be inaccurate outside of that.
+   *
+   * <p>NOTE: this may be stale if the SourceFile has been {@link #clearCachedSource cleared} and
+   * the file has changed on disk. If being fully accurate is required call {@link #getCode} and
+   * then call this method.
+   */
+  int getNumBytes() {
+    if (numBytes < 0) {
+      // A negative value means we need to read in the code and calculate this information.
+      // Otherwise, assume the file hasn't changed since we read it.
+      try {
+        var unused = getCode();
+      } catch (IOException e) {
+        // this is consistent with old behavior of this method.
+        return 0;
+      }
+    }
+    return numBytes;
   }
 
   private void findLineOffsets() {
-    if (lineOffsets != null) {
+    if (this.lineOffsets != null) {
       return;
     }
-    try {
-      String[] sourceLines = getCode().split("\n", -1);
-      lineOffsets = new int[sourceLines.length];
-      for (int ii = 1; ii < sourceLines.length; ++ii) {
-        lineOffsets[ii] =
-            lineOffsets[ii - 1] + sourceLines[ii - 1].length() + 1;
+
+    String localCode = this.code;
+    if (localCode == null) {
+      try {
+        localCode = this.getCode();
+      } catch (IOException e) {
+        localCode = "";
+        this.lineOffsets = new int[1];
+        return;
       }
-    } catch (IOException e) {
-      lineOffsets = new int[1];
-      lineOffsets[0] = 0;
+    }
+
+    // getCode() updates numLines, so this is always in sync with the code.
+    int[] offsets = new int[this.numLines];
+    int index = 1; // start at 1 since the offset for line 0 is always at byte 0
+    int offset = 0;
+    while ((offset = localCode.indexOf('\n', offset)) != -1) {
+      // +1 because this is the offset of the next line which is one past the newline
+      offset++;
+      offsets[index++] = offset;
+    }
+    checkState(index == offsets.length);
+    this.lineOffsets = offsets;
+  }
+
+  /** Gets all the code in this source file. */
+  public final String getCode() throws IOException {
+    if (this.code == null) {
+      // Only synchronize if we need to
+      synchronized (this) {
+        // Make sure another thread hasn't loaded the code while we waited.
+        if (this.code == null) {
+          this.setCodeAndDoBookkeeping(this.loader.loadUncachedCode());
+        }
+      }
+    }
+
+    return this.code;
+  }
+
+  @Deprecated
+  final void setCodeDeprecated(String code) {
+    this.setCodeAndDoBookkeeping(code);
+  }
+
+  /** Gets a reader for the code in this source file. */
+  public Reader getCodeReader() throws IOException {
+    // Only synchronize if we need to
+    if (this.code == null) {
+      synchronized (this) {
+        // Make sure another thread hasn't loaded the code while we waited.
+        if (this.code == null) {
+          Reader uncachedReader = this.loader.openUncachedReader();
+          if (uncachedReader != null) {
+            return uncachedReader;
+          }
+        }
+      }
+    }
+
+    return new StringReader(this.getCode());
+  }
+
+  private void setCodeAndDoBookkeeping(@Nullable String sourceCode) {
+    this.code = null;
+    // Force recalculation of all of these values when they are requested.
+    this.lineOffsets = null;
+
+    if (sourceCode != null) {
+      if (sourceCode.startsWith(UTF8_BOM)) {
+        sourceCode = sourceCode.substring(UTF8_BOM.length());
+      }
+
+      this.code = sourceCode;
+      // Update numLines and numBytes
+      // NOTE: In some edit/refresh development workflows, we may end up re-reading the file
+      //       and getting different numbers than we got last time we read it, so we should
+      //       not have checkState() calls here to assert they have not changed.
+      // Misleading variable name.  This really stores the 'number of utf16' code points which is
+      // not the same as number of bytes.
+      this.numBytes = sourceCode.length();
+      int numLines = 1; // there is always at least one line
+      int index = 0;
+      while ((index = sourceCode.indexOf('\n', index)) != -1) {
+        index++;
+        numLines++;
+      }
+      this.numLines = numLines;
     }
   }
 
-  private void resetLineOffsets() {
-    lineOffsets = null;
-  }
-
   /**
-   * Gets all the code in this source file.
-   * @throws IOException
+   * @deprecated alias of {@link #getName()}. Use that instead
    */
-  public String getCode() throws IOException {
-    return code;
-  }
-
-  /**
-   * Gets a reader for the code in this source file.
-   */
-  @GwtIncompatible("java.io.Reader")
-  public Reader getCodeReader() throws IOException {
-    return new StringReader(getCode());
-  }
-
-  void setCode(String sourceCode) {
-    code =
-        sourceCode != null && sourceCode.startsWith(UTF8_BOM)
-            ? sourceCode.substring(UTF8_BOM.length())
-            : sourceCode;
-    resetLineOffsets();
-  }
-
+  @InlineMe(replacement = "this.getName()")
+  @Deprecated
   public String getOriginalPath() {
-    return originalPath != null ? originalPath : fileName;
+    return this.getName();
   }
 
-  public void setOriginalPath(String originalPath) {
-    this.originalPath = originalPath;
-  }
-
-  // For SourceFile types which cache source code that can be regenerated
-  // easily, flush the cache.  We maintain the cache mostly to speed up
-  // generating source when displaying error messages, so dumping the file
-  // contents after the compile is a fine thing to do.
+  /**
+   * For SourceFile types which cache source code that can be regenerated easily, flush the cache.
+   *
+   * <p>We maintain the cache mostly to speed up generating source when displaying error messages,
+   * so dumping the file contents after the compile is a fine thing to do.
+   */
   public void clearCachedSource() {
-    // By default, do nothing.  Not all kinds of SourceFiles can regenerate
-    // code.
+    this.setCodeAndDoBookkeeping(null);
   }
 
   boolean hasSourceInMemory() {
     return code != null;
   }
 
-  /** Returns a unique name for the source file. */
+  /**
+   * Returns a unique name for the source file.
+   *
+   * <p>This name is not required to be an actual file path on disk.
+   */
   @Override
   public String getName() {
     return fileName;
@@ -205,6 +306,17 @@ public class SourceFile implements StaticSourceFile, Serializable {
     this.kind = kind;
   }
 
+  private boolean isClosureUnawareCode = false;
+
+  @Override
+  public boolean isClosureUnawareCode() {
+    return isClosureUnawareCode;
+  }
+
+  public void markAsClosureUnawareCode() {
+    this.isClosureUnawareCode = true;
+  }
+
   @Override
   public int getLineOfOffset(int offset) {
     findLineOffsets();
@@ -213,7 +325,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
       return search + 1; // lines are 1-based.
     } else {
       int insertionPoint = -1 * (search + 1);
-      return Math.min(insertionPoint - 1, lineOffsets.length - 1) + 1;
+      return min(insertionPoint - 1, lineOffsets.length - 1) + 1;
     }
   }
 
@@ -227,11 +339,16 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * Gets the source line for the indicated line number.
    *
    * @param lineNumber the line number, 1 being the first line of the file.
-   * @return The line indicated. Does not include the newline at the end
-   *     of the file. Returns {@code null} if it does not exist,
-   *     or if there was an IO exception.
+   * @return The line indicated. Does not include the newline at the end of the file. Returns {@code
+   *     null} if it does not exist, or if there was an IO exception.
    */
-  public String getLine(int lineNumber) {
+  public @Nullable String getLine(int lineNumber) {
+    String js;
+    try {
+      js = getCode();
+    } catch (IOException e) {
+      return null;
+    }
     findLineOffsets();
     if (lineNumber > lineOffsets.length) {
       return null;
@@ -242,15 +359,6 @@ public class SourceFile implements StaticSourceFile, Serializable {
     }
 
     int pos = lineOffsets[lineNumber - 1];
-    String js = "";
-    try {
-      // NOTE(nicksantos): Right now, this is optimized for few warnings.
-      // This is probably the right trade-off, but will be slow if there
-      // are lots of warnings in one file.
-      js = getCode();
-    } catch (IOException e) {
-      return null;
-    }
 
     if (js.indexOf('\n', pos) == -1) {
       // If next new line cannot be found, there are two cases
@@ -276,7 +384,13 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * @return The line(s) indicated. Returns {@code null} if it does not exist or if there was an IO
    *     exception.
    */
-  public Region getLines(int lineNumber, int length) {
+  public @Nullable Region getLines(int lineNumber, int length) {
+    String js;
+    try {
+      js = getCode();
+    } catch (IOException e) {
+      return null;
+    }
     findLineOffsets();
     if (lineNumber > lineOffsets.length) {
       return null;
@@ -287,13 +401,6 @@ public class SourceFile implements StaticSourceFile, Serializable {
     }
     if (length <= 0) {
       length = 1;
-    }
-
-    String js = "";
-    try {
-      js = getCode();
-    } catch (IOException e) {
-      return null;
     }
 
     int pos = lineOffsets[lineNumber - 1];
@@ -323,7 +430,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * @return The line indicated. Returns {@code null} if it does not exist, or if there was an IO
    *     exception.
    */
-  public Region getRegion(int lineNumber) {
+  public @Nullable Region getRegion(int lineNumber) {
     String js = "";
     try {
       js = getCode();
@@ -331,8 +438,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
       return null;
     }
     int pos = 0;
-    int startLine = Math.max(1,
-        lineNumber - (SOURCE_EXCERPT_REGION_LENGTH + 1) / 2 + 1);
+    int startLine = max(1, lineNumber - (SOURCE_EXCERPT_REGION_LENGTH + 1) / 2 + 1);
     for (int n = 1; n < startLine; n++) {
       int nextpos = js.indexOf('\n', pos);
       if (nextpos == -1) {
@@ -355,8 +461,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
     if (end == -1) {
       int last = js.length() - 1;
       if (js.charAt(last) == '\n') {
-        return
-            new SimpleRegion(startLine, endLine, js.substring(pos, last));
+        return new SimpleRegion(startLine, endLine, js.substring(pos, last));
       } else {
         return new SimpleRegion(startLine, endLine, js.substring(pos));
       }
@@ -370,7 +475,6 @@ public class SourceFile implements StaticSourceFile, Serializable {
     return fileName;
   }
 
-  @GwtIncompatible("fromZipInput")
   public static List<SourceFile> fromZipFile(String zipName, Charset inputCharset)
       throws IOException {
     try (InputStream input = new FileInputStream(zipName)) {
@@ -378,7 +482,6 @@ public class SourceFile implements StaticSourceFile, Serializable {
     }
   }
 
-  @GwtIncompatible("java.util.zip.ZipInputStream")
   public static List<SourceFile> fromZipInput(
       String zipName, InputStream input, Charset inputCharset) throws IOException {
     final String absoluteZipPath = new File(zipName).getAbsolutePath();
@@ -391,115 +494,157 @@ public class SourceFile implements StaticSourceFile, Serializable {
         if (!entryName.endsWith(".js")) { // Only accept js files
           continue;
         }
-        sourceFiles.add(fromZipEntry(zipName, absoluteZipPath, entryName, inputCharset));
+        sourceFiles.add(
+            builder()
+                .withCharset(inputCharset)
+                .withOriginalPath(zipName + BANG_SLASH + entryName)
+                .withZipEntryPath(absoluteZipPath, entryName)
+                .build());
       }
     }
     return sourceFiles;
   }
 
-  private static final String BANG_SLASH = "!/";
-
-  private static boolean isZipEntry(String path) {
-    return path.contains(".zip!" + File.separator)
-        && (path.endsWith(".js") || path.endsWith(".js.map"));
-  }
-
-  @GwtIncompatible("java.io.File")
-  private static SourceFile fromZipEntry(String zipURL, Charset inputCharset, SourceKind kind) {
-    checkArgument(isZipEntry(zipURL));
-    String[] components = zipURL.split(Pattern.quote(BANG_SLASH.replace("/", File.separator)));
-    try {
-      String zipPath = components[0];
-      String relativePath = components[1];
-      return fromZipEntry(zipPath, zipPath, relativePath, inputCharset, kind);
-    } catch (MalformedURLException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
-  @GwtIncompatible("java.io.File")
-  public static SourceFile fromZipEntry(
-      String originalZipPath, String absoluteZipPath, String entryPath, Charset inputCharset)
-      throws MalformedURLException {
-    return fromZipEntry(
-        originalZipPath, absoluteZipPath, entryPath, inputCharset, SourceKind.STRONG);
-  }
-
-  @GwtIncompatible("java.io.File")
-  public static SourceFile fromZipEntry(
-      String originalZipPath,
-      String absoluteZipPath,
-      String entryPath,
-      Charset inputCharset,
-      SourceKind kind)
-      throws MalformedURLException {
-    // No longer throws MalformedURLException but we are keeping it for backward compatibility.
-    return builder()
-        .withKind(kind)
-        .withCharset(inputCharset)
-        .withOriginalPath(originalZipPath + BANG_SLASH + entryPath)
-        .buildFromZipEntry(
-            new ZipEntryReader(absoluteZipPath, entryPath.replace(File.separator, "/")));
-  }
-
-  @GwtIncompatible("java.io.File")
-  public static SourceFile fromFile(String fileName, Charset charset, SourceKind kind) {
-    return builder().withKind(kind).withCharset(charset).buildFromFile(fileName);
-  }
-
-  @GwtIncompatible("java.io.File")
   public static SourceFile fromFile(String fileName, Charset charset) {
-    return fromFile(fileName, charset, SourceKind.STRONG);
+    return builder().withPath(fileName).withCharset(charset).build();
   }
 
-  @GwtIncompatible("java.io.File")
   public static SourceFile fromFile(String fileName) {
-    return fromFile(fileName, UTF_8);
+    return builder().withPath(fileName).build();
   }
 
-  @GwtIncompatible("java.io.File")
-  public static SourceFile fromPath(Path path, Charset charset, SourceKind kind) {
-    return builder().withKind(kind).withCharset(charset).buildFromPath(path);
-  }
-
-  @GwtIncompatible("java.io.File")
   public static SourceFile fromPath(Path path, Charset charset) {
-    return fromPath(path, charset, SourceKind.STRONG);
+    return builder().withPath(path).withCharset(charset).build();
   }
 
   public static SourceFile fromCode(String fileName, String code, SourceKind kind) {
-    return builder().withKind(kind).buildFromCode(fileName, code);
+    return builder().withPath(fileName).withKind(kind).withContent(code).build();
   }
 
   public static SourceFile fromCode(String fileName, String code) {
-    return fromCode(fileName, code, SourceKind.STRONG);
+    return builder().withPath(fileName).withContent(code).build();
   }
 
   /**
-   * @deprecated Use {@link #fromInputStream(String, InputStream, Charset)}
+   * Returns a stub SourceFile with the given name and kind. It is used when the actual sources are
+   * provided via TypedASTs to stage2 and stage3.
    */
-  @Deprecated
-  @GwtIncompatible("java.io.InputStream")
-  public static SourceFile fromInputStream(String fileName, InputStream s)
-      throws IOException {
-    return builder().buildFromInputStream(fileName, s);
+  public static SourceFile stubSourceFile(String fileName, SourceKind kind) {
+    return builder()
+        .withPath(fileName)
+        .withKind(kind)
+        .setIsStubSourceFileForAlreadyProvidedInput()
+        .build();
   }
 
-  @GwtIncompatible("java.io.InputStream")
-  public static SourceFile fromInputStream(String fileName, InputStream s,
-      Charset charset) throws IOException {
-    return builder().withCharset(charset).buildFromInputStream(fileName, s);
+  /**
+   * Reconciles serialized state in a {@link SourceFileProto} with the existing state in this file.
+   *
+   * <p>This should be called whenever initializing a compilation based on TypedAST protos. For
+   * these compilations, the compiler initalization methods require creating SourceFiles before
+   * deserializing TypedAST protos, so we sometimes get two copies of the same SourceFile.)
+   */
+  public void restoreCachedStateFrom(SourceFileProto protoSourceFile) {
+    checkState(
+        protoSourceFile.getFilename().equals(this.getName()),
+        "Cannot restore state for %s from %s",
+        this.getName(),
+        protoSourceFile.getFilename());
+    // TypedAST proto information is expected to be more accurate for:
+    //  1) whether a SourceFile contains an @extern annotation or not. In non-TypedAST
+    //    builds, we allow passing @extern files under the --js flag.  For TypedAST builds, we
+    //    could support this, but it's an uncommon pattern and trickier to support than ban.
+    //  2) tracking some extra state that is lazily computed in a SourceFile, like the number of
+    //     lines and bytes in a file. SourceFile::restoreCachedStateFrom handles this case.
+    // Note: the state in the proto might be incorrect in other cases, since some state cannot be
+    // computed during library-level typechecking (e.g. what files are in the weak chunk)
+    if (protoSourceFile.getSourceKind() == SourceFileProto.SourceKind.EXTERN) {
+      checkState(
+          this.getKind() == SourceKind.EXTERN,
+          "TypedAST compilations must pass all extern files as externs, not js, but found %s",
+          this.getName());
+    }
+
+    // Restore the number of lines/bytes from the proto, unless we already have cached
+    // numLines and numBytes. Offset by 1. the proto "unset" value is 0, where as in SourceFile we
+    // use "-1"
+    int protoNumLines = protoSourceFile.getNumLinesPlusOne() - 1;
+    int protoNumBytes = protoSourceFile.getNumBytesPlusOne() - 1;
+    // It's possible that this.numLines and protoNumLines are both not "-1" but contain
+    // conflicting values. This would happen if a file changes on disk after TypedAST
+    // proto serialization. We choose the proto value over this.numLines because this
+    // data is intended for metrics recording, which should care most about the size of a
+    // file when compilation began and parsing ran.
+    this.numLines = protoNumLines != -1 ? protoNumLines : this.numLines;
+    this.numBytes = protoNumBytes != -1 ? protoNumBytes : this.numBytes;
+    this.isClosureUnawareCode = protoSourceFile.getIsClosureUnawareCode();
   }
 
-  @GwtIncompatible("java.io.Reader")
-  public static SourceFile fromReader(String fileName, Reader r)
-      throws IOException {
-    return builder().buildFromReader(fileName, r);
+  public static SourceFile fromProto(SourceFileProto protoSourceFile) {
+    SourceKind sourceKind = getSourceKindFromProto(protoSourceFile);
+    SourceFile sourceFile = fromProto(protoSourceFile, sourceKind);
+    // Restore the number of lines/bytes, which are offset by 1 in the proto.
+    sourceFile.numLines = protoSourceFile.getNumLinesPlusOne() - 1;
+    sourceFile.numBytes = protoSourceFile.getNumBytesPlusOne() - 1;
+    if (protoSourceFile.getIsClosureUnawareCode()) {
+      sourceFile.markAsClosureUnawareCode();
+    }
+    return sourceFile;
   }
 
-  public static SourceFile fromGenerator(String fileName,
-      Generator generator) {
-    return builder().buildFromGenerator(fileName, generator);
+  private static SourceFile fromProto(SourceFileProto protoSourceFile, SourceKind sourceKind) {
+    switch (protoSourceFile.getLoaderCase()) {
+      case PRELOADED_CONTENTS -> {
+        return SourceFile.fromCode(
+            protoSourceFile.getFilename(), protoSourceFile.getPreloadedContents(), sourceKind);
+      }
+      case FILE_ON_DISK -> {
+        String pathOnDisk =
+            protoSourceFile.getFileOnDisk().getActualPath().isEmpty()
+                ? protoSourceFile.getFilename()
+                : protoSourceFile.getFileOnDisk().getActualPath();
+        return SourceFile.builder()
+            .withCharset(toCharset(protoSourceFile.getFileOnDisk().getCharset()))
+            .withOriginalPath(protoSourceFile.getFilename())
+            .withKind(sourceKind)
+            .withPath(pathOnDisk)
+            .build();
+      }
+      case ZIP_ENTRY -> {
+        SourceFileProto.ZipEntryOnDisk zipEntry = protoSourceFile.getZipEntry();
+        return SourceFile.builder()
+            .withKind(sourceKind)
+            .withOriginalPath(protoSourceFile.getFilename())
+            .withCharset(toCharset(zipEntry.getCharset()))
+            .withZipEntryPath(zipEntry.getZipPath(), zipEntry.getEntryName())
+            .build();
+      }
+      case STUB_FILE -> {
+        return SourceFile.builder()
+            .withKind(sourceKind)
+            .withOriginalPath(protoSourceFile.getFilename())
+            .setIsStubSourceFileForAlreadyProvidedInput()
+            .build();
+      }
+      case LOADER_NOT_SET -> {}
+    }
+    throw new AssertionError();
+  }
+
+  private static SourceKind getSourceKindFromProto(SourceFileProto protoSourceFile) {
+    return switch (protoSourceFile.getSourceKind()) {
+      case EXTERN -> SourceKind.EXTERN;
+      case CODE -> SourceKind.STRONG;
+      case NOT_SPECIFIED, UNRECOGNIZED ->
+          throw new AssertionError(protoSourceFile.getSourceKind().toString());
+    };
+  }
+
+  private static Charset toCharset(String protoCharset) {
+    if (protoCharset.isEmpty()) {
+      return UTF_8;
+    }
+    return Charset.forName(protoCharset);
   }
 
   /** Create a new builder for source files. */
@@ -510,286 +655,329 @@ public class SourceFile implements StaticSourceFile, Serializable {
   /**
    * A builder interface for source files.
    *
-   * Allows users to customize the Charset, and the original path of
-   * the source file (if it differs from the path on disk).
+   * <p>Allows users to customize the Charset, and the original path of the source file (if it
+   * differs from the path on disk).
    */
-  public static class Builder {
+  public static final class Builder {
     private SourceKind kind = SourceKind.STRONG;
     private Charset charset = UTF_8;
-    private String originalPath = null;
+    private @Nullable String originalPath = null;
+    private boolean isStubSourceFileForAlreadyProvidedInput = false;
 
-    public Builder() {}
+    private @Nullable String path = null;
+    private @Nullable Path pathWithFilesystem = null;
+    private @Nullable String zipEntryPath = null;
+
+    private @Nullable Supplier<String> lazyContent = null;
+
+    private Builder() {}
 
     /** Set the source kind. */
+    @CanIgnoreReturnValue
     public Builder withKind(SourceKind kind) {
       this.kind = kind;
       return this;
     }
 
     /** Set the charset to use when reading from an input stream or file. */
+    @CanIgnoreReturnValue
     public Builder withCharset(Charset charset) {
       this.charset = charset;
       return this;
     }
 
+    @CanIgnoreReturnValue
+    public Builder withPath(String path) {
+      return this.withPathInternal(path, null);
+    }
+
+    @CanIgnoreReturnValue
+    public Builder withPath(Path path) {
+      return this.withPathInternal(path.toString(), path);
+    }
+
+    @CanIgnoreReturnValue
+    public Builder withContent(String x) {
+      this.lazyContent = x::toString;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder withContent(InputStream x) {
+      this.lazyContent =
+          () -> {
+            checkState(this.charset != null);
+            try {
+              return CharStreams.toString(new InputStreamReader(x, this.charset));
+            } catch (IOException e) {
+              throw new RuntimeException(e);
+            }
+          };
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder withZipEntryPath(String zipPath, String entryPath) {
+      this.path = zipPath;
+      this.zipEntryPath = entryPath;
+
+      return this;
+    }
+
+    /**
+     * Sets a name for this source file that does not need to correspond to a path on disk.
+     *
+     * <p>Allow passing a reasonable human-readable name in cases like for zip files and for
+     * generated files with unstable artifact prefixes.
+     *
+     * <p>The name must still be unique.
+     */
+    @CanIgnoreReturnValue
     public Builder withOriginalPath(String originalPath) {
       this.originalPath = originalPath;
       return this;
     }
 
-    @GwtIncompatible("java.io.File")
-    public SourceFile buildFromFile(String fileName) {
-      return buildFromPath(Paths.get(fileName));
+    /**
+     * Sets that this SourceFile is a stub file for an input that was already provided to the
+     * compiler in the form of TypedAST.
+     */
+    @CanIgnoreReturnValue
+    public Builder setIsStubSourceFileForAlreadyProvidedInput() {
+      this.isStubSourceFileForAlreadyProvidedInput = true;
+      return this;
     }
 
-    @GwtIncompatible("java.io.File")
-    public SourceFile buildFromPath(Path path) {
-      checkNotNull(path);
-      checkNotNull(charset);
-      if (isZipEntry(path.toString())) {
-        return fromZipEntry(path.toString(), charset, kind);
+    public SourceFile build() {
+      String displayPath =
+          (this.originalPath != null)
+              ? this.originalPath
+              : ((this.zipEntryPath == null)
+                  ? this.path
+                  : this.path + BANG_SLASH + this.zipEntryPath);
+
+      if (this.isStubSourceFileForAlreadyProvidedInput) {
+        SourceFile file =
+            new SourceFile(new CodeLoader.StubSourceFileCodeLoader(), displayPath, this.kind);
+        file.setIsStubSourceFileForAlreadyProvidedInput(true);
+        return file;
       }
-      return new OnDisk(path, originalPath, charset, kind);
+
+      if (this.lazyContent != null) {
+        return new SourceFile(
+            new CodeLoader.Preloaded(this.lazyContent.get()), displayPath, this.kind);
+      }
+
+      if (this.zipEntryPath != null) {
+        return new SourceFile(
+            new CodeLoader.AtZip(this.path, this.zipEntryPath, this.charset),
+            displayPath,
+            this.kind);
+      }
+
+      return new SourceFile(
+          new CodeLoader.OnDisk(
+              (this.pathWithFilesystem != null) ? this.pathWithFilesystem : Path.of(this.path),
+              this.charset),
+          displayPath,
+          this.kind);
     }
 
-    @GwtIncompatible("java.io.File")
-    public SourceFile buildFromZipEntry(ZipEntryReader zipEntryReader) {
-      checkNotNull(zipEntryReader);
-      checkNotNull(charset);
-      return new SourceFile.AtZip(zipEntryReader, originalPath, charset, kind);
-    }
+    @CanIgnoreReturnValue
+    private Builder withPathInternal(String path, @Nullable Path pathWithFilesystem) {
+      // Check if this path should be inferred as a ZIP entry path.
+      int bangSlashIndex = path.indexOf(BANG_SLASH);
+      if (bangSlashIndex >= 0) {
+        String zipPath = path.substring(0, bangSlashIndex);
+        String entryPath = path.substring(bangSlashIndex + BANG_SLASH.length());
 
-    public SourceFile buildFromCode(String fileName, String code) {
-      return new Preloaded(fileName, originalPath, code, kind);
-    }
+        if (zipPath.endsWith(".zip")
+            && (entryPath.endsWith(".js") || entryPath.endsWith(".js.map"))) {
+          return this.withZipEntryPath(zipPath, entryPath);
+        }
+      }
 
-    @GwtIncompatible("java.io.InputStream")
-    public SourceFile buildFromInputStream(String fileName, InputStream s) throws IOException {
-      return buildFromCode(fileName, CharStreams.toString(new InputStreamReader(s, charset)));
-    }
+      // Path instances have an implicit reference to a FileSystem. Make sure to preserve it.
+      this.path = path;
+      this.pathWithFilesystem = pathWithFilesystem;
 
-    @GwtIncompatible("java.io.Reader")
-    public SourceFile buildFromReader(String fileName, Reader r) throws IOException {
-      return buildFromCode(fileName, CharStreams.toString(r));
-    }
-
-    public SourceFile buildFromGenerator(String fileName, Generator generator) {
-      return new Generated(fileName, originalPath, generator, kind);
+      return this;
     }
   }
 
   //////////////////////////////////////////////////////////////////////////////
   // Implementations
 
-  /** A source file where the code has been preloaded. */
-  private static class Preloaded extends SourceFile {
-    private static final long serialVersionUID = 2L;
-
-    Preloaded(String fileName, String originalPath, String code, SourceKind kind) {
-      super(fileName, kind);
-      super.setOriginalPath(originalPath);
-      super.setCode(code);
+  private abstract static class CodeLoader implements Serializable {
+    /**
+     * Return the source text of this file from its original storage.
+     *
+     * <p>The implementation may be a slow operation such as reading from a file. SourceFile
+     * guarantees that this method is only called under synchronization.
+     */
+    String loadUncachedCode() throws IOException {
+      throw new AssertionError();
     }
 
-    @GwtIncompatible("ObjectOutputStream")
-    private void writeObject(java.io.ObjectOutputStream os) throws Exception {
-      os.defaultWriteObject();
-      os.writeObject(getCode());
+    /**
+     * Return a Reader for the source text of this file from its original storage.
+     *
+     * <p>The implementation may be a slow operation such as reading from a file. SourceFile
+     * guarantees that this method is only called under synchronization.
+     */
+    Reader openUncachedReader() throws IOException {
+      return null;
     }
 
-    @GwtIncompatible("ObjectInputStream")
-    private void readObject(java.io.ObjectInputStream in) throws Exception {
-      in.defaultReadObject();
-      super.setCode((String) in.readObject());
-    }
-  }
+    /**
+     * Returns a representation of this loader that can be serialized/deserialized to reconstruct
+     * this SourceFile
+     */
+    abstract SourceFileProto.Builder toProtoLocationBuilder(String fileName);
 
-  /** A source file where the code will be dynamically generated from the injected interface. */
-  private static class Generated extends SourceFile {
-    // Avoid serializing generator and remove the burden to make classes that implement
-    // Generator serializable. There should be no need to obtain generated source in the
-    // second stage of compilation. Making the generator transient relies on not clearing the
-    // code cache for these classes up serialization which might be quite wasteful.
-    private transient Generator generator;
+    static final class Preloaded extends CodeLoader {
+      private static final long serialVersionUID = 2L;
+      private final String preloadedCode;
 
-    // Not private, so that LazyInput can extend it.
-    Generated(String fileName, String originalPath, Generator generator, SourceKind kind) {
-      super(fileName, kind);
-      super.setOriginalPath(originalPath);
-      this.generator = generator;
-    }
-
-    @Override
-    public synchronized String getCode() throws IOException {
-      String cachedCode = super.getCode();
-
-      if (cachedCode == null) {
-        cachedCode = generator.getCode();
-        super.setCode(cachedCode);
+      Preloaded(String preloadedCode) {
+        super();
+        this.preloadedCode = checkNotNull(preloadedCode);
       }
-      return cachedCode;
+
+      @Override
+      String loadUncachedCode() {
+        return this.preloadedCode;
+      }
+
+      @Override
+      SourceFileProto.Builder toProtoLocationBuilder(String fileName) {
+        return SourceFileProto.newBuilder().setPreloadedContents(this.preloadedCode);
+      }
     }
 
-    // Clear out the generated code when finished with a compile; we can
-    // regenerate it if we ever need it again.
-    @Override
-    public void clearCachedSource() {
-      super.setCode(null);
+    /* A code loader which throws an error when loading code for a stub SourceFile. */
+    static final class StubSourceFileCodeLoader extends CodeLoader {
+      private static final long serialVersionUID = 2L;
+
+      StubSourceFileCodeLoader() {
+        super();
+      }
+
+      @Override
+      String loadUncachedCode() {
+        throw new UnsupportedOperationException("Attempting to load code from a stub SourceFile.");
+      }
+
+      @Override
+      SourceFileProto.Builder toProtoLocationBuilder(String fileName) {
+        return SourceFileProto.newBuilder().setFilename(fileName).setStubFile(true);
+      }
     }
 
-    @Override
-    public void restoreFrom(SourceFile sourceFile) {
-      super.restoreFrom(sourceFile);
-      this.generator = ((Generated) sourceFile).generator;
-    }
-  }
+    static final class OnDisk extends CodeLoader {
+      private static final long serialVersionUID = 1L;
 
-  /**
-   * A source file where the code is only read into memory if absolutely necessary. We will try to
-   * delay loading the code into memory as long as possible.
-   */
-  @GwtIncompatible("com.google.common.io.CharStreams")
-  private static class OnDisk extends SourceFile {
-    private static final long serialVersionUID = 1L;
-    private transient Path path;
-    private transient Charset inputCharset;
+      private final String serializableCharset;
+      private final Path relativePath;
 
-    OnDisk(Path path, String originalPath, Charset c, SourceKind kind) {
-      super(path.toString(), kind);
-      this.path = path;
-      this.inputCharset = c;
-      setOriginalPath(originalPath);
-    }
+      OnDisk(Path relativePath, Charset c) {
+        super();
+        this.serializableCharset = c.name();
+        this.relativePath = relativePath;
+      }
 
-    @Override
-    public synchronized String getCode() throws IOException {
-      String cachedCode = super.getCode();
-
-      if (cachedCode == null) {
-        try (Reader r = getCodeReader()) {
-          cachedCode = CharStreams.toString(r);
-        } catch (java.nio.charset.MalformedInputException e) {
-          throw new IOException("Failed to read: " + path + ", is this input UTF-8 encoded?", e);
+      @Override
+      String loadUncachedCode() throws IOException {
+        try {
+          return Files.readString(this.relativePath, this.getCharset());
+        } catch (CharacterCodingException e) {
+          throw new IOException(
+              "Failed to read: " + this.relativePath + ", is this input UTF-8 encoded?", e);
         }
-
-        super.setCode(cachedCode);
-        // Byte Order Mark can be removed by setCode
-        cachedCode = super.getCode();
       }
-      return cachedCode;
-    }
 
-    /**
-     * Gets a reader for the code in this source file.
-     */
-    @Override
-    public Reader getCodeReader() throws IOException {
-      if (hasSourceInMemory()) {
-        return super.getCodeReader();
-      } else {
-        // If we haven't pulled the code into memory yet, don't.
-        return Files.newBufferedReader(path, inputCharset);
+      @Override
+      Reader openUncachedReader() throws IOException {
+        return Files.newBufferedReader(this.relativePath, this.getCharset());
+      }
+
+      private Charset getCharset() {
+        return Charset.forName(this.serializableCharset);
+      }
+
+      @Override
+      SourceFileProto.Builder toProtoLocationBuilder(String fileName) {
+        String actualPath = this.relativePath.toString();
+        return SourceFileProto.newBuilder()
+            .setFileOnDisk(
+                FileOnDisk.newBuilder()
+                    .setActualPath(
+                        // to save space, don't serialize the path if equal to the fileName.
+                        fileName.equals(actualPath) ? "" : actualPath)
+                    // save space by not serializing UTF_8 (the default charset)
+                    .setCharset(this.getCharset().equals(UTF_8) ? "" : this.serializableCharset));
       }
     }
 
-    // Flush the cached code after the compile; we can read it off disk
-    // if we need it again.
-    @Override
-    public void clearCachedSource() {
-      super.setCode(null);
-    }
+    static final class AtZip extends CodeLoader {
+      private static final long serialVersionUID = 1L;
+      private final String zipName;
+      private final String entryName;
+      private final String serializableCharset;
 
-    @GwtIncompatible("ObjectOutputStream")
-    private void writeObject(java.io.ObjectOutputStream out) throws Exception {
-      out.defaultWriteObject();
-      out.writeObject(inputCharset.name());
-      out.writeObject(path.toUri());
-    }
+      AtZip(String zipName, String entryName, Charset c) {
+        super();
+        this.zipName = zipName;
+        this.entryName = entryName;
+        this.serializableCharset = c.name();
+      }
 
-    @GwtIncompatible("ObjectInputStream")
-    private void readObject(java.io.ObjectInputStream in) throws Exception {
-      in.defaultReadObject();
-      inputCharset = Charset.forName((String) in.readObject());
-      path = Paths.get((URI) in.readObject());
+      @Override
+      String loadUncachedCode() throws IOException {
+        return CharStreams.toString(this.openUncachedReader());
+      }
 
-      // Code will be reread or restored.
-      super.setCode(null);
+      @Override
+      Reader openUncachedReader() throws IOException {
+        return new InputStreamReader(
+            JSCompZipFileCache.getEntryStream(this.zipName, this.entryName), this.getCharset());
+      }
+
+      private Charset getCharset() {
+        return Charset.forName(this.serializableCharset);
+      }
+
+      @Override
+      SourceFileProto.Builder toProtoLocationBuilder(String fileName) {
+        return SourceFileProto.newBuilder()
+            .setFilename(fileName)
+            .setZipEntry(
+                ZipEntryOnDisk.newBuilder()
+                    .setEntryName(this.entryName)
+                    .setZipPath(this.zipName)
+                    // save space by not serializing UTF_8 (the default charset)
+                    .setCharset(this.getCharset().equals(UTF_8) ? "" : this.serializableCharset)
+                    .build());
+      }
     }
   }
 
-  /**
-   * A source file at a zip where the code is only read into memory if absolutely necessary. We will
-   * try to delay loading the code into memory as long as possible.
-   */
-  @GwtIncompatible("java.io.File")
-  private static class AtZip extends SourceFile {
-    private static final long serialVersionUID = 1L;
-    private final ZipEntryReader zipEntryReader;
-    private transient Charset inputCharset;
-
-    AtZip(ZipEntryReader zipEntryReader, String originalPath, Charset c, SourceKind kind) {
-      super(originalPath, kind);
-      this.inputCharset = c;
-      this.zipEntryReader = zipEntryReader;
-      setOriginalPath(originalPath);
-    }
-
-    @Override
-    public synchronized String getCode() throws IOException {
-      String cachedCode = super.getCode();
-
-      if (cachedCode == null) {
-        cachedCode = zipEntryReader.read(inputCharset);
-        super.setCode(cachedCode);
-        // Byte Order Mark can be removed by setCode
-        cachedCode = super.getCode();
-      }
-      return cachedCode;
-    }
-
-    /**
-     * Gets a reader for the code at this URL.
-     */
-    @Override
-    public Reader getCodeReader() throws IOException {
-      if (hasSourceInMemory()) {
-        return super.getCodeReader();
-      } else {
-        // If we haven't pulled the code into memory yet, don't.
-        return zipEntryReader.getReader(inputCharset);
-      }
-    }
-
-    // Flush the cached code after the compile; we can read it from the URL
-    // if we need it again.
-    @Override
-    public void clearCachedSource() {
-      super.setCode(null);
-    }
-
-    @GwtIncompatible("ObjectOutputStream")
-    private void writeObject(java.io.ObjectOutputStream os) throws Exception {
-      os.defaultWriteObject();
-      os.writeObject(inputCharset.name());
-    }
-
-    @GwtIncompatible("ObjectInputStream")
-    private void readObject(java.io.ObjectInputStream in) throws Exception {
-      in.defaultReadObject();
-      inputCharset = Charset.forName((String) in.readObject());
-
-      // Code will be reread or restored.
-      super.setCode(null);
-    }
+  public SourceFileProto getProto() {
+    return this.loader
+        .toProtoLocationBuilder(this.getName())
+        .setFilename(this.getName())
+        .setSourceKind(sourceKindToProto(this.getKind()))
+        .setIsClosureUnawareCode(this.isClosureUnawareCode)
+        .setNumLinesPlusOne(this.numLines + 1)
+        .setNumBytesPlusOne(this.numBytes + 1)
+        .build();
   }
 
-  public void restoreFrom(SourceFile sourceFile) {
-    this.code = sourceFile.code;
-  }
-
-  @GwtIncompatible("ObjectInputStream")
-  private void readObject(java.io.ObjectInputStream in) throws Exception {
-    in.defaultReadObject();
-    code = "<UNAVAILABLE>";
+  private static SourceFileProto.SourceKind sourceKindToProto(SourceKind sourceKind) {
+    return switch (sourceKind) {
+      case EXTERN -> SourceFileProto.SourceKind.EXTERN;
+      case STRONG, WEAK -> SourceFileProto.SourceKind.CODE;
+      case NON_CODE -> throw new AssertionError(sourceKind.toString());
+    };
   }
 }

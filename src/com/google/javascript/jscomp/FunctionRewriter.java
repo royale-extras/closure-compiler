@@ -19,11 +19,11 @@ package com.google.javascript.jscomp;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Multimap;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.Collection;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Reduces the size of common function expressions.
@@ -58,11 +58,13 @@ class FunctionRewriter implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-    List<Reducer> reducers = ImmutableList.of(new ReturnConstantReducer(),
-                                              new GetterReducer(),
-                                              new SetterReducer(),
-                                              new EmptyFunctionReducer(),
-                                              new IdentityReducer());
+    ImmutableList<Reducer> reducers =
+        ImmutableList.of(
+            new ReturnConstantReducer(),
+            new GetterReducer(),
+            new SetterReducer(),
+            new EmptyFunctionReducer(),
+            new IdentityReducer());
 
     Multimap<Reducer, Reduction> reductionMap = HashMultimap.create();
 
@@ -109,9 +111,9 @@ class FunctionRewriter implements CompilerPass {
   /**
    * Parse helper code needed by a reducer.
    *
-   * @return Helper code root.  If parse fails, return null.
+   * @return Helper code root. If parse fails, return null.
    */
-  public Node parseHelperCode(Reducer reducer) {
+  public @Nullable Node parseHelperCode(Reducer reducer) {
     Node root =
         compiler.parseSyntheticCode(reducer.getClass() + ":helper", reducer.getHelperSource());
     return (root != null) ? root.removeFirstChild() : null;
@@ -121,19 +123,19 @@ class FunctionRewriter implements CompilerPass {
     Node parent = n.getParent();
     return NodeUtil.isFunctionExpression(n)
         && !NodeUtil.isGetOrSetKey(parent)
-        && !parent.isMemberFunctionDef();
+        && !parent.isMemberFunctionDef()
+        && !n.isAsyncFunction()
+        && !n.isGeneratorFunction();
   }
 
   /**
    * Information needed to apply a reduction.
    */
   private class Reduction {
-    private final Node parent;
     private final Node oldChild;
     private final Node newChild;
 
     Reduction(Node parent, Node oldChild, Node newChild) {
-      this.parent = parent;
       this.oldChild = oldChild;
       this.newChild = newChild;
     }
@@ -142,7 +144,7 @@ class FunctionRewriter implements CompilerPass {
      * Apply the reduction by replacing the old child with the new child.
      */
     void apply() {
-      parent.replaceChild(oldChild, newChild);
+      oldChild.replaceWith(newChild);
       NodeUtil.markFunctionsDeleted(oldChild, compiler);
       compiler.reportChangeToEnclosingScope(newChild);
     }
@@ -157,12 +159,11 @@ class FunctionRewriter implements CompilerPass {
   }
 
   /**
-   * Gathers a list of reductions to apply later by doing an in-order
-   * AST traversal.  If a suitable reduction is found, stop traversal
-   * in that branch.
+   * Gathers a list of reductions to apply later by doing an in-order AST traversal. If a suitable
+   * reduction is found, stop traversal in that branch.
    */
-  private class ReductionGatherer implements Callback {
-    private final List<Reducer> reducers;
+  private class ReductionGatherer implements NodeTraversal.Callback {
+    private final Reducer[] reducers;
     private final Multimap<Reducer, Reduction> reductions;
 
     /**
@@ -172,7 +173,9 @@ class FunctionRewriter implements CompilerPass {
      */
     ReductionGatherer(List<Reducer> reducers,
                       Multimap<Reducer, Reduction> reductions) {
-      this.reducers = reducers;
+      // Use a native array to avoid creating an iterator for every node in the AST.
+      // which accord to pprof accounts for ~20% of the runtime of this pass.
+      this.reducers = reducers.toArray(new Reducer[0]);
       this.reductions = reductions;
     }
 
@@ -212,15 +215,14 @@ class FunctionRewriter implements CompilerPass {
     abstract Node reduce(Node node);
 
     /**
-     * Builds a method call based on the the given method name,
-     * argument and history.
+     * Builds a method call based on the the given method name, argument and history.
      *
      * @param methodName Method to call.
      * @param argumentNode Method argument.
      */
-    protected final Node buildCallNode(String methodName, Node argumentNode,
-                                       Node srcref) {
-      Node call = IR.call(IR.name(methodName)).srcref(srcref);
+    protected final Node buildCallNode(
+        String methodName, @Nullable Node argumentNode, Node srcref) {
+      Node call = IR.call(IR.name(methodName)).srcrefTree(srcref);
       call.putBooleanProp(Node.FREE_CALL, true);
       if (argumentNode != null) {
         call.addChildToBack(argumentNode.cloneTree());
@@ -267,10 +269,10 @@ class FunctionRewriter implements CompilerPass {
   abstract static class SingleReturnStatementReducer extends Reducer {
 
     /**
-     * @return function return value node if function body contains a
-     * single return statement.  Otherwise, null.
+     * @return function return value node if function body contains a single return statement.
+     *     Otherwise, null.
      */
-    protected final Node maybeGetSingleReturnRValue(Node functionNode) {
+    protected final @Nullable Node maybeGetSingleReturnRValue(Node functionNode) {
       Node body = functionNode.getLastChild();
       if (!body.hasOneChild()) {
         return null;
@@ -376,13 +378,12 @@ class FunctionRewriter implements CompilerPass {
     }
 
     /**
-     * Checks if the function matches the pattern:
-     *   function(<args>) {return <immutable value>}
-     * and returns <immutable value> if a match is found.
+     * Checks if the function matches the pattern: function(<args>) {return <immutable value>} and
+     * returns <immutable value> if a match is found.
      *
      * @return the immutable value node; or null.
      */
-    private Node getValueNode(Node functionNode) {
+    private @Nullable Node getValueNode(Node functionNode) {
       Node value = maybeGetSingleReturnRValue(functionNode);
       if (value != null &&
           NodeUtil.isImmutableValue(value)) {
@@ -416,35 +417,35 @@ class FunctionRewriter implements CompilerPass {
 
     @Override
     public Node reduce(Node node) {
-      if (!isReduceableFunctionExpression(node)) {
+      if (!isReduceableFunctionExpression(node) || node.isArrowFunction()) {
         return node;
       }
 
-      Node propName = getGetPropertyName(node);
-      if (propName != null) {
-        if (!propName.isString()) {
-          throw new IllegalStateException("Expected STRING, got " + propName.getToken());
+      Node getprop = getGetPropertyName(node);
+      if (getprop != null) {
+        if (!getprop.isGetProp()) {
+          throw new IllegalStateException("Expected GETPROP, got " + getprop.getToken());
         }
 
-        return buildCallNode(FACTORY_METHOD_NAME, propName, node);
+        Node arg = IR.string(getprop.getString()).srcref(getprop);
+        return buildCallNode(FACTORY_METHOD_NAME, arg, node);
       } else {
         return node;
       }
     }
 
     /**
-     * Checks if the function matches the pattern:
-     *   function(<args>) {return this.<name>}
-     * and returns <name> if a match is found.
+     * Checks if the function matches the pattern: function(<args>) {return this.<name>} and returns
+     * <name> if a match is found.
      *
      * @return STRING node that is the RHS of a this property get; or null.
      */
-    private Node getGetPropertyName(Node functionNode) {
+    private @Nullable Node getGetPropertyName(Node functionNode) {
       Node value = maybeGetSingleReturnRValue(functionNode);
       if (value != null &&
           value.isGetProp() &&
           value.getFirstChild().isThis()) {
-        return value.getLastChild();
+        return value;
       }
       return null;
     }
@@ -476,13 +477,13 @@ class FunctionRewriter implements CompilerPass {
 
     @Override
     public Node reduce(Node node) {
-      if (!isReduceableFunctionExpression(node)) {
+      if (!isReduceableFunctionExpression(node) || node.isArrowFunction()) {
         return node;
       }
 
       Node propName = getSetPropertyName(node);
       if (propName != null) {
-        if (!propName.isString()) {
+        if (!propName.isStringLit()) {
           throw new IllegalStateException("Expected STRING, got " + propName.getToken());
         }
 
@@ -493,13 +494,12 @@ class FunctionRewriter implements CompilerPass {
     }
 
     /**
-     * Checks if the function matches the pattern:
-     *   function(<value>, <rest>) {this.<name> = <value>}
+     * Checks if the function matches the pattern: function(<value>, <rest>) {this.<name> = <value>}
      * and returns <name> if a match is found.
      *
      * @return STRING node that is the RHS of a this property get; or null.
      */
-    private Node getSetPropertyName(Node functionNode) {
+    private @Nullable Node getSetPropertyName(Node functionNode) {
       Node body = functionNode.getLastChild();
       if (!body.hasOneChild()) {
         return null;
@@ -521,10 +521,8 @@ class FunctionRewriter implements CompilerPass {
       Node lhs = assign.getFirstChild();
       if (lhs.isGetProp() && lhs.getFirstChild().isThis()) {
         Node rhs = assign.getLastChild();
-        if (rhs.isName() &&
-            rhs.getString().equals(paramNode.getString())) {
-          Node propertyName = lhs.getLastChild();
-          return propertyName;
+        if (rhs.isName() && rhs.getString().equals(paramNode.getString())) {
+          return IR.string(lhs.getString()).clonePropsFrom(lhs).srcref(lhs);
         }
       }
       return null;

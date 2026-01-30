@@ -19,7 +19,6 @@ package com.google.javascript.jscomp;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
-import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.type.FlowScope;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -29,11 +28,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for LinkedFlowScope.
- *
- * @author nicksantos@google.com (Nick Santos)
- */
+/** Tests for LinkedFlowScope. */
 @RunWith(JUnit4.class)
 public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
 
@@ -41,10 +36,11 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
   private final Node rootNode = new Node(Token.ROOT, functionNode);
   private static final int LONG_CHAIN_LENGTH = 1050;
 
-  private TypedScope globalScope;
   private TypedScope localScope;
+
   @SuppressWarnings("unused")
   private FlowScope globalEntry;
+
   private FlowScope localEntry;
 
   @Override
@@ -52,7 +48,7 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
   public void setUp() throws Exception {
     super.setUp();
 
-    globalScope = TypedScope.createGlobalScope(rootNode);
+    TypedScope globalScope = TypedScope.createGlobalScope(rootNode);
     globalScope.declare("globalA", null, null, null, true);
     globalScope.declare("globalB", null, null, null, true);
 
@@ -224,8 +220,10 @@ public final class LinkedFlowScopeTest extends CompilerTypeTestCase {
     assertThat(a).isEqualTo(b);
   }
 
-  @SuppressWarnings("unchecked")
   private FlowScope join(FlowScope a, FlowScope b) {
-    return new LinkedFlowScope.FlowScopeJoinOp(compiler).apply(ImmutableList.of(a, b));
+    LinkedFlowScope.FlowScopeJoinOp joiner = new LinkedFlowScope.FlowScopeJoinOp(compiler);
+    joiner.joinFlow(a);
+    joiner.joinFlow(b);
+    return joiner.finish();
   }
 }

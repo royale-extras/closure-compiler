@@ -16,6 +16,7 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Preconditions;
@@ -27,14 +28,11 @@ import com.google.javascript.rhino.NominalTypeBuilder;
 import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
-import com.google.javascript.rhino.jstype.ObjectType;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * CodingConvention defines a set of hooks to customize the behavior of the
@@ -123,39 +121,21 @@ public interface CodingConvention extends Serializable {
   }
 
   /**
-   * Check whether the property name is eligible for renaming.
+   * No-op convention that is never used.
    *
-   * This method will not block removal or collapsing
-   * of the property; it will just block renaming if the
-   * property is not optimized away.
-   *
-   * @param name A property name.
-   * @return {@code true} if the name can not be renamed.
+   * @deprecated since this has a default value and is never checked, you can safely remove any
+   *     overrides of this method from your coding conventions.
    */
-  public boolean blockRenamingForProperty(String name);
+  @Deprecated
+  public default boolean blockRenamingForProperty(String name) {
+    return false;
+  }
 
   /**
    * @return the package name for the given source file, or null if
    *     no package name is known.
    */
   public String getPackageName(StaticSourceFile source);
-
-  /**
-   * Checks whether a name should be considered private. Private global
-   * variables and functions can only be referenced within the source file in
-   * which they are declared. Private properties and methods should only be
-   * accessed by the class that defines them.
-   *
-   * @param name The name of a global variable or function, or a method or
-   *     property.
-   * @return {@code true} if the name should be considered private.
-   */
-  public boolean isPrivate(String name);
-
-  /**
-   * Whether this CodingConvention includes a convention for what private names should look like.
-   */
-  public boolean hasPrivacyConvention();
 
   /**
    * Checks if the given method defines a subclass relationship,
@@ -257,85 +237,18 @@ public interface CodingConvention extends Serializable {
       NominalTypeBuilder classType, FunctionType getterType);
 
   /**
-   * @return Whether the function is inlinable by convention.
-   */
-  public boolean isInlinableFunction(Node n);
-
-  /**
-   * @return the delegate relationship created by the call or null.
-   */
-  public DelegateRelationship getDelegateRelationship(Node callNode);
-
-  /**
-   * In many JS libraries, the function that creates a delegate relationship
-   * also adds properties to the delegator and delegate base.
-   */
-  public void applyDelegateRelationship(
-      NominalTypeBuilder delegateSuperclass,
-      NominalTypeBuilder delegateBase,
-      NominalTypeBuilder delegator,
-      ObjectType delegateProxy,
-      FunctionType findDelegate);
-
-  /**
-   * @return the name of the delegate superclass.
-   */
-  public String getDelegateSuperclassName();
-
-  /**
-   * Checks for getprops that set the calling conventions on delegate methods.
-   */
-  public void checkForCallingConventionDefinitions(
-      Node getPropNode, Map<String, String> delegateCallingConventions);
-
-  /**
-   * Defines the delegate proxy prototype properties. Their types depend on
-   * properties of the delegate base methods.
-   *
-   * @param delegateProxies List of delegate proxy types.
-   */
-  public void defineDelegateProxyPrototypeProperties(
-      JSTypeRegistry registry,
-      List<NominalTypeBuilder> delegateProxies,
-      Map<String, String> delegateCallingConventions);
-
-  /**
-   * Gets the name of the global object.
-   */
-  public String getGlobalObject();
-
-  /**
-   * Whether this statement is creating an alias of the global object
-   */
-  public boolean isAliasingGlobalThis(Node n);
-
-  /**
-   * A Bind instance or null.
-   */
-  public Bind describeFunctionBind(Node n);
-
-  /**
    * A Bind instance or null.
    *
-   * When seeing an expression exp1.bind(recv, arg1, ...);
-   * we only know that it's a function bind if exp1 has type function.
-   * W/out type info, exp1 has certainly a function type only if it's a
+   * <p>When seeing an expression exp1.bind(recv, arg1, ...); we only know that it's a function bind
+   * if exp1 has type function. W/out type info, exp1 has certainly a function type only if it's a
    * function literal.
    *
-   * If (the old) type checking has already happened, exp1's type is attached to
-   * the AST node.
-   * When iCheckTypes is true, describeFunctionBind looks for that type.
+   * <p>If type checking has already happened, exp1's type is attached to the AST node. When
+   * checkTypes is true, describeFunctionBind looks for that type.
    *
-   * The new type inference does not yet attach types to nodes, but we can still
-   * use type information in describeFunctionBind by passing true for
-   * callerChecksTypes.
-   *
-   * @param callerChecksTypes Trust that the caller of this method has verified
-   *        that the bound node has a function type.
-   * @param iCheckTypes Check that the bound node has a function type.
+   * @param checkTypes Check that the bound node has a function type.
    */
-  public Bind describeFunctionBind(
-      Node n, boolean callerChecksTypes, boolean iCheckTypes);
+  public Bind describeFunctionBind(Node n, boolean checkTypes);
 
   /** Bind class */
   public static class Bind {
@@ -401,9 +314,10 @@ public interface CodingConvention extends Serializable {
   public boolean isPrototypeAlias(Node getProp);
 
   /**
-   * Whether this CALL function is returning the string name for a property, but allows renaming.
+   * Whether this GETPROP or NAME node is the function is returning the string name for a property,
+   * but allows renaming.
    */
-  public boolean isPropertyRenameFunction(String name);
+  public boolean isPropertyRenameFunction(Node nameNode);
 
   /**
    * Checks if the given method performs a object literal cast, and if it does,
@@ -451,25 +365,6 @@ public interface CodingConvention extends Serializable {
   }
 
   /**
-   * Delegates provides a mechanism and structure for identifying where classes
-   * can call out to optional code to augment their functionality. The optional
-   * code is isolated from the base code through the use of a subclass in the
-   * optional code derived from the delegate class in the base code.
-   */
-  static class DelegateRelationship {
-    /** The subclass in the base code. */
-    final String delegateBase;
-
-    /** The class in the base code. */
-    final String delegator;
-
-    DelegateRelationship(String delegateBase, String delegator) {
-      this.delegateBase = delegateBase;
-      this.delegator = delegator;
-    }
-  }
-
-  /**
    * An object literal cast provides a mechanism to cast object literals to
    * other types without a warning.
    */
@@ -504,18 +399,16 @@ public interface CodingConvention extends Serializable {
   @AutoValue
   abstract class AssertionFunctionSpec {
     // TODO(b/126254920): remove this field and always use ClosurePrimitive
-    @Nullable
-    abstract String getFunctionName();
+    abstract @Nullable String getFunctionName();
 
-    @Nullable
-    abstract ClosurePrimitive getClosurePrimitive();
+    abstract @Nullable ClosurePrimitive getClosurePrimitive();
 
     abstract AssertionKind getAssertionKind();
 
     abstract int getParamIndex(); // the index of the formal parameter that is actually asserted
 
     public enum AssertionKind {
-      TRUTHY, // an assertion that the parameter is 'truthy'
+      TRUTHY, // an assertion that the parameter is 'truthy' and returns the parameter
       MATCHES_RETURN_TYPE // an assertion that the parameter matches the inferred return kind
     }
 
@@ -590,9 +483,7 @@ public interface CodingConvention extends Serializable {
      */
     static AssertionFunctionLookup of(Collection<AssertionFunctionSpec> specs) {
       ImmutableMap<Object, AssertionFunctionSpec> idToSpecMap =
-          specs.stream()
-              .collect(
-                  ImmutableMap.toImmutableMap(AssertionFunctionSpec::getId, Function.identity()));
+          specs.stream().collect(toImmutableMap(AssertionFunctionSpec::getId, Function.identity()));
 
       return new AssertionFunctionLookup(idToSpecMap);
     }

@@ -17,7 +17,9 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.javascript.jscomp.base.JSCompObjects.identical;
 
+import com.google.javascript.jscomp.DataFlowAnalysis.FlowJoiner;
 import com.google.javascript.jscomp.type.FlowScope;
 import com.google.javascript.rhino.HamtPMap;
 import com.google.javascript.rhino.JSDocInfo;
@@ -27,6 +29,7 @@ import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.StaticTypedRef;
 import com.google.javascript.rhino.jstype.StaticTypedScope;
 import com.google.javascript.rhino.jstype.StaticTypedSlot;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A flow scope that tries to store as little symbol information as possible,
@@ -166,7 +169,7 @@ class LinkedFlowScope implements FlowScope {
 
   @Override
   public JSType getTypeOfThis() {
-    return functionScope.getTypeOfThis();
+    return syntacticScope.getTypeOfThis();
   }
 
   @Override
@@ -244,7 +247,8 @@ class LinkedFlowScope implements FlowScope {
   }
 
   /** Join the two FlowScopes. */
-  static class FlowScopeJoinOp extends JoinOp.BinaryJoinOp<FlowScope> {
+  static class FlowScopeJoinOp implements FlowJoiner<FlowScope> {
+    @Nullable LinkedFlowScope result = null;
     final CompilerInputProvider inputProvider;
 
     FlowScopeJoinOp(CompilerInputProvider inputProvider) {
@@ -263,12 +267,15 @@ class LinkedFlowScope implements FlowScope {
     // same syntactic scope.  So simply propagating either input's scope is
     // perfectly fine.
     @Override
-    public FlowScope apply(FlowScope a, FlowScope b) {
+    public void joinFlow(FlowScope input) {
       // To join the two scopes, we have to
-      LinkedFlowScope linkedA = (LinkedFlowScope) a;
-      LinkedFlowScope linkedB = (LinkedFlowScope) b;
-      if (linkedA.scopes == linkedB.scopes && linkedA.functionScope == linkedB.functionScope) {
-        return linkedA;
+      LinkedFlowScope linkedInput = (LinkedFlowScope) input;
+      if (this.result == null) {
+        this.result = linkedInput;
+        return;
+      } else if (this.result.scopes == linkedInput.scopes
+          && this.result.functionScope == linkedInput.functionScope) {
+        return;
       }
 
       // NOTE: it would be nice to put 'null' as the syntactic scope if they're not
@@ -285,12 +292,20 @@ class LinkedFlowScope implements FlowScope {
       // excessive map entry creation: find a common ancestor, etc.  One
       // interesting consequence of the current approach is that we may end up
       // adding irrelevant block-local variables to the joined scope unnecessarily.
-      TypedScope common = getCommonParentDeclarationScope(linkedA, linkedB);
-      return new LinkedFlowScope(
-          inputProvider,
-          join(linkedA, linkedB, common),
-          common,
-          linkedA.flowsFromBottom() ? linkedB.functionScope : linkedA.functionScope);
+      TypedScope common = getCommonParentDeclarationScope(this.result, linkedInput);
+      this.result =
+          new LinkedFlowScope(
+              inputProvider,
+              join(this.result, linkedInput, common),
+              common,
+              this.result.flowsFromBottom()
+                  ? linkedInput.functionScope
+                  : this.result.functionScope);
+    }
+
+    @Override
+    public FlowScope finish() {
+      return this.result;
     }
   }
 
@@ -306,10 +321,9 @@ class LinkedFlowScope implements FlowScope {
   @Override
   public boolean equals(Object other) {
 
-    if (!(other instanceof LinkedFlowScope)) {
+    if (!(other instanceof LinkedFlowScope that)) {
       return false;
     }
-    LinkedFlowScope that = (LinkedFlowScope) other;
 
     // If two flow scopes are in the same function, then they could have
     // two possible function scopes: the real one and the BOTTOM scope.
@@ -342,7 +356,6 @@ class LinkedFlowScope implements FlowScope {
     throw new UnsupportedOperationException();
   }
 
-  @SuppressWarnings("ReferenceEquality") // JSType comparisons are expensive, so just use identity.
   private static PMap<TypedScope, OverlayScope> join(
       LinkedFlowScope linkedA, LinkedFlowScope linkedB, TypedScope commonParent) {
     return linkedA
@@ -382,38 +395,38 @@ class LinkedFlowScope implements FlowScope {
                         if (slotB == null || slotB.getType() == null) {
                           TypedVar fnSlot = typedScopeB != null ? typedScopeB.getSlot(name) : null;
                           JSType fnSlotType = fnSlot != null ? fnSlot.getType() : null;
-                          if (fnSlotType != null && fnSlotType != slotA.getType()) {
-                            // Case #3
-                            JSType joinedType = slotA.getType().getLeastSupertype(fnSlotType);
-                            return joinedType != slotA.getType()
-                                ? new OverlaySlot(name, joinedType)
-                                : slotA;
-                          } else {
+                          if (fnSlotType == null || identical(fnSlotType, slotA.getType())) {
                             // Case #1
                             return slotA;
+                          } else {
+                            // Case #3
+                            JSType joinedType = slotA.getType().getLeastSupertype(fnSlotType);
+                            return identical(joinedType, slotA.getType())
+                                ? slotA
+                                : new OverlaySlot(name, joinedType);
                           }
                         } else if (slotA == null || slotA.getType() == null) {
                           TypedVar fnSlot = typedScopeA != null ? typedScopeA.getSlot(name) : null;
                           JSType fnSlotType = fnSlot != null ? fnSlot.getType() : null;
-                          if (fnSlotType != null && fnSlotType != slotB.getType()) {
-                            // Case #4
-                            JSType joinedType = slotB.getType().getLeastSupertype(fnSlotType);
-                            return joinedType != slotB.getType()
-                                ? new OverlaySlot(name, joinedType)
-                                : slotB;
-                          } else {
+                          if (fnSlotType == null || identical(fnSlotType, slotB.getType())) {
                             // Case #2
                             return slotB;
+                          } else {
+                            // Case #4
+                            JSType joinedType = slotB.getType().getLeastSupertype(fnSlotType);
+                            return identical(joinedType, slotB.getType())
+                                ? slotB
+                                : new OverlaySlot(name, joinedType);
                           }
                         }
                         // Case #5
-                        if (slotA.getType() == slotB.getType()) {
+                        if (identical(slotA.getType(), slotB.getType())) {
                           return slotA;
                         }
                         JSType joinedType = slotA.getType().getLeastSupertype(slotB.getType());
-                        return joinedType != slotA.getType()
-                            ? new OverlaySlot(name, joinedType)
-                            : slotA;
+                        return identical(joinedType, slotA.getType())
+                            ? slotA
+                            : new OverlaySlot(name, joinedType);
                       }));
             });
   }
@@ -432,11 +445,10 @@ class LinkedFlowScope implements FlowScope {
       this.slots = slots;
     }
 
-    @SuppressWarnings("ReferenceEquality") // JSType#equals is expensive, so use identity.
     OverlayScope infer(String name, JSType type) {
       // TODO(sdh): variants that do or don't clobber properties (i.e. look up and modify instead)
       OverlaySlot slot = slots.get(name);
-      if (slot != null && type == slot.type) {
+      if (slot != null && identical(type, slot.type)) {
         return this;
       }
       return new OverlayScope(scope, slots.plus(name, new OverlaySlot(name, type)));

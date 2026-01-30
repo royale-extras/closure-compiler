@@ -18,7 +18,6 @@ package com.google.javascript.jscomp;
 import static com.google.common.collect.ImmutableSortedMap.toImmutableSortedMap;
 import static java.util.Comparator.naturalOrder;
 
-import com.google.common.annotations.GwtIncompatible;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
@@ -29,7 +28,6 @@ import java.util.Map;
 import java.util.Set;
 
 /** Used to print a map from diagnostic id to suppression. */
-@GwtIncompatible
 public final class DiagnosticToSuppressionMapper {
 
   enum OutputFormat {
@@ -53,13 +51,8 @@ public final class DiagnosticToSuppressionMapper {
   /** Prints a sorted map of all valid suppressions to System.out */
   void printSuppressions(OutputFormat output) {
     switch (output) {
-      case JSON:
-        printAsJson(createSuppressionMap());
-        break;
-
-      case MD:
-        printAsMarkdown(createSuppressionMap());
-        break;
+      case JSON -> printAsJson(createSuppressionMap());
+      case MD -> printAsMarkdown(createSuppressionMap());
     }
   }
 
@@ -68,6 +61,7 @@ public final class DiagnosticToSuppressionMapper {
     Set<String> validSuppressions = new HashSet<>(this.validSuppressions);
     // deprecated in favor of "visibility"
     validSuppressions.remove("accessControls");
+    validSuppressions.remove("missingSourcesWarnings");
 
     LinkedHashMap<DiagnosticType, String> diagnosticToSuppression = new LinkedHashMap<>();
 

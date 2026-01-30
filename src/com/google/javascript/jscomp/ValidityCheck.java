@@ -15,27 +15,35 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
- * A compiler pass that verifies the structure of the AST conforms
- * to a number of invariants. Because this can add a lot of overhead,
- * we only run this in development mode.
+ * A compiler pass that verifies the structure of the AST conforms to a number of invariants.
+ * Because this can add a lot of overhead, we only run this in development mode.
  */
 class ValidityCheck implements CompilerPass {
 
   static final DiagnosticType CANNOT_PARSE_GENERATED_CODE =
-      DiagnosticType.error("JSC_CANNOT_PARSE_GENERATED_CODE",
+      DiagnosticType.error(
+          "JSC_CANNOT_PARSE_GENERATED_CODE",
           "Internal compiler error. Cannot parse generated code: {0}");
 
-  static final DiagnosticType GENERATED_BAD_CODE = DiagnosticType.error(
-      "JSC_GENERATED_BAD_CODE",
-      "Internal compiler error. Generated bad code." +
-      "----------------------------------------\n" +
-      "Expected:\n{0}\n" +
-      "----------------------------------------\n" +
-      "Actual:\n{1}");
+  static final DiagnosticType GENERATED_BAD_CODE =
+      DiagnosticType.error(
+          "JSC_GENERATED_BAD_CODE",
+          "Internal compiler error. Generated bad code."
+              + "----------------------------------------\n"
+              + "Expected:\n{0}\n"
+              + "----------------------------------------\n"
+              + "Actual:\n{1}");
 
   static final DiagnosticType EXTERN_PROPERTIES_CHANGED =
       DiagnosticType.error(
@@ -43,10 +51,12 @@ class ValidityCheck implements CompilerPass {
           "Internal compiler error. Extern properties modified from:\n{0}\nto:\n{1}");
 
   private final AbstractCompiler compiler;
+  private final ChangeTracker changeTracker;
   private final AstValidator astValidator;
 
   ValidityCheck(AbstractCompiler compiler) {
     this.compiler = compiler;
+    this.changeTracker = compiler.getChangeTracker();
     this.astValidator = new AstValidator(compiler);
   }
 
@@ -58,9 +68,7 @@ class ValidityCheck implements CompilerPass {
     checkExternProperties(externs);
   }
 
-  /**
-   * Check that the AST is structurally accurate.
-   */
+  /** Check that the AST is structurally accurate. */
   private void checkAst(Node externs, Node root) {
     astValidator.validateCodeRoot(externs);
     astValidator.validateCodeRoot(root);
@@ -68,42 +76,40 @@ class ValidityCheck implements CompilerPass {
 
   private void checkVars(Node externs, Node root) {
     if (compiler.getLifeCycleStage().isNormalized()) {
+      // TODO(rishipal): Why is VarCheck only run when AST is normalized?
       (new VarCheck(compiler, true)).process(externs, root);
     }
   }
 
-  /**
-   * Verifies that the normalization pass does nothing on an already-normalized tree.
-   */
+  /** Verifies that the normalization pass does nothing on an already-normalized tree. */
   private void checkNormalization(Node externs, Node root) {
     // Verify nothing has inappropriately denormalize the AST.
     CodeChangeHandler handler = new ForbiddenChange();
-    compiler.addChangeHandler(handler);
+    changeTracker.addChangeHandler(handler);
 
     // TODO(johnlenz): Change these normalization checks Preconditions and
     // Exceptions into Errors so that it is easier to find the root cause
     // when there are cascading issues.
-    new PrepareAst(compiler, true).process(null, root);
     if (compiler.getLifeCycleStage().isNormalized()) {
-      (new Normalize(compiler, true)).process(externs, root);
+      Normalize.builder(compiler).assertOnChange(true).build().process(externs, root);
 
       if (compiler.getLifeCycleStage().isNormalizedUnobfuscated()) {
         boolean checkUserDeclarations = true;
-        CompilerPass pass = new Normalize.VerifyConstants(compiler, checkUserDeclarations);
+        CompilerPass pass = new VerifyConstants(compiler, checkUserDeclarations);
         pass.process(externs, root);
       }
     }
 
-    compiler.removeChangeHandler(handler);
+    changeTracker.removeChangeHandler(handler);
   }
 
   private void checkExternProperties(Node externs) {
-    Set<String> externProperties = compiler.getExternProperties();
+    ImmutableSet<String> externProperties = compiler.getExternProperties();
     if (externProperties == null) {
       // GatherExternProperties hasn't run yet. Don't report a violation.
       return;
     }
-    (new GatherExternProperties(compiler)).process(externs, null);
+    new GatherExternProperties(compiler, GatherExternProperties.Mode.CHECK).process(externs, null);
     if (!compiler.getExternProperties().equals(externProperties)) {
       compiler.report(
           JSError.make(
@@ -116,6 +122,84 @@ class ValidityCheck implements CompilerPass {
               + externProperties
               + "\nto:\n"
               + compiler.getExternProperties());
+    }
+  }
+
+  /** Walk the AST tree and verify that constant names are used consistently. */
+  static final class VerifyConstants extends AbstractPostOrderCallback implements CompilerPass {
+
+    private final AbstractCompiler compiler;
+    private final boolean checkUserDeclarations;
+
+    @VisibleForTesting
+    VerifyConstants(AbstractCompiler compiler, boolean checkUserDeclarations) {
+      this.compiler = compiler;
+      this.checkUserDeclarations = checkUserDeclarations;
+    }
+
+    @Override
+    public void process(Node externs, Node root) {
+      Node externsAndJs = root.getParent();
+      checkState(externsAndJs != null);
+      checkState(externsAndJs.hasChild(externs));
+      NodeTraversal.traverseRoots(compiler, this, externs, root);
+    }
+
+    private final Map<String, Boolean> constantMap = new LinkedHashMap<>();
+
+    @Override
+    public void visit(NodeTraversal t, Node n, Node parent) {
+      if (n.isName()) {
+        String name = n.getString();
+        if (n.getString().isEmpty()) {
+          return;
+        }
+
+        boolean isConst = n.getBooleanProp(Node.IS_CONSTANT_NAME);
+        if (checkUserDeclarations) {
+          boolean expectedConst = false;
+          CodingConvention convention = compiler.getCodingConvention();
+          if (NodeUtil.isConstantName(n) || NodeUtil.isConstantByConvention(convention, n)) {
+            expectedConst = true;
+          } else {
+            expectedConst = false;
+
+            JSDocInfo info = null;
+            Var var = t.getScope().getVar(n.getString());
+            if (var != null) {
+              info = var.getJSDocInfo();
+            }
+
+            if (info != null && info.isConstant()) {
+              expectedConst = true;
+            } else {
+              expectedConst = false;
+            }
+          }
+
+          if (expectedConst) {
+            checkState(expectedConst == isConst, "The name %s is not annotated as constant.", name);
+          } else {
+            checkState(
+                expectedConst == isConst, "The name %s should not be annotated as constant.", name);
+          }
+        }
+
+        Boolean value = constantMap.get(name);
+        if (value == null) {
+          constantMap.put(name, isConst);
+        } else if (value.booleanValue() != isConst) {
+          throw new IllegalStateException(
+              "The name "
+                  + name
+                  + " is not consistently annotated as constant. Current constness: "
+                  + isConst
+                  + ", previous constness: "
+                  + value.booleanValue()
+                  + "\n\nAt node: "
+                  + n);
+        }
+      }
     }
   }
 }

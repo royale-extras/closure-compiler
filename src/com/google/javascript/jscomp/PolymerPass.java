@@ -16,8 +16,6 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_INVALID_EXTENDS;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_MISSING_EXTERNS;
 
@@ -28,12 +26,12 @@ import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Rewrites "Polymer({})" calls into a form that is suitable for type checking and dead code
@@ -43,17 +41,13 @@ import java.util.Set;
  *
  * <p>Design and examples: https://github.com/google/closure-compiler/wiki/Polymer-Pass
  */
-final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompilerPass {
+final class PolymerPass extends ExternsSkippingCallback implements CompilerPass {
   private static final String VIRTUAL_FILE = "<PolymerPass.java>";
 
   private final AbstractCompiler compiler;
   private final ImmutableMap<String, String> tagNameMap;
-  private final int polymerVersion;
-  private final PolymerExportPolicy polymerExportPolicy;
-  private final boolean propertyRenamingEnabled;
 
   private Node polymerElementExterns;
-  private Node externsInsertionRef = null;
   private final Set<String> nativeExternsAdded;
   private ImmutableList<Node> polymerElementProps;
   private GlobalNamespace globalNames;
@@ -61,22 +55,10 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
   private boolean warnedPolymer1ExternsMissing = false;
   private boolean propertySinkExternInjected = false;
 
-  PolymerPass(
-      AbstractCompiler compiler,
-      Integer polymerVersion,
-      PolymerExportPolicy polymerExportPolicy,
-      boolean propertyRenamingEnabled) {
-    checkArgument(
-        polymerVersion == null || polymerVersion == 1 || polymerVersion == 2,
-        "Invalid Polymer version:",
-        polymerVersion);
+  PolymerPass(AbstractCompiler compiler) {
     this.compiler = compiler;
     tagNameMap = TagNameToType.getMap();
-    nativeExternsAdded = new HashSet<>();
-    this.polymerVersion = polymerVersion == null ? 1 : polymerVersion;
-    this.polymerExportPolicy =
-        polymerExportPolicy == null ? PolymerExportPolicy.LEGACY : polymerExportPolicy;
-    this.propertyRenamingEnabled = propertyRenamingEnabled;
+    nativeExternsAdded = new LinkedHashSet<>();
   }
 
   @Override
@@ -86,37 +68,20 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
     polymerElementExterns = externsCallback.getPolymerElementExterns();
     polymerElementProps = externsCallback.getPolymerElementProps();
 
-    if (polymerVersion == 1 && polymerElementExterns == null) {
-      this.warnedPolymer1ExternsMissing = true;
-      compiler.report(JSError.make(POLYMER_MISSING_EXTERNS));
-      return;
-    }
-
-    if (polymerVersion > 1 && propertyRenamingEnabled) {
-      compiler.ensureLibraryInjected("util/reflectobject", false);
-    }
-
     globalNames = new GlobalNamespace(compiler, externs, root);
     behaviorExtractor =
         new PolymerBehaviorExtractor(
             compiler, globalNames, compiler.getModuleMetadataMap(), compiler.getModuleMap());
 
     Node externsAndJsRoot = root.getParent();
-    hotSwapScript(externsAndJsRoot, null);
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
-    PolymerPassSuppressBehaviors suppressBehaviorsCallback =
-        new PolymerPassSuppressBehaviors(compiler);
-    NodeTraversal.traverse(compiler, scriptRoot, suppressBehaviorsCallback);
+    NodeTraversal.traverse(compiler, externsAndJsRoot, this);
+    PolymerPassSuppressBehaviorsAndProtectKeys suppressBehaviorsCallback =
+        new PolymerPassSuppressBehaviorsAndProtectKeys(compiler);
+    NodeTraversal.traverse(compiler, externsAndJsRoot, suppressBehaviorsCallback);
   }
 
   @Override
   public void visit(NodeTraversal traversal, Node node, Node parent) {
-    checkNotNull(globalNames, "Cannot call visit() before process()");
-
     if (PolymerPassStaticUtils.isPolymerCall(node)) {
       if (polymerElementExterns != null) {
         rewritePolymer1ClassDefinition(node, parent, traversal);
@@ -129,7 +94,7 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
     }
   }
 
-  private ModuleMetadata getModuleMetadata(NodeTraversal traversal) {
+  private @Nullable ModuleMetadata getModuleMetadata(NodeTraversal traversal) {
     Node script = traversal.getCurrentScript();
     if (script != null && script.getFirstChild().isModuleBody()) {
       return ModuleImportResolver.getModuleFromScopeRoot(
@@ -168,29 +133,16 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
       if (def.nativeBaseElement != null) {
         appendPolymerElementExterns(def);
       }
-      PolymerClassRewriter rewriter =
-          new PolymerClassRewriter(
-              compiler,
-              getExtensInsertionRef(),
-              polymerVersion,
-              polymerExportPolicy,
-              this.propertyRenamingEnabled);
+      PolymerClassRewriter rewriter = new PolymerClassRewriter(compiler);
       rewriter.rewritePolymerCall(def, traversal);
     }
   }
 
   /** Polymer 2.x Class Nodes */
   private void rewritePolymer2ClassDefinition(Node node, NodeTraversal traversal) {
-    PolymerClassDefinition def =
-        PolymerClassDefinition.extractFromClassNode(node, compiler, globalNames);
+    PolymerClassDefinition def = PolymerClassDefinition.extractFromClassNode(node, compiler);
     if (def != null) {
-      PolymerClassRewriter rewriter =
-          new PolymerClassRewriter(
-              compiler,
-              getExtensInsertionRef(),
-              polymerVersion,
-              polymerExportPolicy,
-              this.propertyRenamingEnabled);
+      PolymerClassRewriter rewriter = new PolymerClassRewriter(compiler);
       rewriter.propertySinkExternInjected = propertySinkExternInjected;
       rewriter.rewritePolymerClassDeclaration(node, traversal, def);
       propertySinkExternInjected = rewriter.propertySinkExternInjected;
@@ -199,9 +151,8 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
 
   /** Replaces `export let Element = ...` with `let Element = ...; export {Element};` */
   private void normalizePolymerExport(Node nameDecl, Node export) {
-    Node block = export.getParent();
     Node name = nameDecl.getFirstChild();
-    block.addChildBefore(nameDecl.detach(), export);
+    nameDecl.detach().insertBefore(export);
 
     Node exportSpec = new Node(Token.EXPORT_SPEC);
     exportSpec.addChildToFront(name.cloneNode());
@@ -209,22 +160,10 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
     export.addChildToFront(new Node(Token.EXPORT_SPECS, exportSpec).srcrefTree(export));
   }
 
-  private Node getExtensInsertionRef() {
-    if (this.polymerElementExterns != null) {
-      return this.polymerElementExterns;
-    }
-
-    if (this.externsInsertionRef == null) {
-      this.externsInsertionRef = compiler.getSynthesizedExternsInputAtEnd().getAstRoot(compiler);
-    }
-
-    return this.externsInsertionRef;
-  }
-
   /**
-   * Duplicates the PolymerElement externs with a different element base class if needed.
-   * For example, if the base class is HTMLInputElement, then a class PolymerInputElement will be
-   * added. If the element does not extend a native HTML element, this method is a no-op.
+   * Duplicates the PolymerElement externs with a different element base class if needed. For
+   * example, if the base class is HTMLInputElement, then a class PolymerInputElement will be added.
+   * If the element does not extend a native HTML element, this method is a no-op.
    */
   private void appendPolymerElementExterns(final PolymerClassDefinition def) {
     if (!nativeExternsAdded.add(def.nativeBaseElement)) {
@@ -246,20 +185,19 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
         new JSTypeExpression(
             new Node(Token.BANG, IR.string(elementType).srcrefTree(polymerElementExterns)),
             VIRTUAL_FILE);
-    JSDocInfoBuilder baseDocs = JSDocInfoBuilder.copyFrom(baseExterns.getJSDocInfo());
+    JSDocInfo.Builder baseDocs = JSDocInfo.Builder.copyFrom(baseExterns.getJSDocInfo());
     baseDocs.changeBaseType(elementBaseType);
     baseExterns.setJSDocInfo(baseDocs.build());
     block.addChildToBack(baseExterns);
 
     for (Node baseProp : polymerElementProps) {
       Node newProp = baseProp.cloneTree();
-      Node newPropRootName =
-          NodeUtil.getRootOfQualifiedName(newProp.getFirstFirstChild());
+      Node newPropRootName = NodeUtil.getRootOfQualifiedName(newProp.getFirstFirstChild());
       newPropRootName.setString(polymerElementType);
       block.addChildToBack(newProp);
     }
 
-    block.useSourceInfoIfMissingFromForTree(polymerElementExterns);
+    block.srcrefTreeIfMissing(polymerElementExterns);
 
     Node parent = polymerElementExterns.getParent();
     Node stmts = block.removeChildren();
@@ -279,10 +217,13 @@ final class PolymerPass extends ExternsSkippingCallback implements HotSwapCompil
     /** Value {@link Node} (RHS) for the definition of this member. */
     final Node value;
 
-    MemberDefinition(JSDocInfo info, Node name, Node value) {
+    final Node enclosingModule;
+
+    MemberDefinition(JSDocInfo info, Node name, Node value, Node enclosingModule) {
       this.info = info;
       this.name = name;
       this.value = value;
+      this.enclosingModule = enclosingModule;
     }
 
     @Override

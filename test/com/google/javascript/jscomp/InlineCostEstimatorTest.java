@@ -23,11 +23,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Unit test for {@link InlineCostEstimator}.
- *
- * @author johnlenz@google.com (John Lenz)
- */
+/** Unit test for {@link InlineCostEstimator}. */
 @RunWith(JUnit4.class)
 public final class InlineCostEstimatorTest {
 
@@ -41,9 +37,7 @@ public final class InlineCostEstimatorTest {
   static String minimize(String js) {
     CompilerOptions options = new CompilerOptions();
     options.setLineLengthThreshold(Integer.MAX_VALUE);
-    return new CodePrinter.Builder(parse(js)).
-        setCompilerOptions(options).
-        build();
+    return new CodePrinter.Builder(parse(js)).setCompilerOptions(options).build();
   }
 
   static long cost(String js) {
@@ -64,8 +58,7 @@ public final class InlineCostEstimatorTest {
     checkCost("a ? 1 : 0", "xx?1:0");
     checkCost("a.b", "xx.xx");
     checkCost("new Obj()", "new xx");
-    checkCost("function a() {return \"monkey\"}",
-              "function xx(){return\"monkey\"}");
+    checkCost("function a() {return \"monkey\"}", "function xx(){return\"monkey\"}");
   }
 
   private void checkCost(String source, String example) {

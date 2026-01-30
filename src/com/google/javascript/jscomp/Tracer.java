@@ -18,14 +18,16 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.nullToEmpty;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,7 +35,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Tracer provides a simple way to trace the handling of a request.
@@ -179,7 +181,7 @@ final class Tracer {
   private long[] extraTracingValues;
 
   /** The type for grouping traces, may be null */
-  @Nullable private final String type;
+  private final @Nullable String type;
 
   /** A comment string for the report */
   private final String comment;
@@ -333,18 +335,10 @@ final class Tracer {
 
     // We know it's less than 5 now
     switch (numSpaces) {
-      case 1:
-        sb.append(" ");
-        break;
-      case 2:
-        sb.append("  ");
-        break;
-      case 3:
-        sb.append("   ");
-        break;
-      case 4:
-        sb.append("    ");
-        break;
+      case 1 -> sb.append(" ");
+      case 2 -> sb.append("  ");
+      case 3 -> sb.append("   ");
+      case 4 -> sb.append("    ");
     }
   }
 
@@ -556,20 +550,14 @@ final class Tracer {
 
   }
 
-  /**
-   * This map tracks counts of tracers for each type over all time.
-   */
-  @Nullable private static AtomicTracerStatMap typeToCountMap;
+  /** This map tracks counts of tracers for each type over all time. */
+  private static @Nullable AtomicTracerStatMap typeToCountMap;
 
-  /**
-   * This map tracks counts of silent tracers for each type over all time.
-   */
-  @Nullable private static AtomicTracerStatMap typeToSilentMap;
+  /** This map tracks counts of silent tracers for each type over all time. */
+  private static @Nullable AtomicTracerStatMap typeToSilentMap;
 
-  /**
-   * This map tracks time (ms) for each type over all time.
-   */
-  @Nullable private static AtomicTracerStatMap typeToTimeMap;
+  /** This map tracks time (ms) for each type over all time. */
+  private static @Nullable AtomicTracerStatMap typeToTimeMap;
 
   /**
    * This method MUST be called before getTypeToCountMap (and friends)
@@ -585,29 +573,26 @@ final class Tracer {
   }
 
   /**
-   * Used for exporting this data via varz.  Accesses to this
-   * map must be synchronized on the map.  If enableTypeMaps has not
-   * been called, this will return null.
+   * Used for exporting this data via varz. Accesses to this map must be synchronized on the map. If
+   * enableTypeMaps has not been called, this will return null.
    */
-  @Nullable static Map<String, Long> getTypeToCountMap() {
+  static @Nullable Map<String, Long> getTypeToCountMap() {
     return typeToCountMap != null ? typeToCountMap.getMap() : null;
   }
 
   /**
-   * Used for exporting this data via varz.  Accesses to this
-   * map must be synchronized on the map.  If enableTypeMaps has not
-   * been called, this will return null.
+   * Used for exporting this data via varz. Accesses to this map must be synchronized on the map. If
+   * enableTypeMaps has not been called, this will return null.
    */
-  @Nullable static Map<String, Long> getTypeToSilentMap() {
+  static @Nullable Map<String, Long> getTypeToSilentMap() {
     return typeToSilentMap != null ? typeToSilentMap.getMap() : null;
   }
 
   /**
-   * Used for exporting this data via varz.  Accesses to this
-   * map must be synchronized on the map.  If enableTypeMaps has not
-   * been called, this will return null.
+   * Used for exporting this data via varz. Accesses to this map must be synchronized on the map. If
+   * enableTypeMaps has not been called, this will return null.
    */
-  @Nullable static Map<String, Long> getTypeToTimeMap() {
+  static @Nullable Map<String, Long> getTypeToTimeMap() {
     return typeToTimeMap != null ? typeToTimeMap.getMap() : null;
   }
 
@@ -628,8 +613,8 @@ final class Tracer {
 
   /** An event is created every time a Tracer is created or stopped */
   private static final class Event {
-    boolean isStart;   // else is_stop
-    Tracer tracer;
+    final boolean isStart; // else is_stop
+    final Tracer tracer;
 
     Event(boolean start, Tracer t) {
       isStart = start;
@@ -695,10 +680,10 @@ final class Tracer {
     final ArrayList<Event> events = new ArrayList<>();
 
     /** Tracers that have not had their .stop() called */
-    final HashSet<Tracer> outstandingEvents = new HashSet<>();
+    final LinkedHashSet<Tracer> outstandingEvents = new LinkedHashSet<>();
 
     /** Map from type to Stat object */
-    final Map<String, Stat> stats = new HashMap<>();
+    final Map<String, Stat> stats = new LinkedHashMap<>();
 
     /**
      * True if {@code outstandingEvents} has been cleared because we exceeded
@@ -811,8 +796,7 @@ final class Tracer {
         }
 
         if (stat.extraInfo != null && t.extraTracingValues != null) {
-          int overlapLength =
-              Math.min(stat.extraInfo.length, t.extraTracingValues.length);
+          int overlapLength = min(stat.extraInfo.length, t.extraTracingValues.length);
           for (int i = 0; i < overlapLength; i++) {
             stat.extraInfo[i] += t.extraTracingValues[i];
             AtomicTracerStatMap map =
@@ -922,16 +906,16 @@ final class Tracer {
       for (Event e : events) {
         if (etime != -1) {
           long time = e.eventTime() - etime;
-          maxTime = Math.max(maxTime, time);
+          maxTime = max(maxTime, time);
         }
         if (!e.isStart) {
           long time = e.tracer.stopTimeMs - e.tracer.startTimeMs;
-          maxTime = Math.max(maxTime, time);
+          maxTime = max(maxTime, time);
         }
         etime = e.eventTime();
       }
       // Minimum is 3 to preserve an indent even when max is small.
-      return Math.max(3, numDigits(maxTime));
+      return max(3, numDigits(maxTime));
     }
   }
 

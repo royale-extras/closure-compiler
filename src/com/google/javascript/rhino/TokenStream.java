@@ -53,7 +53,7 @@ package com.google.javascript.rhino;
  * <p>IMPORTANT: As of 2018-03-09 it is still not possible to use Java 8 features in this file due
  * to limitations on some internal Google projects that depend on it.
  */
-public class TokenStream {
+public final class TokenStream {
   /**
    * Is the string an ES3 keyword?
    *
@@ -64,6 +64,7 @@ public class TokenStream {
    * to do the minimum number of character comparisons to ascertain whether the given name is a
    * keyword, instead of doing string search of the name against JS keywords.
    */
+  @SuppressWarnings("StatementSwitchToExpressionSwitch") // Tricky code written with old switches
   public static boolean isKeyword(String name) {
         boolean id = false;
         String s = name;
@@ -191,8 +192,10 @@ public class TokenStream {
                 break partial;
             case 12: X="synchronized";id=true; break partial;
             }
-            // partial match validate the entire string the one possibility
-            if (X!=null && X!=s && !X.equals(s)) return false;
+      // partial match validate the entire string the one possibility
+      if (X != null && X != s && !X.equals(s)) {
+        return false;
+      }
         }
         return id;
     }
@@ -200,4 +203,6 @@ public class TokenStream {
   public static boolean isJSIdentifier(String s) {
     return JSIdentifier.isJSIdentifier(s);
   }
+
+  private TokenStream() {}
 }

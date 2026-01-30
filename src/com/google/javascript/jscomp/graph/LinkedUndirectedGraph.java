@@ -25,6 +25,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An undirected graph using linked list within nodes to store edge
@@ -36,7 +37,7 @@ import java.util.Map;
  */
 public final class LinkedUndirectedGraph<N, E>
     extends UndiGraph<N, E> implements GraphvizGraph {
-  protected final Map<N, LinkedUndirectedGraphNode<N, E>> nodes = new LinkedHashMap<>();
+  final Map<N, LinkedUndirectedGraphNode<N, E>> nodes = new LinkedHashMap<>();
 
   @Override
   public SubGraph<N, E> newSubGraph() {
@@ -50,8 +51,7 @@ public final class LinkedUndirectedGraph<N, E>
   private final boolean useNodeAnnotations;
   private final boolean useEdgeAnnotations;
 
-  protected LinkedUndirectedGraph(
-      boolean useNodeAnnotations, boolean useEdgeAnnotations) {
+  LinkedUndirectedGraph(boolean useNodeAnnotations, boolean useEdgeAnnotations) {
     this.useNodeAnnotations = useNodeAnnotations;
     this.useEdgeAnnotations = useEdgeAnnotations;
   }
@@ -82,14 +82,12 @@ public final class LinkedUndirectedGraph<N, E>
   @Override
   public UndiGraphNode<N, E> createUndirectedGraphNode(
       N nodeValue) {
-    LinkedUndirectedGraphNode<N, E> node =
-        nodes.computeIfAbsent(
-            nodeValue,
-            (N k) ->
-                useNodeAnnotations
-                    ? new AnnotatedLinkedUndirectedGraphNode<N, E>(k)
-                    : new LinkedUndirectedGraphNode<N, E>(k));
-    return node;
+    return nodes.computeIfAbsent(
+        nodeValue,
+        (N k) ->
+            useNodeAnnotations
+                ? new AnnotatedLinkedUndirectedGraphNode<N, E>(k)
+                : new LinkedUndirectedGraphNode<N, E>(k));
   }
 
   @Override
@@ -98,9 +96,8 @@ public final class LinkedUndirectedGraph<N, E>
     return ((LinkedUndirectedGraphNode<N, E>) uNode).neighborList();
   }
 
-  @SuppressWarnings("unchecked")
   @Override
-  public List<UndiGraphEdge<N, E>> getUndirectedGraphEdges(N n1, N n2) {
+  public @Nullable List<UndiGraphEdge<N, E>> getUndirectedGraphEdges(N n1, N n2) {
     UndiGraphNode<N, E> dNode1 = nodes.get(n1);
     if (dNode1 == null) {
       return null;
@@ -138,7 +135,6 @@ public final class LinkedUndirectedGraph<N, E>
     return Collections.unmodifiableList(getUndirectedGraphEdges(n1, n2));
   }
 
-  @SuppressWarnings("unchecked")
   @Override
   public List<GraphEdge<N, E>> getEdges() {
     List<GraphEdge<N, E>> result = new ArrayList<>();
@@ -153,7 +149,7 @@ public final class LinkedUndirectedGraph<N, E>
   }
 
   @Override
-  public GraphEdge<N, E> getFirstEdge(N n1, N n2) {
+  public @Nullable GraphEdge<N, E> getFirstEdge(N n1, N n2) {
     UndiGraphNode<N, E> dNode1 = getNodeOrFail(n1);
     UndiGraphNode<N, E> dNode2 = getNodeOrFail(n2);
     for (UndiGraphEdge<N, E> outEdge : dNode1.getNeighborEdges()) {
@@ -397,13 +393,11 @@ public final class LinkedUndirectedGraph<N, E>
       return String.valueOf(value);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public String getNode1Id() {
       return ((LinkedUndirectedGraphNode<N, E>) nodeA).getId();
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public String getNode2Id() {
       return ((LinkedUndirectedGraphNode<N, E>) nodeB).getId();

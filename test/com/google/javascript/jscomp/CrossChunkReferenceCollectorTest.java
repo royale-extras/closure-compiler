@@ -17,8 +17,6 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.javascript.jscomp.CompilerOptions.LanguageMode.ECMASCRIPT_NEXT;
-import static com.google.javascript.jscomp.CompilerOptions.LanguageMode.ECMASCRIPT_NEXT_IN;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
 import com.google.common.collect.ImmutableList;
@@ -36,21 +34,9 @@ import org.junit.runners.JUnit4;
 public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
   private CrossChunkReferenceCollector testedCollector;
 
-  @Override
   @Before
-  public void setUp() throws Exception {
-    super.setUp();
+  public void customSetUp() throws Exception {
     enableNormalize();
-    setLanguage(ECMASCRIPT_NEXT, ECMASCRIPT_NEXT);
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    // Default behavior for CompilerTestCase.test*() methods is to do the whole test twice,
-    // because passes that modify the AST need to be idempotent.
-    // Since CrossChunkReferenceCollector() just gathers information, it doesn't make sense to
-    // run it twice, and doing so just complicates debugging test cases.
-    return 1;
   }
 
   @Override
@@ -62,12 +48,14 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
   @Test
   public void testVarInBlock() {
-    testSame(lines(
-            "  if (true) {",
-            "    var y = x;",
-            "    y;",
-            "    y;",
-            "  }"));
+    testSame(
+        """
+          if (true) {
+            var y = x;
+            y;
+            y;
+          }
+        """);
     ImmutableMap<String, Var> globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
     assertThat(globalVariableNamesMap).containsKey("y");
     Var yVar = globalVariableNamesMap.get("y");
@@ -78,14 +66,14 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
   @Test
   public void testVarInLoopNotAssignedOnlyOnceInLifetime() {
-    testSame("var x; while (true) { x = 0; }");
+    testSame("var x; for (; true;) { x = 0; }");
     ImmutableMap<String, Var> globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
     Var xVar = globalVariableNamesMap.get("x");
     assertThat(globalVariableNamesMap).containsKey("x");
     ReferenceCollection xRefs = testedCollector.getReferences(xVar);
     assertThat(xRefs.isAssignedOnceInLifetime()).isFalse();
 
-    testSame("let x; while (true) { x = 0; }");
+    testSame("let x; for (; true;) { x = 0; }");
     globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
     xVar = globalVariableNamesMap.get("x");
     assertThat(globalVariableNamesMap).containsKey("x");
@@ -143,12 +131,14 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
   @Test
   public void testBasicBlocks() {
-    testSame(lines(
-            "var x = 0;",
-            "switch (x) {",
-            "  case 0:",
-            "    x;",
-            "}"));
+    testSame(
+        """
+        var x = 0;
+        switch (x) {
+          case 0:
+            x;
+        }
+        """);
     ImmutableMap<String, Var> globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
     Var xVar = globalVariableNamesMap.get("x");
     assertThat(globalVariableNamesMap).containsKey("x");
@@ -160,8 +150,31 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
   }
 
   @Test
+  public void testClassStaticBlock() {
+    testSame(
+        """
+        var x=1;
+        class C {
+          static {
+            x;
+            x=2;
+          }
+        }
+        """);
+
+    ImmutableMap<String, Var> globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
+    assertThat(globalVariableNamesMap).containsKey("x");
+    Var xVar = globalVariableNamesMap.get("x");
+    ReferenceCollection xRefs = testedCollector.getReferences(xVar);
+    assertThat(xRefs.isAssignedOnceInLifetime()).isFalse();
+    assertThat(xRefs.references).hasSize(3);
+    assertNode(xRefs.references.get(0).getBasicBlock().getRoot()).hasType(Token.ROOT);
+    assertNode(xRefs.references.get(1).getBasicBlock().getRoot()).hasType(Token.CLASS_MEMBERS);
+    assertNode(xRefs.references.get(2).getBasicBlock().getRoot()).hasType(Token.CLASS_MEMBERS);
+  }
+
+  @Test
   public void nullishCoalesce() {
-    setAcceptedLanguage(ECMASCRIPT_NEXT_IN);
     testSame("var x = 0; var y = x ?? (x = 1)");
     ImmutableMap<String, Var> globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
     Var xVar = globalVariableNamesMap.get("x");
@@ -175,13 +188,18 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
   @Test
   public void testTopLevelStatements() {
-    testSame(lines(
-        "var x = 1;",
-        "const y = x;",
-        "let z = x - y;",
-        "function f(x, y) {",   // only f and z globals referenced
-        "  return x + y + z;",
-        "}"));
+    testSame(
+        """
+        var x = 1;
+        const y = x;
+        let z = x - y;
+        function f(x1, y1) { // only f and z globals referenced
+        // NOTE: If we try to name the parameters the same as the global variables, then
+        // Normalization will rename them. Normalization always runs before
+        // CrossChunkReferenceCollector does.
+          return x1 + y1 + z;
+        }
+        """);
 
     // Pull out all the references for comparison.
     ImmutableMap<String, Var> globalVariableNamesMap = testedCollector.getGlobalVariableNamesMap();
@@ -205,8 +223,7 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
     // const y = x;
     TopLevelStatement yEqualsX = topLevelStatements.get(1);
     assertThat(yEqualsX.getOriginalOrder()).isEqualTo(1);
-    assertThat(yEqualsX.getNonDeclarationReferences())
-        .containsExactly(xReferences.get(1));
+    assertThat(yEqualsX.getNonDeclarationReferences()).containsExactly(xReferences.get(1));
     // let z = x - y;
     TopLevelStatement zEqualsXMinusY = topLevelStatements.get(2);
     assertThat(zEqualsXMinusY.getOriginalOrder()).isEqualTo(2);
@@ -229,7 +246,6 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
     assertThat(statements).hasSize(1);
     TopLevelStatement varStatement = statements.get(0);
     Reference declaredNameReference = varStatement.getDeclaredNameReference();
-    assertThat(declaredNameReference).isNotNull();
     assertThat(declaredNameReference).isEqualTo(xRefs.references.get(0));
     assertThat(varStatement.getNonDeclarationReferences()).isEmpty();
     Node valueNode = varStatement.getDeclaredValueNode();
@@ -247,7 +263,6 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
     TopLevelStatement functionDeclaration = statements.get(0);
     Reference declaredNameReference = functionDeclaration.getDeclaredNameReference();
-    assertThat(declaredNameReference).isNotNull();
     assertThat(declaredNameReference).isEqualTo(xRefs.references.get(0));
     assertThat(functionDeclaration.getNonDeclarationReferences()).isEmpty();
   }
@@ -262,7 +277,6 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
     TopLevelStatement assignmentStatement = statements.get(1);
     Reference declaredNameReference = assignmentStatement.getDeclaredNameReference();
-    assertThat(declaredNameReference).isNotNull();
     assertThat(declaredNameReference).isEqualTo(xRefs.references.get(1));
     assertThat(assignmentStatement.getNonDeclarationReferences()).isEmpty();
     Node valueNode = assignmentStatement.getDeclaredValueNode();
@@ -280,7 +294,6 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
     TopLevelStatement assignmentStatement = statements.get(1);
     Reference declaredNameReference = assignmentStatement.getDeclaredNameReference();
-    assertThat(declaredNameReference).isNotNull();
     assertThat(declaredNameReference).isEqualTo(xRefs.references.get(1));
     assertThat(assignmentStatement.getNonDeclarationReferences()).isEmpty();
     Node valueNode = assignmentStatement.getDeclaredValueNode();
@@ -300,7 +313,6 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
     TopLevelStatement inheritsStatement = statements.get(2);
     Reference declaredNameReference = inheritsStatement.getDeclaredNameReference();
-    assertThat(declaredNameReference).isNotNull();
     assertThat(declaredNameReference).isEqualTo(refsToB.references.get(1));
     assertThat(inheritsStatement.getNonDeclarationReferences())
         .containsExactly(refsToA.references.get(1));
@@ -354,17 +366,18 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
   @Test
   public void testFunctionCallsAreNotMovableExceptForMethodStubs() {
-    testSame(lines(
-        "function Foo() {}",
-        "Foo.prototype.stub = JSCompiler_stubMethod(x);",
-        "Foo.prototype.unstub = JSCompiler_unstubMethod(x);",
-        "Foo.prototype.other = other();"));
+    testSame(
+        """
+        function Foo() {}
+        Foo.prototype.stub = JSCompiler_stubMethod(x);
+        Foo.prototype.unstub = JSCompiler_unstubMethod(x);
+        Foo.prototype.other = other();
+        """);
     List<TopLevelStatement> statements = testedCollector.getTopLevelStatements();
     assertThat(statements.get(1).isMovableDeclaration()).isTrue();
     assertThat(statements.get(2).isMovableDeclaration()).isFalse();
     assertThat(statements.get(3).isMovableDeclaration()).isFalse();
   }
-
 
   @Test
   public void testUnknownNameValueIsImmovable() {
@@ -415,40 +428,41 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
   @Test
   public void testObjectLiteralOfMovablesIsMovable() {
     testSame(
-        lines(
-            "var wellDefinedName = 1;",
-            "var o = {",
-            "  f: function(){},",
-            "  one: 1,",
-            "  n: wellDefinedName,",
-            "  o: {},",
-            "  'quoted': 1,",
-            "  123: 2,",
-            // computed
-            "  ['computed string']: 1,",
-            "  [234]: 1,",
-            // method shorthand
-            "  method() {},",
-            "  'quoted method'() {},",
-            "  ['computed method']() {},",
-            "  [345]() {},",
-            // variable shorthand
-            "  wellDefinedName,",
-            // getters
-            "  get x() {},",
-            "  get 'a'() {},",
-            "  get ['a']() {},",
-            "  get 456() {},",
-            "  get [567]() {},",
-            // setters
-            "  set x(x) {},",
-            "  set 'a'(v) {},",
-            "  set ['a'](v) {},",
-            "  set 678(v) {},",
-            "  set [678](v) {},",
-            // spread
-            "  ...wellDefinedName,",
-            "};"));
+        """
+        var wellDefinedName = 1;
+        var o = {
+          f: function(){},
+          one: 1,
+          n: wellDefinedName,
+          o: {},
+          'quoted': 1,
+          123: 2,
+        // computed
+          ['computed string']: 1,
+          [234]: 1,
+        // method shorthand
+          method() {},
+          'quoted method'() {},
+          ['computed method']() {},
+          [345]() {},
+        // variable shorthand
+          wellDefinedName,
+        // getters
+          get x() {},
+          get 'a'() {},
+          get ['a']() {},
+          get 456() {},
+          get [567]() {},
+        // setters
+          set x(x) {},
+          set 'a'(v) {},
+          set ['a'](v1) {},
+          set 678(v2) {},
+          set [678](v3) {},
+        // spread
+          ...wellDefinedName,
+        };
+        """);
     assertThat(testedCollector.getTopLevelStatements().get(1).isMovableDeclaration()).isTrue();
   }
 
@@ -469,15 +483,85 @@ public final class CrossChunkReferenceCollectorTest extends CompilerTestCase {
 
   @Test
   public void testTemplateLiteralIsMovableIfSubstitutionsAreMovable() {
-    testSame(lines(
-        "var wellDefinedName = 1;",
-        "var t = `${wellDefinedName}`;"));
+    testSame(
+        """
+        var wellDefinedName = 1;
+        var t = `${wellDefinedName}`;
+        """);
     assertThat(testedCollector.getTopLevelStatements().get(1).isMovableDeclaration()).isTrue();
   }
 
   @Test
   public void testTemplateLiteralIsImmovableIfSubstitutionsAreImmovable() {
     assertStatementIsImmovable("var t = `${unknownValue}`");
+  }
+
+  @Test
+  public void testPureOrBreakMyCodeAnnotatedStringConcatIsMovable() {
+    testSame(
+        """
+        /** @pureOrBreakMyCode */
+        var t = 'a' + 'b';
+        """);
+    assertThat(testedCollector.getTopLevelStatements().get(0).isMovableDeclaration()).isTrue();
+  }
+
+  @Test
+  public void testPureOrBreakMyCodeAnnotatedFunctionCallIsMovable() {
+    testSame(
+        """
+        /** @pureOrBreakMyCode */
+        var t = someFn();
+        """);
+    assertThat(testedCollector.getTopLevelStatements().get(0).isMovableDeclaration()).isTrue();
+  }
+
+  @Test
+  public void testPureOrBreakMyCodeAnnotatedStaticClassPropertyInitializerIsMovable() {
+    testSame(
+        """
+        class SomeClass {}
+        SomeClass.staticProp = /** @pureOrBreakMyCode */ someFn();
+        """);
+    assertThat(testedCollector.getTopLevelStatements().get(0).isMovableDeclaration()).isTrue();
+    assertThat(testedCollector.getTopLevelStatements().get(1).isMovableDeclaration()).isTrue();
+  }
+
+  @Test
+  public void testPureOrBreakMyCodeAnnotatedStaticClassPropertyInitializerIsMovable2() {
+    testSame(
+        """
+        class SomeClass {}
+        SomeClass.staticProp = /** @pureOrBreakMyCode */ { prop: someFn() ? 'a' : 'b' };
+        """);
+    assertThat(testedCollector.getTopLevelStatements().get(0).isMovableDeclaration()).isTrue();
+    assertThat(testedCollector.getTopLevelStatements().get(1).isMovableDeclaration()).isTrue();
+  }
+
+  @Test
+  public void testPureOrBreakMyCodeAnnotatedNonstaticClassFieldIsMovable() {
+    testSame(
+        """
+        class SomeClass {
+          a;
+          static b = 2;
+          ['c'] = 3;
+          static 'd' = 'hi';
+          1 = 2;
+        }
+        """);
+    assertThat(testedCollector.getTopLevelStatements().get(0).isMovableDeclaration()).isTrue();
+  }
+
+  @Test
+  public void testPureOrBreakMyCodeAnnotatedStaticClassFieldIsMovable() {
+    testSame(
+        """
+        class SomeClass {
+          static staticProp = /** @pureOrBreakMyCode */ someFn();
+        }
+        """);
+    assertThat(testedCollector.getTopLevelStatements().get(0).isMovableDeclaration()).isTrue();
   }
 
   //  try to find cases to copy from CrossChunkCodeMotion

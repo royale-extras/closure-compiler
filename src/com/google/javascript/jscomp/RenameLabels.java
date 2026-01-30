@@ -18,30 +18,28 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
- * RenameLabels renames all the labels so that they have short names, to reduce
- * code size and also to obfuscate the code.
+ * RenameLabels renames all the labels so that they have short names, to reduce code size and also
+ * to obfuscate the code.
  *
- * Label names have a unique namespace, so variable or function names clashes
- * are not a concern, but keywords clashes are.
+ * <p>Label names have a unique namespace, so variable or function names clashes are not a concern,
+ * but keywords clashes are.
  *
- * Additionally, labels names are only within the statements include in the
- * label and do not cross function boundaries. This means that it is possible to
- * create one label name that is used for labels at any given depth of label
- * nesting. Typically, the name "a" will be used for all top-level labels, "b"
- * for the next nested label, and so on. For example:
- *
- * <code>
+ * <p>Additionally, labels names are only within the statements include in the label and do not
+ * cross function boundaries. This means that it is possible to create one label name that is used
+ * for labels at any given depth of label nesting. Typically, the name "a" will be used for all
+ * top-level labels, "b" for the next nested label, and so on. For example: <code>
  * function bar() {
  *   a: {
  *     b: {
@@ -53,16 +51,12 @@ import java.util.Map;
  *     b: break a;
  *   }
  * }
- * </code>
- *
- * The general processes is as follows: process() is the entry point for the
- * CompilerPass, and from there a standard "ScopedCallback" traversal is done,
- * where "shouldTraverse" is called when descending the tree, and the "visit" is
- * called in a depth first manner. The name for the label is selected during the
- * decent in "shouldTraverse", and the references to the label name are renamed
- * as they are encountered during the "visit". This means that if the label is
- * unreferenced, it is known when the label node is visited, and, if so, can be
- * safely removed.
+ * </code> The general processes is as follows: process() is the entry point for the CompilerPass,
+ * and from there a standard "ScopedCallback" traversal is done, where "shouldTraverse" is called
+ * when descending the tree, and the "visit" is called in a depth first manner. The name for the
+ * label is selected during the decent in "shouldTraverse", and the references to the label name are
+ * renamed as they are encountered during the "visit". This means that if the label is unreferenced,
+ * it is known when the label node is visited, and, if so, can be safely removed.
  */
 final class RenameLabels implements CompilerPass {
   private final AbstractCompiler compiler;
@@ -89,13 +83,9 @@ final class RenameLabels implements CompilerPass {
     // DefaultNameGenerator is used to create safe label names.
     private final NameGenerator nameGenerator;
 
-    private DefaultNameSupplier(final NameGenerator nameGen) {
-      this.nameGenerator = nameGen;
-    }
-
     private DefaultNameSupplier() {
-      this.nameGenerator = new DefaultNameGenerator(
-          new HashSet<String>(), "", null);
+      this.nameGenerator =
+          new DefaultNameGenerator(new LinkedHashSet<String>(), "", ImmutableSet.of());
     }
 
     @Override
@@ -104,9 +94,7 @@ final class RenameLabels implements CompilerPass {
     }
   }
 
-  /**
-   * Iterate through the nodes, renaming all the labels.
-   */
+  /** Iterate through the nodes, renaming all the labels. */
   class ProcessLabels implements ScopedCallback {
 
     private final boolean markChanges;
@@ -125,7 +113,6 @@ final class RenameLabels implements CompilerPass {
     // the second "b", etc.
     final ArrayList<String> names = new ArrayList<>();
 
-
     @Override
     public void enterScope(NodeTraversal nodeTraversal) {
       // Start a new namespace for label names.
@@ -142,14 +129,13 @@ final class RenameLabels implements CompilerPass {
     }
 
     /**
-     * shouldTraverse is call when descending into the Node tree, so it is used
-     * here to build the context for label renames.
+     * shouldTraverse is call when descending into the Node tree, so it is used here to build the
+     * context for label renames.
      *
-     * {@inheritDoc}
+     * <p>{@inheritDoc}
      */
     @Override
-    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node node,
-        Node parent) {
+    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node node, Node parent) {
       if (node.isLabel()) {
         // Determine the new name for this label.
         LabelNamespace current = namespaceStack.peek();
@@ -165,37 +151,28 @@ final class RenameLabels implements CompilerPass {
         if (names.size() < currentDepth) {
           names.add(nameSupplier.get());
         }
-
-        String newName = getNameForId(currentDepth);
       }
 
       return true;
     }
 
     /**
-     * Delegate the actual processing of the node to visitLabel and
-     * visitBreakOrContinue.
+     * Delegate the actual processing of the node to visitLabel and visitBreakOrContinue.
      *
-     * {@inheritDoc}
+     * <p>{@inheritDoc}
      */
     @Override
     public void visit(NodeTraversal t, Node node, Node parent) {
       switch (node.getToken()) {
-        case LABEL:
-          visitLabel(t, node, parent);
-          break;
-
-        case BREAK:
-        case CONTINUE:
-          visitBreakOrContinue(t, node);
-          break;
-        default:
-          break;
+        case LABEL -> visitLabel(t, node);
+        case BREAK, CONTINUE -> visitBreakOrContinue(t, node);
+        default -> {}
       }
     }
 
     /**
      * Rename label references in breaks and continues.
+     *
      * @param node The break or continue node.
      */
     private void visitBreakOrContinue(NodeTraversal t, Node node) {
@@ -222,10 +199,11 @@ final class RenameLabels implements CompilerPass {
 
     /**
      * Rename or remove labels.
-     * @param node  The label node.
+     *
+     * @param node The label node.
      * @param parent The parent of the label node.
      */
-    private void visitLabel(NodeTraversal t, Node node, Node parent) {
+    private void visitLabel(NodeTraversal t, Node node) {
       Node nameNode = node.getFirstChild();
       checkState(nameNode != null);
       String name = nameNode.getString();
@@ -243,8 +221,8 @@ final class RenameLabels implements CompilerPass {
       } else {
         // ... and it is not referenced, just remove it.
         Node newChild = node.getLastChild();
-        node.removeChild(newChild);
-        parent.replaceChild(node, newChild);
+        newChild.detach();
+        node.replaceWith(newChild);
         if (newChild.isBlock()) {
           NodeUtil.tryMergeBlock(newChild, false);
         }
@@ -258,8 +236,8 @@ final class RenameLabels implements CompilerPass {
     }
 
     /**
-     * @param id The id, which is the depth of the label in the current context,
-     *        for which to get a short name.
+     * @param id The id, which is the depth of the label in the current context, for which to get a
+     *     short name.
      * @return The short name of the identified label.
      */
     String getNameForId(int id) {
@@ -290,9 +268,7 @@ final class RenameLabels implements CompilerPass {
     }
   }
 
-
   private static class LabelNamespace {
-    final Map<String, LabelInfo> renameMap = new HashMap<>();
+    final Map<String, LabelInfo> renameMap = new LinkedHashMap<>();
   }
-
 }

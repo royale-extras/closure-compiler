@@ -18,13 +18,19 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.javascript.jscomp.AbstractCompiler.LifeCycleStage;
 import com.google.javascript.jscomp.OptimizeCalls.ReferenceMap;
+import com.google.javascript.jscomp.diagnostic.LogFile;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
@@ -32,22 +38,27 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map.Entry;
-import javax.annotation.Nullable;
+import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Optimize function calls and function signatures.
  *
  * <ul>
- * <li>Removes optional parameters if no caller specifies it as argument.</li>
- * <li>Removes arguments at call site to function that ignores the parameter.</li>
- * <li>Inline a parameter if the function is always called with that constant.</li>
+ *   <li>Removes optional parameters if no caller specifies it as argument.
+ *   <li>Removes arguments at call site to function that ignores the parameter.
+ *   <li>Inline a parameter if the function is always called with that constant.
+ *   <li>Removes trailing `undefined` values if the callee doesn't query `arguments` or have a rest
+ *       parameter
  * </ul>
  */
 class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompilerPass {
   private final AbstractCompiler compiler;
   private final AstAnalyzer astAnalyzer;
   private Scope globalScope;
+
+  // Allocated & cleaned up by process()
+  private @Nullable LogFile decisionsLog;
 
   OptimizeParameters(AbstractCompiler compiler) {
     this.compiler = checkNotNull(compiler);
@@ -68,62 +79,77 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
 
   @Override
   public void process(Node externs, Node root, ReferenceMap refMap) {
-    this.globalScope = refMap.getGlobalScope();
+    try (LogFile decisionsLog =
+        compiler.createOrReopenIndexedLog(this.getClass(), "decisions.log")) {
+      // Save the LogFile into a field to avoid bucket-brigade passing it through a bunch of methods
+      this.decisionsLog = decisionsLog;
+      this.globalScope = refMap.getGlobalScope();
 
-    // Find all function nodes that are possible candidates for parameter removal.
-    List<ArrayList<Node>> toOptimize = new ArrayList<>();
+      // Find all function nodes that are possible candidates for parameter removal.
+      List<ArrayList<Node>> toOptimize = new ArrayList<>();
 
-    for (Entry<String, ArrayList<Node>> entry : refMap.getNameReferences()) {
-      String key = entry.getKey();
-      ArrayList<Node> refs = entry.getValue();
-      if (isCandidate(key, refs)) {
-        toOptimize.add(refs);
+      for (Map.Entry<String, ArrayList<Node>> entry : refMap.getNameReferences()) {
+        String key = entry.getKey();
+        ArrayList<Node> refs = entry.getValue();
+        final CandidateAnalysis candidateAnalysis = analyzeCandidateName(key, refs);
+        if (candidateAnalysis.shouldConvertTaggedTemplateLiterals()) {
+          candidateAnalysis.convertTaggedTemplateLiterals();
+        }
+        if (candidateAnalysis.isSafeToOptimize()) {
+          toOptimize.add(refs);
+        }
       }
-    }
 
-    for (Entry<String, ArrayList<Node>> entry : refMap.getPropReferences()) {
-      String key = entry.getKey();
-      ArrayList<Node> refs = entry.getValue();
-      if (isCandidate(key, refs)) {
-        toOptimize.add(refs);
+      for (Map.Entry<String, ArrayList<Node>> entry : refMap.getPropReferences()) {
+        String key = entry.getKey();
+        ArrayList<Node> refs = entry.getValue();
+        final CandidateAnalysis candidateAnalysis = analyzeCandidateProperty(key, refs);
+        if (candidateAnalysis.shouldConvertTaggedTemplateLiterals()) {
+          candidateAnalysis.convertTaggedTemplateLiterals();
+        }
+        if (candidateAnalysis.isSafeToOptimize()) {
+          toOptimize.add(refs);
+        }
       }
-    }
 
-    // NOTE: The optimization that are perform must be careful to keep the
-    // ReferenceMap in a consistent state. They should be careful to not
-    // remove or add global references without update the reference map.
-    // While adding references to the map is O(1), removing references
-    // O(n) where (n) is the number of references.
-    //
-    // So the most transformative pass should be last. So:
-    //
-    // - Removing parameters not provided by any call-site only
-    // moves the name and default values from the parameter list to the
-    // functions' bodies, so no updates are needed if the same node
-    // are reused.
-    //
-    // - Moving parameters that are provided the same value by every
-    // call-site to the function bodies, is currently limited to cases
-    // where there are only one function definition, so no updates
-    // are needed if the same nodes are reused.
-    //
-    // - Removing parameters that are unreferenced from call-sites, may
-    // remove references, as it is run last.
+      // NOTE: The optimization that are perform must be careful to keep the
+      // ReferenceMap in a consistent state. They should be careful to not
+      // remove or add global references without update the reference map.
+      // While adding references to the map is O(1), removing references
+      // O(n) where (n) is the number of references.
+      //
+      // So the most transformative pass should be last. So:
+      //
+      // - Removing parameters not provided by any call-site only
+      // moves the name and default values from the parameter list to the
+      // functions' bodies, so no updates are needed if the same node
+      // are reused.
+      //
+      // - Moving parameters that are provided the same value by every
+      // call-site to the function bodies, is currently limited to cases
+      // where there are only one function definition, so no updates
+      // are needed if the same nodes are reused.
+      //
+      // - Removing parameters that are unreferenced from call-sites, may
+      // remove references, as it is run last.
 
-    for (ArrayList<Node> refs : toOptimize) {
-      tryEliminateOptionalArgs(refs);
-    }
+      for (ArrayList<Node> refs : toOptimize) {
+        tryEliminateOptionalArgs(refs);
+      }
 
-    for (ArrayList<Node> refs : toOptimize) {
-      tryEliminateConstantArgs(refs);
-    }
+      for (ArrayList<Node> refs : toOptimize) {
+        tryEliminateConstantArgs(refs);
+      }
 
-    // tryEliminateUnusedArgs may mutate
-    UnusedParameterOptimizer optimizer = new UnusedParameterOptimizer();
-    for (ArrayList<Node> refs : toOptimize) {
-      optimizer.tryEliminateUnusedArgs(refs);
+      // tryEliminateUnusedArgs may mutate
+      UnusedParameterOptimizer optimizer = new UnusedParameterOptimizer();
+      for (ArrayList<Node> refs : toOptimize) {
+        optimizer.tryEliminateUnusedArgs(refs);
+      }
+      optimizer.applyChanges();
+    } finally {
+      this.decisionsLog = null;
     }
-    optimizer.applyChanges();
   }
 
   class UnusedParameterOptimizer {
@@ -131,20 +157,14 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     final List<Node> toReplaceWithZero = new ArrayList<>();
 
     /**
-     * Attempt to eliminate unused parameters by removing them from both the call sites
-     * and the function definitions.
+     * Attempt to eliminate unused parameters by removing them from both the call sites and the
+     * function definitions.
      *
-     * An unused first parameter:
-     *   function foo(a, b) {use(b);}
-     *   foo(1,2);
-     *   foo(1,3)
-     * becomes
-     *   function foo(b) {use(b);}
-     *   foo(2);
-     *   foo(3);
+     * <p>An unused first parameter: function foo(a, b) {use(b);} foo(1,2); foo(1,3) becomes
+     * function foo(b) {use(b);} foo(2); foo(3);
      *
      * @param refs A list of references to the symbol (name or property) as vetted by
-     *     #isCandidate.
+     *     #analyzeCandidate.
      */
     void tryEliminateUnusedArgs(ArrayList<Node> refs) {
       // An argument is unused if its position is greater than the number of declared parameters
@@ -171,7 +191,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
           if (!c.isUnusedParameter()) {
             used.set(index);
             if (c.isRest()) {
-              lowestUsedRest = Math.min(lowestUsedRest, index);
+              lowestUsedRest = min(lowestUsedRest, index);
               if (lowestUsedRest == 0) {
                 // don't bother doing anything more, all the parameters are used.
                 return;
@@ -180,7 +200,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
           }
         }
 
-        maxFormalsCount = Math.max(maxFormalsCount, index + 1);
+        maxFormalsCount = max(maxFormalsCount, index + 1);
       }
 
       // every argument slot after the earliest rest is used
@@ -226,7 +246,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       // Build a list of parameters to remove
       int lowestSpread = Integer.MAX_VALUE;
       for (Node n : refs) {
-        if (ReferenceMap.isCallOrNewTarget(n)) {
+        if (ReferenceMap.isNormalOrOptChainCallOrNewTarget(n)) {
           Node param = ReferenceMap.getFirstArgumentForCallOrNewOrDotCall(n);
           int paramIndex = 0;
           while (param != null) {
@@ -235,7 +255,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
             }
 
             if (param.isSpread()) {
-              lowestSpread = Math.min(lowestSpread, paramIndex);
+              lowestSpread = min(lowestSpread, paramIndex);
               break;
             }
 
@@ -263,7 +283,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       }
 
       for (Node n : refs) {
-        if (ReferenceMap.isCallOrNewTarget(n) && !alreadyRemoved(n)) {
+        if (ReferenceMap.isNormalOrOptChainCallOrNewTarget(n) && !alreadyRemoved(n)) {
           Node arg = ReferenceMap.getFirstArgumentForCallOrNewOrDotCall(n);
           recordRemovalCallArguments(
               lowestUsedRest, removeAllAfterIndex, unused, unremovable, arg, 0);
@@ -277,57 +297,114 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       }
     }
 
-    // Either firstRestIndex will be MAX_VALUE or removeAllAfterIndex will be MAX_VALUE
-    void recordRemovalCallArguments(
-        int firstRestIndex, int removeAllAfterIndex,
-        BitSet unused, BitSet unremovable,
-        Node arg, int index) {
+    /**
+     * Either firstRestIndex will be MAX_VALUE or removeAllAfterIndex will be MAX_VALUE
+     *
+     * @param firstRestIndex The lowest index that might match a rest parameter
+     * @param removeAllAfterIndex The index of the last known parameter, all arguments with higher
+     *     indexes must be unused, but it won't be tracked in unused
+     * @param unused All parameter indexes that are known to be unused by the callee
+     * @param unremovable All parameter indexes that are used by a callee, or have defaults with
+     *     side effects
+     * @param arg The current argument being considered for removal
+     * @param index The index of arg in the argument list
+     * @return {true} if all arguments >= index have been removed.
+     */
+    boolean recordRemovalCallArguments(
+        int firstRestIndex,
+        int removeAllAfterIndex,
+        BitSet unused,
+        BitSet unremovable,
+        Node arg,
+        int index) {
       if (arg == null) {
-        return;
+        // base case
+        return true;
       }
 
       if (index > removeAllAfterIndex) {
-        removeArgAndFollowing(arg);
-        return;
+        return removeArgAndFollowing(arg);
       }
 
       if (arg.isSpread()) {
         // There is no meaningful "index" after a spread.
-        return;
+        return false;
       }
 
-      recordRemovalCallArguments(
-          firstRestIndex, removeAllAfterIndex,
-          unused, unremovable,
-          arg.getNext(), index + 1);
+      boolean removedAllTrailing =
+          recordRemovalCallArguments(
+              firstRestIndex, removeAllAfterIndex, unused, unremovable, arg.getNext(), index + 1);
+      if (index < firstRestIndex) {
+        // An 'undefined' in trailing position calling a function that doesn't reference
+        // `arguments` is removable, since the function will see an `undefined` value there
+        // even if we remove it.
+        boolean isRemovableTrailingUndefined = NodeUtil.isUndefined(arg) && removedAllTrailing;
+        if (isRemovableTrailingUndefined && !astAnalyzer.mayHaveSideEffects(arg)) {
+          toRemove.add(arg);
+          return true;
+        }
 
-      if (index < firstRestIndex && unused.get(index)) {
-        if (!astAnalyzer.mayHaveSideEffects(arg)) {
-          if (unremovable.get(index)) {
-            if (!arg.isNumber() || arg.getDouble() != 0) {
-              toReplaceWithZero.add(arg);
+        if (unused.get(index)) {
+          // If isRemovableTrailingUndefined is true, then we know the arg has side effects
+          // otherwise we would have already returned above.
+          boolean hasSideEffects =
+              isRemovableTrailingUndefined || astAnalyzer.mayHaveSideEffects(arg);
+          if (!hasSideEffects) {
+            if (unremovable.get(index)) {
+              recordReplaceWithZero(arg);
+            } else {
+              toRemove.add(arg);
+              return removedAllTrailing;
             }
           } else {
-            toRemove.add(arg);
+            // If there is a comma operator with side effects on the first node, the
+            // second node can be optimized knowing that the parameter is not used.
+            removeFromCommaIfNoSideEffects(arg);
           }
+        }
+      }
+      return false;
+    }
+
+    /** Replaces a no side-effect value in a comma operator recursively. */
+    void removeFromCommaIfNoSideEffects(Node arg) {
+      if (arg.isComma()) {
+        Node secondChild = arg.getSecondChild();
+        if (!astAnalyzer.mayHaveSideEffects(secondChild)) {
+          recordReplaceWithZero(secondChild);
+        } else {
+          removeFromCommaIfNoSideEffects(secondChild);
         }
       }
     }
 
-    void removeArgAndFollowing(Node arg) {
+    /** Records node to be replaced with zero. */
+    private void recordReplaceWithZero(Node arg) {
+      if (!arg.isNumber() || arg.getDouble() != 0) {
+        toReplaceWithZero.add(arg);
+      }
+    }
+
+    /**
+     * @return true if all following args were removed
+     */
+    boolean removeArgAndFollowing(Node arg) {
       if (arg != null) {
-        removeArgAndFollowing(arg.getNext());
+        boolean removedAll = removeArgAndFollowing(arg.getNext());
         if (!astAnalyzer.mayHaveSideEffects(arg)) {
           toRemove.add(arg);
+          return removedAll;
         }
+        return false;
       }
+      return true;
     }
 
     void removeUnusedFunctionParameters(BitSet unremovable, Node param, int index) {
       if (param != null) {
         removeUnusedFunctionParameters(unremovable, param.getNext(), index + 1);
         if (!unremovable.get(index)) {
-          checkState(param.isName());  // update for ES6
+          checkState(param.isName()); // update for ES6
           // params are not otherwise referenceable.
           compiler.reportChangeToEnclosingScope(param);
           param.detach();
@@ -335,10 +412,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       }
     }
 
-
-    /**
-     * Applies optimizations to all previously marked nodes.
-     */
+    /** Applies optimizations to all previously marked nodes. */
     public void applyChanges() {
       for (Node n : toRemove) {
         // Don't remove any nodes twice since doing so would violate change reporting constraints.
@@ -371,18 +445,31 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     return !n.isRoot();
   }
 
-  /**
-   * This reference set is a candidate for parameter-moving if:
-   *  - if all call sites are known (no aliasing)
-   *  - if all definition sites are known (the possible values are known functions)
-   *  - there is at least one definition
-   */
-  private boolean isCandidate(String name, ArrayList<Node> refs) {
-    if (!OptimizeCalls.mayBeOptimizableName(compiler, name)) {
-      return false;
-    }
+  private CandidateAnalysis analyzeCandidateName(String key, ArrayList<Node> refs) {
+    return analyzeCandidate("name", key, refs);
+  }
 
-    boolean seenCandidateDefinition = false;
+  private CandidateAnalysis analyzeCandidateProperty(String key, ArrayList<Node> refs) {
+    return analyzeCandidate("property", key, refs);
+  }
+
+  /**
+   * A function is a candidate for parameter optimization if:
+   *
+   * <ul>
+   *   <li>if all call sites are known (no aliasing)
+   *   <li>if all definition sites are known (the possible values are known functions)
+   *   <li>there is at least one definition
+   *   <li>none of the calls are tagged template literals, OR the special first argument is unused
+   * </ul>
+   */
+  private CandidateAnalysis analyzeCandidate(String refKind, String key, ArrayList<Node> refs) {
+    CandidateAnalysisBuilder analysisBuilder = new CandidateAnalysisBuilder();
+    if (!OptimizeCalls.mayBeOptimizableName(compiler, key)) {
+      decisionsLog.log("%s\t%s\tnot an optimizable name", refKind, key);
+      return analysisBuilder.setIsSafeToOptimize(false).build();
+    }
+    final ArrayList<Node> definitions = new ArrayList<>();
     boolean seenCandidateUse = false;
     for (Node n : refs) {
       // TODO(johnlenz): Determine what to do about ".constructor" references.
@@ -392,22 +479,118 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       //   continue;
       // } else
 
-      if (ReferenceMap.isCallOrNewTarget(n)) {
+      if (ReferenceMap.isNormalOrOptChainCallOrNewTarget(n)) {
         // TODO(johnlenz): filter .apply when we support it
         seenCandidateUse = true;
+      } else if (n.getParent().isTaggedTemplateLit()) {
+        analysisBuilder.addTaggedTemplateLiteral(n.getParent());
       } else if (isCandidateDefinition(n)) {
-        seenCandidateDefinition = true;
-      } else {
-        // If this isn't an non-aliasing reference (typeof, instanceof, etc)
-        // then there is nothing that can be done.
-        if (!OptimizeCalls.isAllowedReference(n)) {
-          // TODO(johnlenz): allow extends clauses.
-          return false;
+        definitions.add(n);
+      } else if (!OptimizeCalls.isAllowedReference(n)) {
+        if (decisionsLog.isLogging()) { // avoid build location string when not logging
+          decisionsLog.log("%s\t%s\tnot an allowed reference: %s", refKind, key, n.getLocation());
         }
+        // TODO(johnlenz): allow extends clauses.
+        return analysisBuilder.setIsSafeToOptimize(false).build();
       }
     }
+    if (definitions.isEmpty()) {
+      decisionsLog.log("%s\t%s\tno definition found", refKind, key);
+      return analysisBuilder.setIsSafeToOptimize(false).build();
+    }
+    if (!analysisBuilder.taggedTemplateLiterals.isEmpty()) {
+      final ImmutableCollection<Node> functionNodes =
+          ReferenceMap.getFunctionNodes(definitions).values();
 
-    return seenCandidateDefinition && seenCandidateUse;
+      for (Node functionNode : functionNodes) {
+        final Node firstParam = NodeUtil.getFunctionParameters(functionNode).getFirstChild();
+        if (firstParam != null && !firstParam.isUnusedParameter()) {
+          decisionsLog.log(
+              "%s\t%s\twill not optimize parameters for tagged template literals", refKind, key);
+          return analysisBuilder.setIsSafeToOptimize(false).build();
+        }
+      }
+      decisionsLog.log(
+          "%s\t%s\t%s",
+          refKind,
+          key,
+          "first param is unused, so we will convert tagged template literals to normal calls");
+      seenCandidateUse = true;
+    }
+
+    if (!seenCandidateUse) {
+      decisionsLog.log("%s\t%s\tno usage found", refKind, key);
+      return analysisBuilder.setIsSafeToOptimize(false).build();
+    }
+    return analysisBuilder.setIsSafeToOptimize(true).build();
+  }
+
+  /** Results of analyzing a candidate function's definition and references. */
+  class CandidateAnalysis {
+    private final ArrayList<Node> taggedTemplateLiterals;
+    private final boolean isSafeToOptimize;
+
+    CandidateAnalysis(CandidateAnalysisBuilder builder) {
+      this.taggedTemplateLiterals = builder.taggedTemplateLiterals;
+      this.isSafeToOptimize = builder.isSafeToOptimize;
+    }
+
+    boolean shouldConvertTaggedTemplateLiterals() {
+      return !taggedTemplateLiterals.isEmpty() && isSafeToOptimize;
+    }
+
+    void convertTaggedTemplateLiterals() {
+      for (Node taggedTemplateLiteral : taggedTemplateLiterals) {
+        convertTaggedTemplateLiteralToNormalCall(taggedTemplateLiteral);
+      }
+      taggedTemplateLiterals.clear();
+    }
+
+    boolean isSafeToOptimize() {
+      return isSafeToOptimize && taggedTemplateLiterals.isEmpty();
+    }
+  }
+
+  /** Builder class for CandidateAnalysis. */
+  class CandidateAnalysisBuilder {
+    final ArrayList<Node> taggedTemplateLiterals = new ArrayList<>();
+    boolean isSafeToOptimize = false;
+
+    @CanIgnoreReturnValue
+    CandidateAnalysisBuilder setIsSafeToOptimize(boolean isSafeToOptimize) {
+      this.isSafeToOptimize = isSafeToOptimize;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    CandidateAnalysisBuilder addTaggedTemplateLiteral(Node ttlNode) {
+      taggedTemplateLiterals.add(ttlNode);
+      return this;
+    }
+
+    CandidateAnalysis build() {
+      return new CandidateAnalysis(this);
+    }
+  }
+
+  /** Converts "tagFunction`template ${1} literal ${2}`" to `tagFunction([], 1, 2)`. */
+  private void convertTaggedTemplateLiteralToNormalCall(Node ttlNode) {
+    final Node callee = checkNotNull(ttlNode.getFirstChild());
+    final Node templateLiteral = callee.getNext();
+    final Node firstArg = IR.arraylit().srcref(templateLiteral);
+    callee.detach();
+    final Node callNode = NodeUtil.newCallNode(callee, firstArg).srcref(ttlNode);
+    for (Node tlChild = templateLiteral.getFirstChild();
+        tlChild != null;
+        tlChild = tlChild.getNext()) {
+      if (tlChild.isTemplateLitSub()) {
+        final Node arg = tlChild.getOnlyChild();
+        arg.detach();
+        callNode.addChildToBack(arg);
+      }
+    }
+    ttlNode.replaceWith(callNode);
+    compiler.reportChangeToEnclosingScope(callNode);
   }
 
   private boolean isCandidateDefinition(Node n) {
@@ -422,6 +605,10 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       functionExpr = n.getFirstChild();
     } else if (isClassMemberDefinition(n)) {
       functionExpr = n.getFirstChild();
+    } else if (parent.isClass() && n.isFirstChildOf(parent)) {
+      // allDefinitionsAreCandidateFunctions() understands classes and will check for
+      // candidacy correctly.
+      functionExpr = parent;
     } else {
       return false; // Couldn't find a function.
     }
@@ -433,29 +620,98 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     return n.isMemberFunctionDef() && n.getParent().isClassMembers();
   }
 
-  private static boolean allDefinitionsAreCandidateFunctions(Node n) {
+  /**
+   * When class fields are set to RHS with side effects, the order of execution may be moved into
+   * incorrect order if optimized in this pass. Example:
+   *
+   * <p>class C { field2 = alert(2);", constructor(a) {", use(a); } } var c = new C(alert(1));
+   *
+   * <p>would optimize to
+   *
+   * <p>class C { field2 = alert(2);", constructor(a) {", var a = alert(1) use(a); } } var c = new
+   * C(alert(1));
+   *
+   * <p>which would mean alert(2) gets executed before alert(1) - this behavior is incorrect.
+   *
+   * <p>So, if there are any RHS side effects, we skip the optimization.
+   */
+  private boolean classContainsClassFieldWithRHSSideEffects(Node classNode) {
+    Node classMembersNode = NodeUtil.getClassMembers(classNode);
+    for (Node child = classMembersNode.getFirstChild(); child != null; child = child.getNext()) {
+      if (child.isMemberFieldDef()
+          && !child.isStaticMember()
+          && child.hasChildren()
+          && astAnalyzer.mayHaveSideEffects(child.getFirstChild())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private boolean allDefinitionsAreCandidateFunctions(Node n) {
     switch (n.getToken()) {
-      case FUNCTION:
+      case CLASS -> {
+        if (NodeUtil.isNamedClassExpression(n)) {
+          // name creates an alias, making it hard to be sure we've seen all calls
+          return false;
+        } else {
+          // `class NameNode {`
+          // find the constructor
+          Node constructorMemberFunctionDef = NodeUtil.getEs6ClassConstructorMemberFunctionDef(n);
+          if (constructorMemberFunctionDef == null) {
+            // unable to find the constructor
+            // TODO(bradfordcsmith): Ideally we should find the parent class constructor.
+            return false;
+          } else if (classContainsClassFieldWithRHSSideEffects(n)) {
+            return false;
+          } else {
+            Node functionNode = constructorMemberFunctionDef.getOnlyChild();
+            // "arguments" can refer to all parameters or their count.
+            return !NodeUtil.doesFunctionReferenceOwnArgumentsObject(functionNode)
+                // In `function f(a, b = a) { ... }` it's very difficult to determine if `a` is
+                // movable.
+                && !mayReferenceParamBeforeBody(functionNode)
+                // `/** @usedViaDotConstructor */ function f(a) {...}` means back off.
+                && !isUsedViaDotConstructor(functionNode);
+          }
+        }
+      }
+      case FUNCTION -> {
         // Named function expression can refer to themselves,
         return !NodeUtil.isNamedFunctionExpression(n)
             // "arguments" can refer to all parameters or their count.
             && !NodeUtil.doesFunctionReferenceOwnArgumentsObject(n)
             // In `function f(a, b = a) { ... }` it's very difficult to determine if `a` is movable.
-            && !mayReferenceParamBeforeBody(n);
-      case CAST:
-      case COMMA:
+            && !mayReferenceParamBeforeBody(n)
+            // `/** @usedViaDotConstructor */ function f(a) {...}` means back off.
+            && !isUsedViaDotConstructor(n);
+      }
+      case CAST, COMMA -> {
         return allDefinitionsAreCandidateFunctions(n.getLastChild());
-      case HOOK:
+      }
+      case HOOK -> {
         return allDefinitionsAreCandidateFunctions(n.getSecondChild())
             && allDefinitionsAreCandidateFunctions(n.getLastChild());
-      case OR:
-      case AND:
-      case COALESCE:
+      }
+      case OR, AND, COALESCE -> {
         return allDefinitionsAreCandidateFunctions(n.getFirstChild())
             && allDefinitionsAreCandidateFunctions(n.getLastChild());
-      default:
+      }
+      default -> {
         return false;
+      }
     }
+  }
+
+  /**
+   * Returns true if the function is annotated with @usedViaDotConstructor
+   *
+   * <p>In this case we just back off on all parameter optimizations since we cannot detect which
+   * parameters are used via calls through {@code .constructor}.
+   */
+  private static boolean isUsedViaDotConstructor(Node function) {
+    var docInfo = NodeUtil.getBestJSDocInfo(function);
+    return docInfo != null && docInfo.isUsedViaDotConstructor();
   }
 
   /**
@@ -497,16 +753,14 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     return false;
   }
 
-  /**
-   * Removes any optional parameters if no callers specifies it as an argument.
-   */
+  /** Removes any optional parameters if no callers specifies it as an argument. */
   private void tryEliminateOptionalArgs(ArrayList<Node> refs) {
     // Count the maximum number of arguments passed into this function all
     // all points of the program.
     int maxArgs = -1;
 
     for (Node n : refs) {
-      if (ReferenceMap.isCallOrNewTarget(n)) {
+      if (ReferenceMap.isNormalOrOptChainCallOrNewTarget(n)) {
         int numArgs = 0;
         Node firstArg = ReferenceMap.getFirstArgumentForCallOrNewOrDotCall(n);
         for (Node c = firstArg; c != null; c = c.getNext()) {
@@ -532,16 +786,11 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
   /**
    * Eliminate parameters if they are always constant.
    *
-   * function foo(a, b) {...}
-   * foo(1,2);
-   * foo(1,3)
-   * becomes
-   * function foo(b) { var a = 1 ... }
-   * foo(2);
-   * foo(3);
+   * <p>function foo(a, b) {...} foo(1,2); foo(1,3) becomes function foo(b) { var a = 1 ... }
+   * foo(2); foo(3);
    *
    * @param refs A list of references to the symbol (name or property) as vetted by
-   *     #isCandidate.
+   *     #analyzeCandidate.
    */
   private void tryEliminateConstantArgs(ArrayList<Node> refs) {
     List<Parameter> parameters = findFixedArguments(refs);
@@ -567,7 +816,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
 
     // Found something to do, move the values from the call sites to the function definitions.
     for (Node n : refs) {
-      if (!alreadyRemoved(n) && ReferenceMap.isCallOrNewTarget(n)) {
+      if (!alreadyRemoved(n) && ReferenceMap.isNormalOrOptChainCallOrNewTarget(n)) {
         optimizeCallSite(parameters, n);
       }
     }
@@ -577,18 +826,18 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
 
   /**
    * @param refs A list of references to the symbol (name or property) as vetted by
-   *     #isCandidate.
+   *     #analyzeCandidate.
    * @return A list of Parameter objects, in the declaration order, which represent potentially
    *     movable values fixed values from all call sites or null if there are no candidate values.
    */
-  private List<Parameter> findFixedArguments(ArrayList<Node> refs) {
+  private @Nullable List<Parameter> findFixedArguments(ArrayList<Node> refs) {
     List<Parameter> parameters = new ArrayList<>();
     boolean firstCall = true;
 
     // Build a list of parameters to remove
     boolean continueLooking = false;
     for (Node n : refs) {
-      if (ReferenceMap.isCallOrNewTarget(n)) {
+      if (ReferenceMap.isNormalOrOptChainCallOrNewTarget(n)) {
         Node call = n.getParent();
         Node firstDotCallParam = call.getFirstChild();
         // Normally, we ignore the first parameter to a .call expression (the 'this' value)
@@ -613,16 +862,16 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       }
     }
 
-    return (continueLooking) ? parameters : null;
+    return continueLooking ? parameters : null;
   }
 
   /**
-   * Adjust the provided Parameter objects value created by #findFixedArguments for "rest" value
-   * and side-effects which might prevent the motion of the parameters from the call sites to the
+   * Adjust the provided Parameter objects value created by #findFixedArguments for "rest" value and
+   * side-effects which might prevent the motion of the parameters from the call sites to the
    * function body.
    *
-   * @param parameters A list of Parameter objects summarizing all the call-sites and
-   *     whether any of the parameters are fixed.
+   * @param parameters A list of Parameter objects summarizing all the call-sites and whether any of
+   *     the parameters are fixed.
    * @return Whether there are any movable parameters.
    */
   private static boolean adjustForConstraints(Node fn, List<Parameter> parameters) {
@@ -672,7 +921,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
 
       if (current.shouldRemove
           && ((seenUnmovableSideEffects && current.canBeSideEffected())
-          || (seenUnmoveableSideEffected && current.hasSideEffects()))) {
+              || (seenUnmoveableSideEffected && current.hasSideEffects()))) {
         current.shouldRemove = false;
       }
 
@@ -717,6 +966,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
 
   /**
    * Determine which parameters use the same expression.
+   *
    * @return Whether any parameter was found that can be updated.
    */
   private boolean findFixedParameters(List<Parameter> parameters, Node cur) {
@@ -754,9 +1004,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     return anyMovable;
   }
 
-  /**
-   * @return Whether any parameter was movable.
-   */
+  /** @return Whether any parameter was movable. */
   private boolean buildInitialParameterList(List<Parameter> parameters, Node cur) {
     boolean anyMovable = false;
     while (cur != null) {
@@ -784,39 +1032,34 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     }
   }
 
-  /**
-   * @return Whether the expression can be safely moved to another function
-   *   in another scope.
-   */
+  /** @return Whether the expression can be safely moved to another function in another scope. */
   private static boolean isMovableValue(Node n, Scope globalScope) {
     // Things that can change value or are inaccessible can't be moved, these
     // are "this", "arguments", local names, and functions that capture local
     // values.
     switch (n.getToken()) {
-      case AWAIT:
-      case YIELD:
-      case THIS:
-      case SUPER:
-      case ITER_SPREAD:
-      case OBJECT_SPREAD:
+      case AWAIT, YIELD, THIS, SUPER, ITER_SPREAD, OBJECT_SPREAD -> {
         return false;
-      case FUNCTION:
+      }
+      case FUNCTION -> {
         // Don't move function closures.
         // TODO(johnlenz): Closure that only contain global reference can be
         // moved.
         return false;
-      case NAME:
+      }
+      case NAME -> {
         if (n.getString().equals("arguments")) {
           return false;
         } else {
+          // If it isn't in global scope, then it is in local scope.  This logic depends on
+          // "Normalize" creating distinct local names.
           Var v = globalScope.getVar(n.getString());
           if (v == null) {
             return false;
           }
         }
-        break;
-      default:
-        break;
+      }
+      default -> {}
     }
 
     for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
@@ -849,7 +1092,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       }
 
       // process the rest.
-      lastParameter = Math.min(parameters.size() - 1, restIndex - 1);
+      lastParameter = min(parameters.size() - 1, restIndex - 1);
     }
 
     for (int i = lastParameter; i >= 0; i--) {
@@ -866,27 +1109,41 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
           }
         }
 
-        addVariableToFunction(fn, formalParam, parameters.get(i).getArg());
+        Node value = parameters.get(i).getArg();
+
+        if (formalParam != null) {
+          addVariableDeclarationToFunction(fn, formalParam, value);
+        } else {
+          // no formal param, just add the value to the function body. This is the case when the
+          // parameter is unused in the function body; we can skip declaring it and simply adding
+          // the argument value to the function body.
+          addExpressionToFunction(fn, value);
+        }
       }
     }
   }
 
   private void optimizeCallSite(List<Parameter> parameters, Node target) {
     Node call = ReferenceMap.getCallOrNewNodeForTarget(target);
-    boolean mayMutateArgs = call.mayMutateArguments();
-    boolean mayMutateGlobalsOrThrow = call.mayMutateGlobalStateOrThrow();
+    boolean callMayMutateArgs = call.mayMutateArguments();
+    boolean callMayMutateGlobalsOrThrow = call.mayMutateGlobalStateOrThrow();
+
     for (int index = parameters.size() - 1; index >= 0; index--) {
       Parameter p = parameters.get(index);
       if (p.shouldRemove()) {
         eliminateCallTargetArgAt(target, index);
 
-        if (mayMutateArgs && !mayMutateGlobalsOrThrow
-            // We want to cover both global-state arguments, and
-            // expressions that might throw exceptions.
-            // We're deliberately conservative here b/c it's
-            // difficult to test all the edge cases.
-            && !NodeUtil.isImmutableValue(p.getArg())) {
-          mayMutateGlobalsOrThrow = true;
+        // Inlining parameters into a function may cause the function call to newly mutate global
+        // state if either
+        //  1) the parameter itself mutates global state
+        //  2) the function may mutate its arguments, and the argument being inlined is mutable.
+        //     We're deliberately conservative here - possibly the argument being inlined is
+        //     not global state or not mutated in practice - because it's difficult to test all
+        //     the edge cases.
+        if (!callMayMutateGlobalsOrThrow
+            && (p.hasSideEffects() // case (1)
+                || (callMayMutateArgs && !NodeUtil.isImmutableValue(p.getArg())))) { // case (2)
+          callMayMutateGlobalsOrThrow = true;
           call.setSideEffectFlags(
               new Node.SideEffectFlags(call.getSideEffectFlags()).setMutatesGlobalState());
         }
@@ -894,10 +1151,7 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     }
   }
 
-  /**
-   * Simple container class that keeps tracks of a parameter and whether it
-   * should be removed.
-   */
+  /** Simple container class that keeps tracks of a parameter and whether it should be removed. */
   private static class Parameter {
     private final Node arg;
     private boolean shouldRemove;
@@ -942,50 +1196,71 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
       this.mayBeUndefined = mayBeUndefined;
     }
 
-    public boolean mayBeUndefined() {
-      return mayBeUndefined;
-    }
   }
 
   private void addRestVariableToFunction(Node function, Node lhs, Node value) {
     checkState(lhs.getParent() == null);
-    addVariableToFunction(function, lhs, value);
+    addVariableDeclarationToFunction(function, lhs, value);
   }
 
   /**
-   * Adds a variable to the top of a function block.
+   * Adds a variable to the function block after all hoisted functions.
+   *
    * @param function A function node.
    * @param lhs The lhs expression.
    * @param value The initial value of the variable.
    */
-  private void addVariableToFunction(Node function, @Nullable Node lhs, Node value) {
-    checkState(value.getParent() == null);
-    checkState(lhs == null || lhs.getParent() == null);
-    Node block = NodeUtil.getFunctionBody(function);
-    Node stmt;
-    if (lhs != null) {
-      stmt = NodeUtil.newVarNode(lhs, value);
+  private void addVariableDeclarationToFunction(Node function, Node lhs, Node value) {
+    checkState(value.getParent() == null, "Value must be detached");
+    checkState(lhs != null, "formal parameter being declared must not be null");
+    checkState(lhs.getParent() == null, "formal parameter being declared must be detached");
+    List<Node> stmts = new ArrayList<>();
+    if (lhs.isDestructuringPattern()) {
+      rewriteDestructuringPattern(lhs, value, stmts);
     } else {
-      stmt = IR.exprResult(value).useSourceInfoFrom(value);
+      stmts.add(NodeUtil.newVarNode(lhs, value));
     }
+    insertStatements(function, stmts);
+  }
 
-    // Insert the statement at the beginning of the function body, but after any
-    // existing function declarations so that the tree stays normalized.
-    Node insertionPoint = block.getFirstChild();
-    while (insertionPoint != null && insertionPoint.isFunction()) {
-      insertionPoint = insertionPoint.getNext();
-    }
-    if (insertionPoint == null) {
-      block.addChildToBack(stmt);
-    } else {
-      block.addChildBefore(stmt, insertionPoint);
-    }
-    compiler.reportChangeToEnclosingScope(stmt);
+  /** Adds an expression to the function block after all hoisted functions. */
+  private void addExpressionToFunction(Node function, Node value) {
+    List<Node> stmts = new ArrayList<>();
+    stmts.add(IR.exprResult(value).srcref(value));
+    insertStatements(function, stmts);
   }
 
   /**
-   * Removes all formal parameters starting at argIndex.
+   * Insert the statements at the beginning of the function body, but after any hoisted function
+   * declarations so that the AST stays normalized.
    */
+  private void insertStatements(Node function, List<Node> stmts) {
+    if (stmts.isEmpty()) {
+      return;
+    }
+    Node block = NodeUtil.getFunctionBody(function);
+    Node insertionPoint = NodeUtil.getInsertionPointAfterAllInnerFunctionDeclarations(block);
+    if (insertionPoint == null) {
+      addStatementsToBack(block, stmts);
+    } else {
+      addStatementsBefore(insertionPoint, stmts);
+    }
+    compiler.reportChangeToEnclosingScope(stmts.get(0));
+  }
+
+  private void addStatementsToBack(Node block, List<Node> stmts) {
+    for (Node stmt : stmts) {
+      block.addChildToBack(stmt);
+    }
+  }
+
+  private void addStatementsBefore(Node insertionPoint, List<Node> stmts) {
+    for (Node item : Lists.reverse(stmts)) {
+      item.insertBefore(insertionPoint);
+    }
+  }
+
+  /** Removes all formal parameters starting at argIndex. */
   private void eliminateParamsAfter(Node fnNode, int argIndex) {
     Node formalArgPtr = NodeUtil.getFunctionParameters(fnNode).getFirstChild();
     while (argIndex != 0 && formalArgPtr != null) {
@@ -999,39 +1274,58 @@ class OptimizeParameters implements CompilerPass, OptimizeCalls.CallGraphCompile
     if (formal != null) {
       // Keep the args in the same order, do the last first.
       eliminateParamsAfter(fnNode, formal.getNext());
+      List<Node> stmts = new ArrayList<>();
       formal.detach();
-      Node stmt;
       if (formal.isRest()) {
         checkState(formal.getNext() == null);
-        stmt = NodeUtil.newVarNode(formal.removeFirstChild(), IR.arraylit().srcref(formal));
+        Node lhs = formal.removeFirstChild();
+        Node value = IR.arraylit().srcref(formal);
+        addVariableDeclarationToFunction(fnNode, lhs, value);
+      } else if (formal.isDefaultValue()) {
+        Node lhs = formal.removeFirstChild();
+        Node value = formal.getLastChild().detach();
+        addVariableDeclarationToFunction(fnNode, lhs, value);
+      } else if (formal.isDestructuringPattern()) {
+        // Destructuring declarations must have an rhs.
+        // NOTE: assigning undefined will cause an exception at runtime if this code is evaluated,
+        // which matches the behavior of the input code. It's also possible this method will never
+        // be evaluated at runtime. This pass jointly optimizes all methods with the same name.
+        Node value = NodeUtil.newUndefinedNode(formal);
+        rewriteDestructuringPattern(formal, value, stmts);
+        insertStatements(fnNode, stmts);
       } else {
-        if (formal.isDefaultValue()) {
-          Node lhs = formal.removeFirstChild();
-          Node value = formal.getLastChild().detach();
-          stmt = NodeUtil.newVarNode(lhs, value);
-        } else if (formal.isDestructuringPattern()) {
-          // Destructuring declarations must have an rhs.
-          // NOTE: assigning undefined will cause an exception at runtime if this code is evaluated,
-          // which matches the behavior of the input code. It's also possible this method will never
-          // be evaluated at runtime. This pass jointly optimizes all methods with the same name.
-          Node value = NodeUtil.newUndefinedNode(formal);
-          stmt = NodeUtil.newVarNode(formal, value);
-        } else {
-          stmt = IR.var(formal).useSourceInfoIfMissingFrom(formal);
-        }
+        stmts.add(IR.var(formal).srcrefIfMissing(formal));
+        insertStatements(fnNode, stmts);
       }
-      fnNode.getLastChild().addChildToFront(stmt);
-      compiler.reportChangeToEnclosingScope(stmt);
     }
   }
 
-  /**
-   * Eliminates the parameter from a function call.
-   * @param definitionFinder The definition and use sites index.
-   * @param p
-   * @param call The function call node
-   * @param argIndex The index of the argument to remove.
-   */
+  private void rewriteDestructuringPattern(
+      Node destructuringPattern, Node value, List<Node> stmts) {
+    checkState(destructuringPattern.isDestructuringPattern());
+    checkState(
+        !destructuringPattern.hasParent(), "Formal parameter must be detached for rewriting");
+
+    NodeUtil.visitLhsNodesInDestructuringPattern(
+        destructuringPattern,
+        (name) -> {
+          // Add a declaration outside the array pattern for the given name.
+          checkState(
+              name.isName(),
+              // TODO(rishipal): Is this always true? What about var [{a}] = [{a:4}]; ?
+              "lhs in destructuring declaration should be a simple name. (%s)",
+              name);
+          Node newName = IR.name(name.getString()).srcref(name);
+          Node newVar = IR.var(newName).srcref(name);
+          stmts.add(newVar);
+        });
+    Node expr =
+        IR.exprResult(IR.assign(destructuringPattern, value).srcref(destructuringPattern))
+            .srcref(destructuringPattern);
+    stmts.add(expr);
+  }
+
+  /** Eliminates the parameter from a function call. */
   private void eliminateCallTargetArgAt(Node ref, int argIndex) {
     Node callArgNode = ReferenceMap.getArgumentForCallOrNewOrDotCall(ref, argIndex);
     if (callArgNode != null) {

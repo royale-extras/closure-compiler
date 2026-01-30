@@ -17,14 +17,18 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.auto.value.AutoBuilder;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.AccessorSummary.PropertyAccessKind;
+import com.google.javascript.jscomp.colors.Color;
+import com.google.javascript.jscomp.colors.StandardColors;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
+import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Logic for answering questions about portions of the AST.
@@ -60,25 +64,63 @@ public class AstAnalyzer {
   // can also be called as constructors but lack side-effects.
   // TODO(johnlenz): consider adding an extern annotation for this.
   private static final ImmutableSet<String> BUILTIN_FUNCTIONS_WITHOUT_SIDEEFFECTS =
-      ImmutableSet.of("Object", "Array", "String", "Number", "Boolean", "RegExp", "Error");
+      ImmutableSet.of(
+          "Object", "Array", "String", "Number", "BigInt", "Boolean", "RegExp", "Error");
   private static final ImmutableSet<String> OBJECT_METHODS_WITHOUT_SIDEEFFECTS =
       ImmutableSet.of("toString", "valueOf");
   private static final ImmutableSet<String> REGEXP_METHODS = ImmutableSet.of("test", "exec");
   private static final ImmutableSet<String> STRING_REGEXP_METHODS =
       ImmutableSet.of("match", "replace", "search", "split");
 
-  private final AbstractCompiler compiler;
+  private final JSTypeRegistry typeRegistry;
+  private final AccessorSummary accessorSummary;
+  private final boolean useTypesForLocalOptimization;
   private final boolean assumeGettersArePure;
+  private final boolean assumeKnownBuiltinsArePure;
+  private final boolean hasRegexpGlobalReferences;
 
-  AstAnalyzer(AbstractCompiler compiler, boolean assumeGettersArePure) {
-    this.compiler = checkNotNull(compiler);
-    this.assumeGettersArePure = assumeGettersArePure;
+  AstAnalyzer(
+      Options options,
+      @Nullable JSTypeRegistry typeRegistry,
+      @Nullable AccessorSummary accessorSummary) {
+    checkArgument(
+        options.assumeGettersArePure || accessorSummary != null,
+        "accessorSummary must be provided if assumeGettersArePure is false");
+    this.typeRegistry = typeRegistry;
+    this.accessorSummary = accessorSummary;
+    this.useTypesForLocalOptimization = options.useTypesForLocalOptimization;
+    this.assumeGettersArePure = options.assumeGettersArePure;
+    this.hasRegexpGlobalReferences = options.hasRegexpGlobalReferences;
+    this.assumeKnownBuiltinsArePure = options.assumeKnownBuiltinsArePure;
+  }
+
+  static record Options(
+      boolean useTypesForLocalOptimization,
+      boolean assumeGettersArePure,
+      boolean hasRegexpGlobalReferences,
+      boolean assumeKnownBuiltinsArePure) {
+    @AutoBuilder
+    static interface Builder {
+      Builder setUseTypesForLocalOptimization(boolean value);
+
+      Builder setAssumeGettersArePure(boolean value);
+
+      Builder setHasRegexpGlobalReferences(boolean value);
+
+      Builder setAssumeKnownBuiltinsArePure(boolean value);
+
+      Options build();
+    }
+
+    static Builder builder() {
+      return new AutoBuilder_AstAnalyzer_Options_Builder();
+    }
   }
 
   /**
    * Returns true if the node may create new mutable state, or change existing state.
    *
-   * @see <a href="http://www.xkcd.org/326/">XKCD Cartoon</a>
+   * @see <a href="http://www.xkcd.com/326/">XKCD Cartoon</a>
    */
   boolean mayEffectMutableState(Node n) {
     return checkForStateChangeHelper(n, /* checkForNewObjects= */ true);
@@ -117,12 +159,13 @@ public class AstAnalyzer {
     // Built-in functions with no side effects.
     if (callee.isName()) {
       String name = callee.getString();
-      if (BUILTIN_FUNCTIONS_WITHOUT_SIDEEFFECTS.contains(name)) {
+      if (assumeKnownBuiltinsArePure && BUILTIN_FUNCTIONS_WITHOUT_SIDEEFFECTS.contains(name)) {
         return false;
       }
     } else if (callee.isGetProp() || callee.isOptChainGetProp()) {
       if (callNode.hasOneChild()
-          && OBJECT_METHODS_WITHOUT_SIDEEFFECTS.contains(callee.getLastChild().getString())) {
+          && assumeKnownBuiltinsArePure
+          && OBJECT_METHODS_WITHOUT_SIDEEFFECTS.contains(callee.getString())) {
         return false;
       }
 
@@ -134,68 +177,72 @@ public class AstAnalyzer {
       // Many common Math functions have no side-effects.
       // TODO(nicksantos): This is a terrible terrible hack, until
       // I create a definitionProvider that understands namespacing.
-      if (callee.getFirstChild().isName()
+      if (assumeKnownBuiltinsArePure
+          && callee.getFirstChild().isName()
           && callee.isQualifiedName()
           && callee.getFirstChild().getString().equals("Math")) {
-        switch (callee.getLastChild().getString()) {
-          case "abs":
-          case "acos":
-          case "acosh":
-          case "asin":
-          case "asinh":
-          case "atan":
-          case "atanh":
-          case "atan2":
-          case "cbrt":
-          case "ceil":
-          case "cos":
-          case "cosh":
-          case "exp":
-          case "expm1":
-          case "floor":
-          case "hypot":
-          case "log":
-          case "log10":
-          case "log1p":
-          case "log2":
-          case "max":
-          case "min":
-          case "pow":
-          case "round":
-          case "sign":
-          case "sin":
-          case "sinh":
-          case "sqrt":
-          case "tan":
-          case "tanh":
-          case "trunc":
+        switch (callee.getString()) {
+          case "abs",
+              "acos",
+              "acosh",
+              "asin",
+              "asinh",
+              "atan",
+              "atanh",
+              "atan2",
+              "cbrt",
+              "ceil",
+              "cos",
+              "cosh",
+              "exp",
+              "expm1",
+              "floor",
+              "hypot",
+              "log",
+              "log10",
+              "log1p",
+              "log2",
+              "max",
+              "min",
+              "pow",
+              "round",
+              "sign",
+              "sin",
+              "sinh",
+              "sqrt",
+              "tan",
+              "tanh",
+              "trunc" -> {
             return false;
-          case "random":
-            return !callNode.hasOneChild(); // no parameters
-          default:
+          }
+          case "random" -> {
+            // no parameters
+            return !callNode.hasOneChild();
+          }
+          default -> {
             // Unknown Math.* function, so fall out of this switch statement.
+          }
         }
       }
 
-      if (!compiler.hasRegExpGlobalReferences()) {
-        if (callee.getFirstChild().isRegExp()
-            && REGEXP_METHODS.contains(callee.getLastChild().getString())) {
+      if (!hasRegexpGlobalReferences && assumeKnownBuiltinsArePure) {
+        if (callee.getFirstChild().isRegExp() && REGEXP_METHODS.contains(callee.getString())) {
           return false;
         } else if (isTypedAsString(callee.getFirstChild())) {
           // Unlike regexs, string methods don't need to be hosted on a string literal
           // to avoid leaking mutating global state changes, it is just necessary that
           // the regex object can't be referenced.
-          String method = callee.getLastChild().getString();
+          String method = callee.getString();
           Node param = callee.getNext();
           if (param != null) {
-            if (param.isString()) {
+            if (param.isStringLit()) {
               if (STRING_REGEXP_METHODS.contains(method)) {
                 return false;
               }
             } else if (param.isRegExp()) {
               if ("replace".equals(method)) {
                 // Assume anything but a string constant has side-effects
-                return !param.getNext().isString();
+                return !param.getNext().isStringLit();
               } else if (STRING_REGEXP_METHODS.contains(method)) {
                 return false;
               }
@@ -209,15 +256,18 @@ public class AstAnalyzer {
   }
 
   private boolean isTypedAsString(Node n) {
-    if (n.isString()) {
+    if (n.isStringLit()) {
       return true;
     }
 
-    if (compiler.getOptions().useTypesForLocalOptimization) {
+    if (useTypesForLocalOptimization) {
+      Color color = n.getColor();
+      if (color != null) {
+        return color.equals(StandardColors.STRING);
+      }
       JSType type = n.getJSType();
       if (type != null) {
-        JSType nativeStringType =
-            compiler.getTypeRegistry().getNativeType(JSTypeNative.STRING_TYPE);
+        JSType nativeStringType = typeRegistry.getNativeType(JSTypeNative.STRING_TYPE);
         if (type.equals(nativeStringType)) {
           return true;
         }
@@ -236,226 +286,168 @@ public class AstAnalyzer {
     Node parent = n.getParent();
     // Rather than id which ops may have side effects, id the ones
     // that we know to be safe
-    switch (n.getToken()) {
-      case THROW:
-        // Throw is a side-effect by definition.
-      case YIELD:
-      case AWAIT:
-      case FOR_AWAIT_OF:
-        // Context switches can conceal side-effects.
-      case FOR_OF:
-      case FOR_IN:
-        // Enhanced for loops are almost always side-effectful; it's not worth checking them
-        // further. Particularly, they represent a kind of assignment op.
-      case VAR:
-      case LET:
-      case CONST:
-      case EXPORT:
-        // Variable declarations are side-effects.
-        return true;
+    return switch (n.getToken()) {
+      case
+          // Throw is a side-effect by definition.
+          THROW,
+          // Context switches can conceal side-effects.
+          YIELD,
+          AWAIT,
+          FOR_AWAIT_OF,
+          // Enhanced for loops are almost always side-effectful; it's not worth checking them
+          // further. Particularly, they represent a kind of assignment op.
+          FOR_OF,
+          FOR_IN,
+          // Variable declarations are side-effects.
+          VAR,
+          LET,
+          CONST,
+          EXPORT,
+          // import() expressions have side effects
+          DYNAMIC_IMPORT ->
+          true;
 
-      case SUPER:
-        // The super keyword is a noop on its own.
-        return false;
+      // The super keyword is a noop on its own.
+      case SUPER -> false;
 
-      case OBJECTLIT:
-      case ARRAYLIT:
-      case REGEXP:
-        if (checkForNewObjects) {
-          return true;
-        }
-        break;
-
-      case OBJECT_REST:
-      case OBJECT_SPREAD:
+      case OBJECTLIT, ARRAYLIT, REGEXP ->
+          checkForNewObjects || checkForChangeStateInChildren(n, checkForNewObjects);
+      case OBJECT_REST, OBJECT_SPREAD ->
           // Object-rest and object-spread may trigger a getter.
-          if (assumeGettersArePure) {
-            break; // We still need to inspect the children.
-          }
-          return true;
+          !assumeGettersArePure || checkForChangeStateInChildren(n, checkForNewObjects);
+      case ITER_REST, ITER_SPREAD ->
+          NodeUtil.iteratesImpureIterable(n)
+              || checkForChangeStateInChildren(n, checkForNewObjects);
 
-      case ITER_REST:
-      case ITER_SPREAD:
-        if (NodeUtil.iteratesImpureIterable(n)) {
-          return true;
-        }
-        break;
+      case NAME ->
+          // NAMEs have children if the left side of a var/let/const
+          // TODO(b/129564961): Consider EXPORT declarations.
+          n.hasChildren();
+      case FUNCTION ->
+          // Function expressions don't have side-effects, but function
+          // declarations change the namespace. Either way, we don't need to
+          // check the children, since they aren't executed at declaration time.
+          checkForNewObjects || NodeUtil.isFunctionDeclaration(n);
 
-      case NAME:
-        // TODO(b/129564961): Consider EXPORT declarations.
-        if (n.hasChildren()) {
-          // This is the left side of a var/let/const
-          return true;
-        }
-        break;
+      case GETTER_DEF, SETTER_DEF, MEMBER_FUNCTION_DEF ->
+          // simply defining a member function, getter, or setter has no side effects
+          false;
 
-      case FUNCTION:
-        // Function expressions don't have side-effects, but function
-        // declarations change the namespace. Either way, we don't need to
-        // check the children, since they aren't executed at declaration time.
-        return checkForNewObjects || NodeUtil.isFunctionDeclaration(n);
+      case COMPUTED_PROP ->
+          switch (parent.getToken()) {
+            case CLASS_MEMBERS ->
+                // This is a computed method.
+                checkForStateChangeHelper(n.getFirstChild(), checkForNewObjects);
 
-      case GETTER_DEF:
-      case SETTER_DEF:
-      case MEMBER_FUNCTION_DEF:
-        // simply defining a member function, getter, or setter has no side effects
-        return false;
+            case OBJECT_PATTERN ->
+                // Due to language syntax, only the last child can be an OBJECT_REST.
+                // `({ ['thisKey']: target, ...rest} = something())`
+                // The presence of `thisKey` affects what properties get put into `rest`.
+                parent.getLastChild().isObjectRest()
+                    || checkForChangeStateInChildren(n, checkForNewObjects);
 
-      case CLASS:
-        return checkForNewObjects
-            || NodeUtil.isClassDeclaration(n)
-            // Check the extends clause for side effects.
-            || checkForStateChangeHelper(n.getSecondChild(), checkForNewObjects)
-            // Check for class members that are computed properties with side effects.
-            || checkForStateChangeHelper(n.getLastChild(), checkForNewObjects);
+            case OBJECTLIT ->
+                // Assume that COMPUTED_PROP keys in OBJECTLIT never trigger getters.
+                checkForChangeStateInChildren(n, checkForNewObjects);
+            default -> throw new IllegalStateException("Illegal COMPUTED_PROP parent " + parent);
+          };
+      case MEMBER_FIELD_DEF ->
+          n.isStaticMember()
+              && n.hasChildren()
+              && checkForStateChangeHelper(n.getFirstChild(), checkForNewObjects);
+      case COMPUTED_FIELD_DEF ->
+          checkForStateChangeHelper(n.getFirstChild(), checkForNewObjects)
+              || (n.isStaticMember()
+                  && n.getSecondChild() != null
+                  && checkForStateChangeHelper(n.getSecondChild(), checkForNewObjects));
+      case CLASS ->
+          checkForNewObjects
+              || NodeUtil.isClassDeclaration(n)
+              // Check the extends clause for side effects.
+              || checkForStateChangeHelper(n.getSecondChild(), checkForNewObjects)
+              // Check for class members that are computed properties with side effects.
+              || checkForStateChangeHelper(n.getLastChild(), checkForNewObjects);
 
-      case CLASS_MEMBERS:
-        for (Node member = n.getFirstChild(); member != null; member = member.getNext()) {
-          if (member.isComputedProp()
-              && checkForStateChangeHelper(member.getFirstChild(), checkForNewObjects)) {
-            return true;
-          }
-        }
-        return false;
+      case NEW ->
+          checkForNewObjects
+              || constructorCallHasSideEffects(n)
+              || checkForChangeStateInChildren(n, checkForNewObjects);
+      case CALL, OPTCHAIN_CALL, TAGGED_TEMPLATELIT ->
+          // calls to functions that have no side effects have the no
+          // side effect property set.
+          functionCallHasSideEffects(n) || checkForChangeStateInChildren(n, checkForNewObjects);
 
-      case NEW:
-        if (checkForNewObjects) {
-          return true;
-        }
+      case CAST,
+          AND,
+          BLOCK,
+          ROOT,
+          EXPR_RESULT,
+          HOOK,
+          IF,
+          CLASS_MEMBERS,
+          PARAM_LIST,
+          // Any context that supports DEFAULT_VALUE is already an assignment. The possiblity of a
+          // default doesn't itself create a side-effect. Therefore, we prefer to defer the
+          // decision.
+          DEFAULT_VALUE,
+          NUMBER,
+          BIGINT,
+          OR,
+          COALESCE,
+          THIS,
+          TRUE,
+          FALSE,
+          NULL,
+          STRINGLIT,
+          SWITCH,
+          TEMPLATELIT_SUB,
+          TRY,
+          EMPTY,
+          TEMPLATELIT,
+          TEMPLATELIT_STRING ->
+          checkForChangeStateInChildren(n, checkForNewObjects);
 
-        if (!constructorCallHasSideEffects(n)) {
-          // loop below will see if the constructor parameters have
-          // side-effects
-          break;
-        }
-        return true;
-
-      case CALL:
-      case OPTCHAIN_CALL:
-        // calls to functions that have no side effects have the no
-        // side effect property set.
-        if (!functionCallHasSideEffects(n)) {
-          // loop below will see if the function parameters have
-          // side-effects
-          break;
-        }
-        return true;
-
-      case TAGGED_TEMPLATELIT:
-        // TODO(b/128527671): Inspect the children of the expression for side-effects.
-        return functionCallHasSideEffects(n);
-
-      case CAST:
-      case AND:
-      case BLOCK:
-      case ROOT:
-      case EXPR_RESULT:
-      case HOOK:
-      case IF:
-      case PARAM_LIST:
-      case DEFAULT_VALUE:
-        // Any context that supports DEFAULT_VALUE is already an assignment. The possiblity of a
-        // default doesn't itself create a side-effect. Therefore, we prefer to defer the decision.
-      case NUMBER:
-      case OR:
-      case COALESCE:
-      case THIS:
-      case TRUE:
-      case FALSE:
-      case NULL:
-      case STRING:
-      case SWITCH:
-      case TEMPLATELIT_SUB:
-      case TRY:
-      case EMPTY:
-      case TEMPLATELIT:
-      case TEMPLATELIT_STRING:
-      case COMPUTED_PROP: // Assume that COMPUTED_PROP keys in OBJECT_PATTERN never trigger getters.
-        break;
-
-      case STRING_KEY:
+      case STRING_KEY -> {
         if (parent.isObjectPattern()) {
           // This STRING_KEY names a property being read from.
           // Assumption: GETELEM (via a COMPUTED_PROP) never triggers a getter or setter.
           if (getPropertyKind(n.getString()).hasGetter()) {
-            return true;
+            yield true;
           } else if (parent.getLastChild().isObjectRest()) {
             // Due to language syntax, only the last child can be an OBJECT_REST.
             // `({ thisKey: target, ...rest} = something())`
             // The presence of `thisKey` affects what properties get put into `rest`.
-            return true;
+            yield true;
           }
         }
-        break;
+        yield checkForChangeStateInChildren(n, checkForNewObjects);
+      }
 
-      case GETELEM:
-      case OPTCHAIN_GETELEM:
-        // Since we can't see what property is accessed we cannot tell whether
-        // obj[someProp]/obj?.[someProp] will
-        // trigger a getter or setter, and thus could have side effects.
-        // We will assume it does not. This introduces some risk of code breakage, but the code
-        // size cost of assuming all GETELEM/OPTCHAIN_GETELEM nodes have side effects is completely
-        // unacceptable.
-        break;
-      case GETPROP:
-      case OPTCHAIN_GETPROP:
-        if (getPropertyKind(n.getLastChild().getString()).hasGetterOrSetter()) {
+      // Since we can't see what property is accessed we cannot tell whether
+      // obj[someProp]/obj?.[someProp] will
+      // trigger a getter or setter, and thus could have side effects.
+      // We will assume it does not. This introduces some risk of code breakage, but the code
+      // size cost of assuming all GETELEM/OPTCHAIN_GETELEM nodes have side effects is
+      // completely unacceptable.
+      case GETELEM, OPTCHAIN_GETELEM -> checkForChangeStateInChildren(n, checkForNewObjects);
+
+      case GETPROP, OPTCHAIN_GETPROP ->
           // TODO(b/135640150): Use the parent nodes to determine whether this is a get or set.
-          return true;
-        }
-        break;
-
-      default:
+          getPropertyKind(n.getString()).hasGetterOrSetter()
+              || checkForChangeStateInChildren(n, checkForNewObjects);
+      default -> {
         if (NodeUtil.isSimpleOperator(n)) {
-          break;
+          yield checkForChangeStateInChildren(n, checkForNewObjects);
         }
-
         if (NodeUtil.isAssignmentOp(n)) {
-          Node assignTarget = n.getFirstChild();
-          if (assignTarget.isName()) {
-            return true;
-          }
-
-          // Assignments will have side effects if
-          // a) The RHS has side effects, or
-          // b) The LHS has side effects, or
-          // c) A name on the LHS will exist beyond the life of this statement.
-          if (checkForStateChangeHelper(n.getFirstChild(), checkForNewObjects)
-              || checkForStateChangeHelper(n.getLastChild(), checkForNewObjects)) {
-            return true;
-          }
-
-          if (NodeUtil.isNormalGet(assignTarget)) {
-            // If the object being assigned to is a local object, don't
-            // consider this a side-effect as it can't be referenced
-            // elsewhere.  Don't do this recursively as the property might
-            // be an alias of another object, unlike a literal below.
-            Node current = assignTarget.getFirstChild();
-            if (NodeUtil.evaluatesToLocalValue(current)) {
-              return false;
-            }
-
-            // A literal value as defined by "isLiteralValue" is guaranteed
-            // not to be an alias, or any components which are aliases of
-            // other objects.
-            // If the root object is a literal don't consider this a
-            // side-effect.
-            while (NodeUtil.isNormalGet(current)) {
-              current = current.getFirstChild();
-            }
-
-            return !NodeUtil.isLiteralValue(current, true);
-          } else {
-            // TODO(johnlenz): remove this code and make this an exception. This
-            // is here only for legacy reasons, the AST is not valid but
-            // preserve existing behavior.
-            return !NodeUtil.isLiteralValue(assignTarget, true);
-          }
+          yield checkAssignmentForChangeState(n, checkForNewObjects);
         }
+        yield true;
+      }
+    };
+  }
 
-        return true;
-    }
-
+  private boolean checkForChangeStateInChildren(Node n, boolean checkForNewObjects) {
     for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
       if (checkForStateChangeHelper(c, checkForNewObjects)) {
         return true;
@@ -463,6 +455,50 @@ public class AstAnalyzer {
     }
 
     return false;
+  }
+
+  private boolean checkAssignmentForChangeState(Node assignOp, boolean checkForNewObjects) {
+    Node assignTarget = assignOp.getFirstChild();
+
+    if (assignTarget.isName()) {
+      return true;
+    }
+
+    Node assignValue = assignOp.getLastChild();
+    // Assignments will have side effects if
+    // a) The RHS has side effects, or
+    // b) The LHS has side effects, or
+    // c) A name on the LHS will exist beyond the life of this statement.
+    if (checkForStateChangeHelper(assignTarget, checkForNewObjects)
+        || checkForStateChangeHelper(assignValue, checkForNewObjects)) {
+      return true;
+    }
+
+    if (!NodeUtil.isNormalGet(assignTarget)) {
+      // TODO(johnlenz): remove this code and make this an exception. This
+      // is here only for legacy reasons, the AST is not valid but
+      // preserve existing behavior.
+      return !NodeUtil.isLiteralValue(assignTarget, true);
+    }
+    // If the object being assigned to is a local object, don't
+    // consider this a side-effect as it can't be referenced
+    // elsewhere.  Don't do this recursively as the property might
+    // be an alias of another object, unlike a literal below.
+    Node current = assignTarget.getFirstChild();
+    if (NodeUtil.evaluatesToLocalValue(current)) {
+      return false;
+    }
+
+    // A literal value as defined by "isLiteralValue" is guaranteed
+    // not to be an alias, or any components which are aliases of
+    // other objects.
+    // If the root object is a literal don't consider this a
+    // side-effect.
+    while (NodeUtil.isNormalGet(current)) {
+      current = current.getFirstChild();
+    }
+
+    return !NodeUtil.isLiteralValue(current, true);
   }
 
   /**
@@ -487,7 +523,9 @@ public class AstAnalyzer {
     }
 
     Node nameNode = newNode.getFirstChild();
-    return !nameNode.isName() || !CONSTRUCTORS_WITHOUT_SIDE_EFFECTS.contains(nameNode.getString());
+    return !nameNode.isName()
+        || !assumeKnownBuiltinsArePure
+        || !CONSTRUCTORS_WITHOUT_SIDE_EFFECTS.contains(nameNode.getString());
   }
 
   /**
@@ -497,62 +535,42 @@ public class AstAnalyzer {
    * the current node's type is one of the reasons why a subtree has side effects.
    */
   boolean nodeTypeMayHaveSideEffects(Node n) {
-    checkNotNull(compiler);
     if (NodeUtil.isAssignmentOp(n)) {
       return true;
     }
 
-    switch (n.getToken()) {
-      case DELPROP:
-      case DEC:
-      case INC:
-      case YIELD:
-      case THROW:
-      case AWAIT:
-      case FOR_IN: // assigns to a loop LHS
-      case FOR_OF: // assigns to a loop LHS, runs an iterator
-      case FOR_AWAIT_OF: // assigns to a loop LHS, runs an iterator, async operations.
-        return true;
-      case OPTCHAIN_CALL:
-      case CALL:
-      case TAGGED_TEMPLATELIT:
-        return functionCallHasSideEffects(n);
-      case NEW:
-        return constructorCallHasSideEffects(n);
-      case NAME:
-        // A variable definition that assigns a value.
-        // TODO(b/129564961): Consider EXPORT declarations.
-        return n.hasChildren();
-      case DESTRUCTURING_LHS:
-        // A destructuring declaration statement or assignment. Technically these might contain no
-        // lvalues but that case is rare enough to be ignored.
-        return true;
-      case OBJECT_REST:
-      case OBJECT_SPREAD:
-        // Object-rest and object-spread may trigger a getter.
-        return !assumeGettersArePure;
-      case ITER_REST:
-      case ITER_SPREAD:
-        return NodeUtil.iteratesImpureIterable(n);
-      case STRING_KEY:
+    return switch (n.getToken()) {
+      case DELPROP, DEC, INC, YIELD, THROW, AWAIT, DYNAMIC_IMPORT -> true;
+      case FOR_IN, // assigns to a loop LHS
+          FOR_OF, // assigns to a loop LHS, runs an iterator
+          FOR_AWAIT_OF // assigns to a loop LHS, runs an iterator, async operations
+          ->
+          true;
+      case OPTCHAIN_CALL, CALL, TAGGED_TEMPLATELIT -> functionCallHasSideEffects(n);
+      case NEW -> constructorCallHasSideEffects(n);
+
+      // A variable definition that assigns a value.
+      // TODO(b/129564961): Consider EXPORT declarations.
+      case NAME -> n.hasChildren();
+      // A destructuring declaration statement or assignment. Technically these might contain no
+      // lvalues but that case is rare enough to be ignored.
+      case DESTRUCTURING_LHS -> true;
+
+      // Object-rest and object-spread may trigger a getter.
+      case OBJECT_REST, OBJECT_SPREAD -> !assumeGettersArePure;
+      case ITER_REST, ITER_SPREAD -> NodeUtil.iteratesImpureIterable(n);
+      case STRING_KEY -> {
         if (n.getParent().isObjectPattern()) {
-          return getPropertyKind(n.getString()).hasGetter();
+          yield getPropertyKind(n.getString()).hasGetter();
         }
-        break;
-      case GETPROP:
-      case OPTCHAIN_GETPROP:
-        return getPropertyKind(n.getLastChild().getString()).hasGetterOrSetter();
-
-      default:
-        break;
-    }
-
-    return false;
+        yield false;
+      }
+      case GETPROP, OPTCHAIN_GETPROP -> getPropertyKind(n.getString()).hasGetterOrSetter();
+      default -> false;
+    };
   }
 
   private PropertyAccessKind getPropertyKind(String name) {
-    return assumeGettersArePure
-        ? PropertyAccessKind.NORMAL
-        : compiler.getAccessorSummary().getKind(name);
+    return assumeGettersArePure ? PropertyAccessKind.NORMAL : accessorSummary.getKind(name);
   }
 }

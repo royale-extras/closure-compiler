@@ -29,10 +29,9 @@ import com.google.javascript.jscomp.modules.Module;
 import com.google.javascript.jscomp.modules.ModuleMap;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Looks for references to Closure's goog.js file and globalizes. The goog.js file is an ES6 module
@@ -64,7 +63,7 @@ import javax.annotation.Nullable;
  *
  * <p>{@code import 'path/to/closure/goog.js'; const myNamespace = goog.require('my.namespace'); }
  */
-public class RewriteGoogJsImports implements HotSwapCompilerPass {
+public class RewriteGoogJsImports implements CompilerPass {
   static final DiagnosticType GOOG_JS_IMPORT_MUST_BE_GOOG_STAR =
       DiagnosticType.error(
           "JSC_GOOG_JS_IMPORT_MUST_BE_GOOG_STAR",
@@ -100,8 +99,8 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
   private final Mode mode;
   private final ModuleMap moduleMap;
   private final AbstractCompiler compiler;
-  private Module googModule;
-  private final Map<Module, Module> moduleReplacements = new HashMap<>();
+  private @Nullable Module googModule;
+  private final Map<Module, Module> moduleReplacements = new LinkedHashMap<>();
 
   public RewriteGoogJsImports(AbstractCompiler compiler, Mode mode, ModuleMap moduleMap) {
     checkNotNull(moduleMap);
@@ -124,7 +123,8 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
       closureModules.put(m.getKey(), newModule);
     }
 
-    compiler.setModuleMap(new ModuleMap(resolvedModules.build(), closureModules.build()));
+    compiler.setModuleMap(
+        new ModuleMap(resolvedModules.buildOrThrow(), closureModules.buildOrThrow()));
     moduleReplacements.clear();
   }
 
@@ -176,8 +176,7 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
         return;
       }
 
-      if (globalizeAllReferences
-          || googModule.namespace().containsKey(parent.getSecondChild().getString())) {
+      if (globalizeAllReferences || googModule.namespace().containsKey(parent.getString())) {
         return;
       }
 
@@ -188,17 +187,13 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
       nameNode.setString("$goog");
       t.reportCodeChange();
 
-      return;
     }
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
-        case NAME:
-          maybeRewriteBadGoogJsImportRef(t, n, parent);
-          break;
-        default:
-          break;
+        case NAME -> maybeRewriteBadGoogJsImportRef(t, n, parent);
+        default -> {}
       }
     }
   }
@@ -232,34 +227,29 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
 
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
-      switch (n.getToken()) {
-        case ROOT:
-        case SCRIPT:
-        case MODULE_BODY:
-        case EXPORT_SPECS:
-        case EXPORT_SPEC:
-          return true;
-        case EXPORT:
+      return switch (n.getToken()) {
+        case ROOT, SCRIPT, MODULE_BODY, EXPORT_SPECS, EXPORT_SPEC -> true;
+        case EXPORT -> {
           checkIfForwardingExport(t, n);
-          return true;
-        case NAME:
+          yield true;
+        }
+        case NAME -> {
           // Visit names in export specs and export defaults.
           checkIfNameFowardedExport(t, n, parent);
-          return false;
-        default:
-          return false;
-      }
+          yield false;
+        }
+        default -> false;
+      };
     }
   }
 
-  @Nullable
-  private Node findGoogImportNode(Node scriptRoot) {
+  private @Nullable Node findGoogImportNode(Node scriptRoot) {
     // Cannot use the module map here - information is lost about the imports. The "bound names"
     // could be from transitive imports, but we lose the original import.
     boolean valid = true;
     Node googImportNode = null;
 
-    for (Node child : scriptRoot.getFirstChild().children()) {
+    for (Node child = scriptRoot.getFirstFirstChild(); child != null; child = child.getNext()) {
       if (child.isImport() && child.getLastChild().getString().endsWith("/goog.js")) {
         if (child.getFirstChild().isEmpty()
             && child.getSecondChild().isImportStar()
@@ -310,24 +300,21 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
       if (googImportNode != null && mode == Mode.LINT_AND_REWRITE) {
         // If googModule is null then goog.js was not part of the input. Try to be fault tolerant
         // and just assume that everything exported is on the global goog.
-        new ReferenceReplacer(
-            scriptRoot, googImportNode, module, /* globalizeAllReferences= */ googModule == null);
+        ReferenceReplacer unused =
+            new ReferenceReplacer(
+                scriptRoot,
+                googImportNode,
+                module,
+                /* globalizeAllReferences= */ googModule == null);
       }
     }
   }
 
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    rewriteImports(scriptRoot);
-    changeModules();
-  }
-
-  @Nullable
-  private Node findGoogJsScriptNode(Node root) {
+  private @Nullable Node findGoogJsScriptNode(Node root) {
     ModulePath expectedGoogPath = null;
 
     // Find Closure's base.js file. goog.js should be right next to it.
-    for (Node script : root.children()) {
+    for (Node script = root.getFirstChild(); script != null; script = script.getNext()) {
       ImmutableList<String> provides = compiler.getInput(script.getInputId()).getProvides();
       if (provides.contains(EXPECTED_BASE_PROVIDE)) {
         // Use resolveModuleAsPath as if it is not part of the input we don't want to report an
@@ -341,7 +328,7 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
     if (expectedGoogPath != null) {
       Node googScriptNode = null;
 
-      for (Node script : root.children()) {
+      for (Node script = root.getFirstChild(); script != null; script = script.getNext()) {
         if (compiler
             .getInput(script.getInputId())
             .getPath()
@@ -350,9 +337,7 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
         } else if (script.getSourceFileName().endsWith("/goog.js")) {
           // Ban the name goog.js as input except for Closure's goog.js file. This simplifies a lot
           // of logic if the only file that is allowed to be named goog.js is Closure's.
-          compiler.report(
-              JSError.make(
-                  script.getSourceFileName(), -1, -1, CheckLevel.ERROR, CANNOT_NAME_FILE_GOOG));
+          compiler.report(JSError.make(script.getSourceFileName(), -1, -1, CANNOT_NAME_FILE_GOOG));
         }
       }
 
@@ -394,7 +379,7 @@ public class RewriteGoogJsImports implements HotSwapCompilerPass {
       checkState(mode == Mode.LINT_ONLY);
     }
 
-    for (Node script : root.children()) {
+    for (Node script = root.getFirstChild(); script != null; script = script.getNext()) {
       rewriteImports(script);
     }
 

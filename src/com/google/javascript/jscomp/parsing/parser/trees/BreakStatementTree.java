@@ -18,18 +18,19 @@ package com.google.javascript.jscomp.parsing.parser.trees;
 
 import com.google.javascript.jscomp.parsing.parser.IdentifierToken;
 import com.google.javascript.jscomp.parsing.parser.util.SourceRange;
+import org.jspecify.annotations.Nullable;
 
 public class BreakStatementTree extends ParseTree {
 
   public final IdentifierToken name;
 
-  public BreakStatementTree(SourceRange location, IdentifierToken name) {
+  public BreakStatementTree(SourceRange location, @Nullable IdentifierToken name) {
     super(ParseTreeType.BREAK_STATEMENT, location);
 
     this.name = name;
   }
 
-  public String getLabel() {
-    return name == null ? null : name.value;
+  public boolean hasLabel() {
+    return name != null;
   }
 }

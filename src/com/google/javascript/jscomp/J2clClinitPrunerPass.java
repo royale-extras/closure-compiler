@@ -21,34 +21,33 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
-import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** An optimization pass to prune J2CL clinits. */
 public class J2clClinitPrunerPass implements CompilerPass {
 
   private final Map<String, Node> emptiedClinitMethods = new LinkedHashMap<>();
   private final AbstractCompiler compiler;
-  private final List<Node> changedScopeNodes;
+  private final @Nullable List<Node> initialChangedScopeNodes;
 
-  J2clClinitPrunerPass(AbstractCompiler compiler, List<Node> changedScopeNodes) {
+  J2clClinitPrunerPass(AbstractCompiler compiler, List<Node> initialChangedScopeNodes) {
     this.compiler = compiler;
-    this.changedScopeNodes = changedScopeNodes;
+    this.initialChangedScopeNodes = initialChangedScopeNodes;
   }
 
   @Override
@@ -57,9 +56,8 @@ public class J2clClinitPrunerPass implements CompilerPass {
       return;
     }
 
-    removeRedundantClinits(root, changedScopeNodes);
-
-    pruneEmptyClinits(root, changedScopeNodes);
+    removeRedundantClinits(root, initialChangedScopeNodes);
+    pruneEmptyClinits(root, initialChangedScopeNodes);
 
     if (emptiedClinitMethods.isEmpty()) {
       // Since no clinits are pruned, we don't need look for more opportunities.
@@ -77,25 +75,19 @@ public class J2clClinitPrunerPass implements CompilerPass {
     new PureFunctionIdentifier.Driver(compiler).process(externs, root);
   }
 
-  private void removeRedundantClinits(Node root, List<Node> changedScopeNodes) {
-    RedundantClinitPruner redundantClinitPruner = new RedundantClinitPruner();
-    NodeTraversal.traverseScopeRoots(
-        compiler,
-        root,
-        getNonNestedParentScopeNodes(changedScopeNodes),
-        redundantClinitPruner,
-        redundantClinitPruner, // FunctionCallback
-        true);
+  private void removeRedundantClinits(Node root, @Nullable List<Node> changedScopeNodes) {
+    List<Node> changedRoots = getNonNestedParentScopeNodes(changedScopeNodes);
+    traverseScopeRootsWithFallback(
+        root, changedRoots, new RedundantClinitPruner(changedRoots), true);
 
-    NodeTraversal.traverseScopeRoots(
-        compiler, root, changedScopeNodes, new LookAheadRedundantClinitPruner(), false);
+    traverseScopeRootsWithFallback(
+        root, changedScopeNodes, new LookAheadRedundantClinitPruner(), false);
   }
 
-  private void pruneEmptyClinits(Node root, List<Node> changedScopes) {
+  private void pruneEmptyClinits(Node root, @Nullable List<Node> changedScopes) {
     // Clear emptiedClinitMethods before EmptyClinitPruner to populate only with new ones.
     emptiedClinitMethods.clear();
-    NodeTraversal.traverseScopeRoots(
-        compiler, root, changedScopes, new EmptyClinitPruner(), false);
+    traverseScopeRootsWithFallback(root, changedScopes, new EmptyClinitPruner(), false);
 
     // Make sure replacements are to final destination instead of pointing intermediate ones.
     for (Entry<String, Node> clinitReplacementEntry : emptiedClinitMethods.entrySet()) {
@@ -103,7 +95,19 @@ public class J2clClinitPrunerPass implements CompilerPass {
     }
   }
 
-  private Node resolveReplacement(Node node) {
+  private void traverseScopeRootsWithFallback(
+      Node root,
+      @Nullable List<Node> scopeRoots,
+      NodeTraversal.Callback callback,
+      boolean traverseNested) {
+    if (scopeRoots == null) {
+      NodeTraversal.traverse(compiler, root, callback);
+    } else {
+      NodeTraversal.traverseScopeRoots(compiler, scopeRoots, callback, traverseNested);
+    }
+  }
+
+  private @Nullable Node resolveReplacement(Node node) {
     if (node == null) {
       return null;
     }
@@ -140,7 +144,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
 
       Collection<Node> references = clinitReferences.removeAll(clinitName);
       for (Node reference : references) {
-        Node changedScope = NodeUtil.getEnclosingChangeScopeRoot(reference.getParent());
+        Node changedScope = ChangeTracker.getEnclosingChangeScopeRoot(reference.getParent());
         if (replacement == null) {
           NodeUtil.deleteFunctionCall(reference, compiler);
         } else {
@@ -155,7 +159,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
     return newChangedScopes;
   }
 
-  private static List<Node> getNonNestedParentScopeNodes(List<Node> changedScopeNodes) {
+  private static @Nullable List<Node> getNonNestedParentScopeNodes(List<Node> changedScopeNodes) {
     return changedScopeNodes == null
         ? null
         : NodeUtil.removeNestedChangeScopeNodes(
@@ -163,20 +167,24 @@ public class J2clClinitPrunerPass implements CompilerPass {
   }
 
   /** Removes redundant clinit calls inside method body if it is guaranteed to be called earlier. */
-  private final class RedundantClinitPruner implements Callback, ChangeScopeRootCallback {
+  private final class RedundantClinitPruner implements NodeTraversal.Callback {
 
-    @Override
-    public void enterChangeScopeRoot(AbstractCompiler compiler, Node root) {
-      // Reset the clinit call tracking when starting over on a new scope.
-      clinitsCalledAtBranch = new HierarchicalSet<>(null);
-      stateStack.clear();
-    }
-
+    private final ImmutableSet<Node> roots;
     private final Deque<HierarchicalSet<String>> stateStack = new ArrayDeque<>();
     private HierarchicalSet<String> clinitsCalledAtBranch = new HierarchicalSet<>(null);
 
+    RedundantClinitPruner(Iterable<Node> roots) {
+      this.roots = (roots == null) ? ImmutableSet.of() : ImmutableSet.copyOf(roots);
+    }
+
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node node, Node parent) {
+      if (this.roots.contains(node)) {
+        // Reset the clinit call tracking when starting over on a new scope.
+        clinitsCalledAtBranch = new HierarchicalSet<>(null);
+        stateStack.clear();
+      }
+
       if (NodeUtil.isFunctionDeclaration(node) || node.isScript()) {
         // In the case of function declarations, unlike function expressions, we don't know when the
         // function will be executed so assume there are no clinits already executed.
@@ -184,7 +192,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
         // to be executed in program order.
         stateStack.addLast(clinitsCalledAtBranch);
         clinitsCalledAtBranch = new HierarchicalSet<>(null);
-      } 
+      }
 
       if (isNewControlBranch(parent)) {
         clinitsCalledAtBranch = new HierarchicalSet<>(clinitsCalledAtBranch);
@@ -267,8 +275,11 @@ public class J2clClinitPrunerPass implements CompilerPass {
 
       // Check that the call isn't a recursive call to the same function.
       Node enclosingFunction = NodeUtil.getEnclosingFunction(node);
-      if (enclosingFunction == null || callOrNewNode.getFirstChild().getString()
-          .equals(NodeUtil.getNearestFunctionName(enclosingFunction))) {
+      if (enclosingFunction == null
+          || callOrNewNode
+              .getFirstChild()
+              .getString()
+              .equals(NodeUtil.getNearestFunctionName(enclosingFunction))) {
         return;
       }
 
@@ -281,7 +292,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
       // Check that the clinit call is safe to prune.
       Node staticFnNode = var.getInitialValue();
       if (callsClinit(staticFnNode, clinitName) && hasSafeArguments(t, callOrNewNode)) {
-        parent.removeChild(node);
+        node.detach();
         compiler.reportChangeToEnclosingScope(parent);
       }
     }
@@ -294,7 +305,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
     private boolean hasSafeArguments(NodeTraversal t, Node callOrNewNode) {
       Node child = callOrNewNode.getSecondChild();
       while (child != null) {
-        if (!NodeUtil.isLiteralValue(child, false /* includeFunctions */)
+        if (!NodeUtil.isLiteralValue(child, /* includeFunctions= */ false)
             && !isParameter(t, child)) {
           return false;
         }
@@ -316,24 +327,16 @@ public class J2clClinitPrunerPass implements CompilerPass {
      * Returns the call node associated with the specified node if one exists, otherwise returns
      * null.
      */
-    private Node getCallOrNewNode(Node n) {
+    private @Nullable Node getCallOrNewNode(Node n) {
       if (n == null) {
         return null;
       }
-      switch (n.getToken()) {
-        case EXPR_RESULT:
-        case RETURN:
-          return getCallOrNewNode(n.getFirstChild());
-        case CALL:
-        case NEW:
-          return n;
-        case CONST:
-        case LET:
-        case VAR:
-          return n.hasOneChild() ? getCallOrNewNode(n.getFirstFirstChild()) : null;
-        default:
-          return null;
-      }
+      return switch (n.getToken()) {
+        case EXPR_RESULT, RETURN -> getCallOrNewNode(n.getFirstChild());
+        case CALL, NEW -> n;
+        case CONST, LET, VAR -> n.hasOneChild() ? getCallOrNewNode(n.getFirstFirstChild()) : null;
+        default -> null;
+      };
     }
 
     /** Returns whether the specified function contains a call to the specified clinit. */
@@ -422,7 +425,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
     return node.isFunction() && isClinitMethodName(getQualifiedNameOfFunction(node));
   }
 
-  private static String getClinitMethodName(Node node) {
+  private static @Nullable String getClinitMethodName(Node node) {
     if (node.isCall()) {
       String fnName = NodeUtil.getBestLValueName(node.getFirstChild());
       return isClinitMethodName(fnName) ? fnName : null;
@@ -440,8 +443,8 @@ public class J2clClinitPrunerPass implements CompilerPass {
    * any of its parents.
    */
   private static class HierarchicalSet<T> {
-    private final Set<T> currentSet = new HashSet<>();
-    @Nullable private final HierarchicalSet<T> parent;
+    private final Set<T> currentSet = new LinkedHashSet<>();
+    private final @Nullable HierarchicalSet<T> parent;
 
     public HierarchicalSet(@Nullable HierarchicalSet<T> parent) {
       this.parent = parent;

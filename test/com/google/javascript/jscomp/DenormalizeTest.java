@@ -16,147 +16,147 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.Normalize.NormalizeStatements;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.Node;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** @author johnlenz@google.com (John Lenz) */
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 @RunWith(JUnit4.class)
 public final class DenormalizeTest extends CompilerTestCase {
+
+  private FeatureSet outputFeatureSet = FeatureSet.ES_UNSUPPORTED;
+
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    return new NormalizeAndDenormalizePass(compiler);
-  }
-
-  @Override
-  @Before
-  public void setUp() throws Exception {
-    super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    // The normalize pass is only run once.
-    return 1;
+    return new NormalizeAndDenormalizePass(compiler, outputFeatureSet);
   }
 
   @Test
   public void testInlineVarNullishCoalesce() {
-    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
     test(
-        lines(
-            "function f() {",
-            "  var x;",
-            "  function g() { x = 0 ?? \"hi\"; }",
-            "  if (y) { x = -1 ?? true; }",
-            "  alert(x);",
-            "}"),
-        lines(
-            "function f() {",
-            "  function g() { x = 0 ?? \"hi\"; }",
-            "  if (y) { var x = -1 ?? true; }",
-            "  alert(x);",
-            "}"));
+        """
+        function f() {
+          var x;
+          function g() { x = 0 ?? "hi"; }
+          if (y) { x = -1 ?? true; }
+          alert(x);
+        }
+        """,
+        """
+        function f() {
+          function g() { x = 0 ?? "hi"; }
+          if (y) { var x = -1 ?? true; }
+          alert(x);
+        }
+        """);
   }
 
   @Test
   public void testInlineVarKeyword1() {
     test(
-        lines(
-            "function f() {",
-            "  var x;",
-            "  function g() { x = 2; }",
-            "  if (y) { x = -1; }",
-            "  alert(x);",
-            "}"),
-        lines(
-            "function f() {",
-            "  function g() { x = 2; }",
-            "  if (y) { var x = -1; }",
-            "  alert(x);",
-            "}"));
+        """
+        function f() {
+          var x;
+          function g() { x = 2; }
+          if (y) { x = -1; }
+          alert(x);
+        }
+        """,
+        """
+        function f() {
+          function g() { x = 2; }
+          if (y) { var x = -1; }
+          alert(x);
+        }
+        """);
   }
 
   @Test
   public void testInlineVarKeyword2() {
     test(
-        lines(
-            "function f() {",
-            "  var x;",
-            "  function g() { x = 2; }",
-            "  if (y) { x = -1; } else { x = 3; }",
-            "  alert(x);",
-            "}"),
-        lines(
-            "function f() {",
-            "  function g() { x = 2; }",
-            "  if (y) { var x = -1; } else { x = 3; }",
-            "  alert(x);",
-            "}"));
+        """
+        function f() {
+          var x;
+          function g() { x = 2; }
+          if (y) { x = -1; } else { x = 3; }
+          alert(x);
+        }
+        """,
+        """
+        function f() {
+          function g() { x = 2; }
+          if (y) { var x = -1; } else { x = 3; }
+          alert(x);
+        }
+        """);
   }
 
   @Test
   public void testInlineVarKeywordArrowFunc1() {
     test(
-        lines(
-            "var f = () => {",
-            "  var x;",
-            "  var g = () => { x = 2; }",
-            "  if (y) { x = -1; }",
-            "  alert(x);",
-            "}"),
-        lines(
-            "var f = () => {",
-            "  var g = () => { x = 2; }",
-            "  if (y) { var x = -1; }",
-            "  alert(x);",
-            "}"));
+        """
+        var f = () => {
+          var x;
+          var g = () => { x = 2; }
+          if (y) { x = -1; }
+          alert(x);
+        }
+        """,
+        """
+        var f = () => {
+          var g = () => { x = 2; }
+          if (y) { var x = -1; }
+          alert(x);
+        }
+        """);
   }
 
   @Test
   public void testInlineVarKeywordArrowFunc2() {
     test(
-        lines(
-            "var f = () => {",
-            "  var x;",
-            "  var g = () => { x = 2; }",
-            "  if (y) { x = -1; } else { x = 3; }",
-            "  alert(x);",
-            "}"),
-        lines(
-            "var f = () => {",
-            "  var g = () => { x = 2; }",
-            "  if (y) { var x = -1; } else { x = 3; }",
-            "  alert(x);",
-            "}"));
+        """
+        var f = () => {
+          var x;
+          var g = () => { x = 2; }
+          if (y) { x = -1; } else { x = 3; }
+          alert(x);
+        }
+        """,
+        """
+        var f = () => {
+          var g = () => { x = 2; }
+          if (y) { var x = -1; } else { x = 3; }
+          alert(x);
+        }
+        """);
   }
 
   @Test
   public void testNotInlineConstLet() {
     testSame(
-        lines(
-            "let x;",
-            "if (y) { x = -1; }"));
+        """
+        let x;
+        if (y) { x = -1; }
+        """);
 
     testSame(
-        lines(
-            "const x = 1;",
-            "if (y) { x = -1; }"));
+        """
+        const x = 1;
+        if (y) { x = -1; }
+        """);
   }
 
   @Test
   public void testFor() {
     // Verify assignments are moved into the FOR init node.
-    test("a = 0; for(; a < 2 ; a++) foo()",
-         "for(a = 0; a < 2 ; a++) foo();");
+    test("a = 0; for(; a < 2 ; a++) foo()", "for(a = 0; a < 2 ; a++) foo();");
     // Verify vars are are moved into the FOR init node.
-    test("var a = 0; for(; c < b ; c++) foo()",
-         "for(var a = 0; c < b ; c++) foo()");
+    test("var a = 0; for(; c < b ; c++) foo()", "for(var a = 0; c < b ; c++) foo()");
 
     // We don't handle labels yet.
     testSame("var a = 0; a:for(; c < b ; c++) foo()");
@@ -167,24 +167,25 @@ public final class DenormalizeTest extends CompilerTestCase {
     testSame("const a = 0; for(; c < b ; c++) foo()");
 
     // Verify FOR inside IFs.
-    test("if(x){var a = 0; for(; c < b; c++) foo()}",
-         "if(x){for(var a = 0; c < b; c++) foo()}");
+    test("if(x){var a = 0; for(; c < b; c++) foo()}", "if(x){for(var a = 0; c < b; c++) foo()}");
 
     // Any other expression.
-    test("init(); for(; a < 2 ; a++) foo()",
-         "for(init(); a < 2 ; a++) foo();");
+    test("init(); for(; a < 2 ; a++) foo()", "for(init(); a < 2 ; a++) foo();");
 
     // Other statements are left as is.
-    test("function f(){ var a; for(; a < 2 ; a++) foo() }",
-         "function f(){ for(var a; a < 2 ; a++) foo() }");
+    test(
+        "function f(){ var a; for(; a < 2 ; a++) foo() }",
+        "function f(){ for(var a; a < 2 ; a++) foo() }");
     testSame("function f(){ return; for(; a < 2 ; a++) foo() }");
 
     // Verify destructuring assignments are moved.
-    test("[a, b] = [1, 2]; for (; a < 2; a = b++) foo();",
+    test(
+        "[a, b] = [1, 2]; for (; a < 2; a = b++) foo();",
         "for ([a, b] = [1, 2]; a < 2; a = b++) foo();");
 
-    test("var [a, b] = [1, 2]; for (; a < 2; a = b++) foo();",
-        "for (var [a, b] = [1, 2]; a < 2; a = b++) foo();");
+    test(
+        "var [a, b] = [1, 2]; for (; a < 2; a = b++) foo();",
+        "var a; var b; for ([a, b] = [1, 2]; a < 2; a = b++) foo();");
   }
 
   @Test
@@ -198,8 +199,7 @@ public final class DenormalizeTest extends CompilerTestCase {
     testSame("var a; a:b:for(a in b) foo()");
 
     // Verify FOR inside IFs.
-    test("if(x){var a; for(a in b) foo()}",
-         "if(x){for(var a in b) foo()}");
+    test("if(x){var a; for(a in b) foo()}", "if(x){for(var a in b) foo()}");
 
     // Any other expression.
     testSame("init(); for(a in b) foo()");
@@ -222,8 +222,7 @@ public final class DenormalizeTest extends CompilerTestCase {
     testSame("var a; a: b: for (a of b) foo()");
 
     // Verify FOR inside IFs.
-    test("if (x) { var a; for (a of b) foo() }",
-         "if (x) { for (var a of b) foo() }");
+    test("if (x) { var a; for (a of b) foo() }", "if (x) { for (var a of b) foo() }");
 
     // Any other expression.
     testSame("init(); for (a of b) foo()");
@@ -243,17 +242,28 @@ public final class DenormalizeTest extends CompilerTestCase {
     // a for loop, even if it's protected by parentheses.
 
     // Make sure the in operator doesn't get moved into the for loop.
-    testSame("function f(){ var a; var i=\"length\" in a;" +
-        "for(; a < 2 ; a++) foo() }");
+    testSame(
+        """
+        function f(){ var a; var i="length" in a;
+        for(; a < 2 ; a++) foo() }
+        """);
     // Same, but with parens around the operator.
-    testSame("function f(){ var a; var i=(\"length\" in a);" +
-        "for(; a < 2 ; a++) foo() }");
+    testSame(
+        """
+        function f(){ var a; var i=("length" in a);
+        for(; a < 2 ; a++) foo() }
+        """);
     // Make sure Normalize yanks the variable initializer out, and
     // Denormalize doesn't put it back.
-    test("function f(){" +
-         "var b,a=0; for (var i=(\"length\" in b);a<2; a++) foo()}",
-         "function f(){var b; var a=0;var i=(\"length\" in b);" +
-         "for (;a<2;a++) foo()}");
+    test(
+        """
+        function f(){
+        var b,a=0; for (var i=("length" in b);a<2; a++) foo()}
+        """,
+        """
+        function f(){var b; var a=0;var i=("length" in b);
+        for (;a<2;a++) foo()}
+        """);
   }
 
   @Test
@@ -274,89 +284,134 @@ public final class DenormalizeTest extends CompilerTestCase {
   }
 
   @Test
+  public void testAssignShorthandDontDenormalizeWhenLHSNotName() {
+    testSame("obj.x = obj.x + 1;");
+  }
+
+  @Test
+  public void testLogicalAssignShorthand() {
+    test("x || (x = 1);", "x ||= 1;");
+    test("x && (x = 1);", "x &&= 1;");
+    test("x ?? (x = 1);", "x ??= 1;");
+  }
+
+  @Test
+  public void testLogicalAssignShorthandDontDenormalizeWhenLHSNotName() {
+    testSame("obj.x || (obj.x = 1);");
+  }
+
+  @Test
+  public void testLogicalAssignShorthandRHSAssignmentOp() {
+    // This test was intended to show that the following should not fold into `a ||= 1`
+    // Both Normalize and Denormalize report to the compiler they have modified this code
+    // (Normalize produces `a || (a = a + 1);` and Denormalize reverts it to `a || (a += 1);`).
+    // The unit test wants to warn on unnecessary change reporting,
+    // so validating AST change marking has been disabled.
+    disableValidateAstChangeMarking();
+    testSame("a || (a += 1);");
+  }
+
+  @Test
+  public void testLogicalAssignShorthandBrowser2020() {
+    this.outputFeatureSet = FeatureSet.BROWSER_2020;
+    testSame("x || (x = 1);");
+    testSame("x && (x = 1);");
+    testSame("x ?? (x = 1);");
+  }
+
+  @Test
   public void testNoCrashOnEs6Features() {
     test(
-        lines(
-            "class C {",
-            "  constructor() {",
-            "    var x;",
-            "    if (y) { x = -1; }",
-            "  }",
-            "}"),
-        lines(
-            "class C {",
-            "  constructor() {",
-            "    if (y) { var x = -1; }",
-            "  }",
-            "}"));
+        """
+        class C {
+          constructor() {
+            var x;
+            if (y) { x = -1; }
+          }
+        }
+        """,
+        """
+        class C {
+          constructor() {
+            if (y) { var x = -1; }
+          }
+        }
+        """);
 
     test(
-        lines(
-            "var obj = {",
-            "  method() {",
-            "    var c; for (; c < b ; c++) foo()",
-            "  },",
-            "}"),
-        lines(
-            "var obj = {",
-            "  method() {",
-            "    for (var c; c < b ; c++) foo()",
-            "  },",
-            "}"));
+        """
+        var obj = {
+          method() {
+            var c; for (; c < b ; c++) foo()
+          },
+        }
+        """,
+        """
+        var obj = {
+          method() {
+            for (var c; c < b ; c++) foo()
+          },
+        }
+        """);
 
     testSame(
-        lines(
-            "var obj = {",
-            "  ['computed' + 'prop']: 42",
-            "}"));
+        """
+        var obj = {
+          ['computed' + 'prop']: 42
+        }
+        """);
 
     // Denormalize does not revert shorthand object literals that were expanded in Normalize
     test(
-        lines(
-            "var obj = {",
-            "  key",
-            "}"),
-        lines(
-            "var obj = {",
-            "  key: key",
-            "}"));
+        """
+        var obj = {
+          key
+        }
+        """,
+        """
+        var obj = {
+          key: key
+        }
+        """);
 
     test(
-        lines(
-            "function tag(strings) {",
-            "  var x;",
-            "  if (y) { x = x + 1; }",
-            "}",
-            "tag`template`"),
-        lines(
-            "function tag(strings) {",
-            "  var x;",
-            "  if (y) { x += 1; }",
-            "}",
-            "tag`template`"));
+        """
+        function tag(strings) {
+          var x;
+          if (y) { x = x + 1; }
+        }
+        tag`template`
+        """,
+        """
+        function tag(strings) {
+          var x;
+          if (y) { x += 1; }
+        }
+        tag`template`
+        """);
 
     testSame(
-        lines(
-            "var x;",
-            "var y;",
-            "if (y) { [x, y] = [1, 2]; }"));
+        """
+        var x;
+        var y;
+        if (y) { [x, y] = [1, 2]; }
+        """);
   }
 
   /**
-   * Create a class to combine the Normalize and Denormalize passes.
-   * This is needed because the enableNormalize() call on CompilerTestCase
-   * causes normalization of the result *and* the expected string, and
-   * we really don't want the compiler twisting the expected code around.
+   * Create a class to combine the Normalize and Denormalize passes. This is needed because the
+   * enableNormalize() call on CompilerTestCase causes normalization of the result *and* the
+   * expected string, and we really don't want the compiler twisting the expected code around.
    */
   public static final class NormalizeAndDenormalizePass implements CompilerPass {
     Denormalize denormalizePass;
     NormalizeStatements normalizePass;
     AbstractCompiler compiler;
 
-    public NormalizeAndDenormalizePass(AbstractCompiler compiler) {
+    public NormalizeAndDenormalizePass(AbstractCompiler compiler, FeatureSet outputFeatureSet) {
       this.compiler = compiler;
-      denormalizePass = new Denormalize(compiler);
-      normalizePass = new NormalizeStatements(compiler, false);
+      denormalizePass = new Denormalize(compiler, outputFeatureSet);
+      normalizePass = new NormalizeStatements(compiler, false, null);
     }
 
     @Override
@@ -365,5 +420,4 @@ public final class DenormalizeTest extends CompilerTestCase {
       denormalizePass.process(externs, root);
     }
   }
-
 }

@@ -17,10 +17,15 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.TernaryValue;
+import java.math.BigInteger;
+import java.util.LinkedHashSet;
 
 /**
  * An abstract class whose implementations run peephole optimizations:
@@ -33,6 +38,15 @@ abstract class AbstractPeepholeOptimization {
   private AbstractCompiler compiler;
   /** Intentionally not exposed to subclasses */
   private AstAnalyzer astAnalyzer;
+
+  /**
+   * New parser features added in some {@link #optimizeSubtree} call.
+   *
+   * <p>{@link PeepholeOptimizationsPass} uses this to call {@link NodeUtil#addFeaturesToScript} in
+   * closer to O(1) time, as this class doesn't know what script node it's currently in, and would
+   * need to walk the AST.
+   */
+  private final LinkedHashSet<Feature> newFeatures = new LinkedHashSet<>();
 
   /**
    * Given a node to optimize and a traversal, optimize the node. Subclasses
@@ -85,6 +99,22 @@ abstract class AbstractPeepholeOptimization {
     astAnalyzer = compiler.getAstAnalyzer();
   }
 
+  /**
+   * Informs the optimization that a traversal has ended.
+   *
+   * <p>This class cannot be used after this method is called, unless {@link #beginTraversal} is
+   * called again.
+   */
+  void endTraversal() {
+    checkState(
+        this.newFeatures.isEmpty(),
+        "Expected getNewFeatures() to be empty in endTraversal() but found %s for %s",
+        this.newFeatures,
+        this.getClass().getName());
+    this.compiler = null;
+    astAnalyzer = null;
+  }
+
   /** Returns whether the node may create new mutable state, or change existing state. */
   protected boolean mayEffectMutableState(Node n) {
     return astAnalyzer.mayEffectMutableState(n);
@@ -104,6 +134,31 @@ abstract class AbstractPeepholeOptimization {
     Double value = NodeUtil.getNumberValue(n);
     // Calculating the number value, if any, is likely to be faster than calculating side effects,
     // and there are only a very few cases where we can compute a number value, but there could
+    // also be side effects. e.g. `void doSomething()` has value NaN, regardless of the behavior
+    // of `doSomething()`
+    if (value != null && astAnalyzer.mayHaveSideEffects(n)) {
+      value = null;
+    }
+    return value;
+  }
+
+  protected Double getSideEffectFreeNumberValueNoConversion(Node n) {
+    Double value = NodeUtil.getNumberValueNoConversions(n);
+    if (value != null && astAnalyzer.mayHaveSideEffects(n)) {
+      value = null;
+    }
+    return value;
+  }
+
+  /**
+   * Returns the bigint value of the node if it has one and it cannot have side effects.
+   *
+   * <p>Returns {@code null} otherwise.
+   */
+  protected BigInteger getSideEffectFreeBigIntValue(Node n) {
+    BigInteger value = NodeUtil.getBigIntValue(n);
+    // Calculating the bigint value, if any, is likely to be faster than calculating side effects,
+    // and there are only a very few cases where we can compute a bigint value, but there could
     // also be side effects. e.g. `void doSomething()` has value NaN, regardless of the behavior
     // of `doSomething()`
     if (value != null && astAnalyzer.mayHaveSideEffects(n)) {
@@ -133,17 +188,17 @@ abstract class AbstractPeepholeOptimization {
   /**
    * Calculate the known boolean value for a node if possible and if it has no side effects.
    *
-   * <p>Returns {@link TernaryValue#UNKNOWN} if the node has side effects or its value cannot be
-   * statically determined.
+   * <p>Returns {@link Tri#UNKNOWN} if the node has side effects or its value cannot be statically
+   * determined.
    */
-  protected TernaryValue getSideEffectFreeBooleanValue(Node n) {
-    TernaryValue value = NodeUtil.getBooleanValue(n);
+  protected Tri getSideEffectFreeBooleanValue(Node n) {
+    Tri value = NodeUtil.getBooleanValue(n);
     // Calculating the boolean value, if any, is likely to be faster than calculating side effects,
     // and there are only a very few cases where we can compute a boolean value, but there could
     // also be side effects. e.g. `void doSomething()` has value `false`, regardless of the
     // behavior of `doSomething()`
-    if (value != TernaryValue.UNKNOWN && astAnalyzer.mayHaveSideEffects(n)) {
-      value = TernaryValue.UNKNOWN;
+    if (value != Tri.UNKNOWN && astAnalyzer.mayHaveSideEffects(n)) {
+      value = Tri.UNKNOWN;
     }
     return value;
   }
@@ -193,5 +248,26 @@ abstract class AbstractPeepholeOptimization {
   protected final void markNewScopesChanged(Node n) {
     checkNotNull(compiler);
     NodeUtil.markNewScopesChanged(n, compiler);
+  }
+
+  /** Calls {@link NodeUtil#addFeatureToScript} with the script currently being visited. */
+  protected final void addFeatureToEnclosingScript(Feature feature) {
+    // NOTE: we could implement this as
+    //  protected final void addFeatureToEnclosingScript(Node node, Feature feature) {
+    //     NodeUtil.addFeatureToScript(NodeUtil.getEnclosingScript(node), ...
+    // This is expected to be behaviorally equivalent.
+    // However, walking the AST to get the enclosing script is O(depth of the AST) per call. With
+    // the  current implementation, we let PeepholeOptimizationsPass to find the script in what's
+    // usually O(1) time, or worst case it only calls getEnclosingScript() once per NodeTraversal
+    // and then caches the result.
+    newFeatures.add(feature);
+  }
+
+  final ImmutableSet<Feature> getNewFeatures() {
+    return ImmutableSet.copyOf(newFeatures);
+  }
+
+  final void clearNewFeatures() {
+    newFeatures.clear();
   }
 }

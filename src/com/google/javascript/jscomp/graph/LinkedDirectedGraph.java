@@ -16,22 +16,29 @@
 
 package com.google.javascript.jscomp.graph;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
+import com.google.javascript.jscomp.graph.DiGraph.DiGraphEdge;
+import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
+import com.google.javascript.jscomp.graph.GraphvizGraph.GraphvizEdge;
+import com.google.javascript.jscomp.graph.GraphvizGraph.GraphvizNode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
- * A directed graph using linked list within nodes to store edge information.
+ * A directed graph using ArrayLists within nodes to store edge information.
  *
  * <p>This implementation favors directed graph operations inherited from <code>
- * DirectedGraph</code>. Operations from <code>Graph</code> would tends to be slower.
+ * DirectedGraph</code>. Operations from <code>Graph</code> would tend to be slower.
  *
  * @param <N> Value type that the graph node stores.
  * @param <E> Value type that the graph edge stores.
@@ -143,14 +150,12 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
 
   @Override
   public LinkedDiGraphNode<N, E> createNode(N nodeValue) {
-    LinkedDiGraphNode<N, E> node =
-        nodes.computeIfAbsent(
-            nodeValue,
-            (N k) ->
-                useNodeAnnotations
-                    ? new AnnotatedLinkedDiGraphNode<N, E>(k)
-                    : new LinkedDiGraphNode<N, E>(k));
-    return node;
+    return nodes.computeIfAbsent(
+        nodeValue,
+        (N k) ->
+            useNodeAnnotations
+                ? new AnnotatedLinkedDiGraphNode<N, E>(k)
+                : new LinkedDiGraphNode<N, E>(k));
   }
 
   @Override
@@ -176,7 +181,7 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
   }
 
   @Override
-  public GraphEdge<N, E> getFirstEdge(N n1, N n2) {
+  public @Nullable GraphEdge<N, E> getFirstEdge(N n1, N n2) {
     LinkedDiGraphNode<N, E> dNode1 = getNodeOrFail(n1);
     LinkedDiGraphNode<N, E> dNode2 = getNodeOrFail(n2);
     for (DiGraphEdge<N, E> outEdge : dNode1.getOutEdges()) {
@@ -206,49 +211,53 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
   }
 
   /**
-   * DiGraphNode look ups can be expensive for a large graph operation, prefer the
-   * version below that takes DiGraphNodes, if you have them available.
+   * DiGraphNode look ups can be expensive for a large graph operation, prefer the version below
+   * that takes DiGraphNodes, if you have them available.
+   *
+   * @param source the source node from which we traverse outwards
    */
   @Override
-  public boolean isConnectedInDirection(N n1, N n2) {
-    return isConnectedInDirection(n1, Predicates.<E>alwaysTrue(), n2);
+  public boolean isConnectedInDirection(N source, N dest) {
+    return isConnectedInDirection(source, Predicates.<E>alwaysTrue(), dest);
   }
 
   /**
-   * DiGraphNode look ups can be expensive for a large graph operation, prefer the
-   * version below that takes DiGraphNodes, if you have them available.
+   * DiGraphNode look ups can be expensive for a large graph operation, prefer the version below
+   * that takes DiGraphNodes, if you have them available.
+   *
+   * @param source the source node from which we traverse outwards
+   * @param edgeValue only edges equal to the given value will be traversed
    */
   @Override
-  public boolean isConnectedInDirection(N n1, E edgeValue, N n2) {
-    return isConnectedInDirection(n1, Predicates.equalTo(edgeValue), n2);
+  public boolean isConnectedInDirection(N source, E edgeValue, N dest) {
+    return isConnectedInDirection(source, Predicates.equalTo(edgeValue), dest);
   }
 
   /**
    * DiGraphNode look ups can be expensive for a large graph operation, prefer this method if you
    * have the DiGraphNodes available.
+   *
+   * @param source the source node from which we traverse outwards
+   * @param edgeFilter only edges matching this filter will be traversed
+   * @param dest the destination node
    */
   public boolean isConnectedInDirection(
-      LinkedDiGraphNode<N, E> dNode1, Predicate<E> edgeMatcher, LinkedDiGraphNode<N, E> dNode2) {
-    // Verify the nodes.
-    List<LinkedDiGraphEdge<N, E>> outEdges = dNode1.getOutEdges();
+      LinkedDiGraphNode<N, E> source, Predicate<E> edgeFilter, LinkedDiGraphNode<N, E> dest) {
+    List<LinkedDiGraphEdge<N, E>> outEdges = source.getOutEdges();
     int outEdgesLen = outEdges.size();
-    List<LinkedDiGraphEdge<N, E>> inEdges = dNode2.getInEdges();
+    List<LinkedDiGraphEdge<N, E>> inEdges = dest.getInEdges();
     int inEdgesLen = inEdges.size();
-    // It is possible that there is a large assymmetry between the nodes, so pick the direction
+    // It is possible that there is a large asymmetry between the nodes, so pick the direction
     // to search based on the shorter list since the edge lists should be symmetric.
     if (outEdgesLen < inEdgesLen) {
-      for (int i = 0; i < outEdgesLen; i++) {
-        DiGraphEdge<N, E> outEdge = outEdges.get(i);
-        if (outEdge.getDestination() == dNode2
-            && edgeMatcher.apply(outEdge.getValue())) {
+      for (DiGraphEdge<N, E> outEdge : outEdges) {
+        if (outEdge.getDestination() == dest && edgeFilter.apply(outEdge.getValue())) {
           return true;
         }
       }
     } else {
-      for (int i = 0; i < inEdgesLen; i++) {
-        DiGraphEdge<N, E> inEdge = inEdges.get(i);
-        if (inEdge.getSource() == dNode1
-            && edgeMatcher.apply(inEdge.getValue())) {
+      for (DiGraphEdge<N, E> inEdge : inEdges) {
+        if (inEdge.getSource() == source && edgeFilter.apply(inEdge.getValue())) {
           return true;
         }
       }
@@ -359,10 +368,17 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
    */
   public static class LinkedDiGraphNode<N, E> implements DiGraphNode<N, E>, GraphvizNode {
 
-    List<LinkedDiGraphEdge<N, E>> inEdgeList = new ArrayList<>();
-    List<LinkedDiGraphEdge<N, E>> outEdgeList = new ArrayList<>();
+    // The overwhelming majority of nodes have in/out degree == 1. Initialize our lists to account
+    // for that.
+    private final List<LinkedDiGraphEdge<N, E>> inEdgeList =
+        new ArrayList<>(/* initialCapacity= */ 1);
+
+    private final List<LinkedDiGraphEdge<N, E>> outEdgeList =
+        new ArrayList<>(/* initialCapacity= */ 1);
 
     protected final N value;
+
+    private int priority = -1;
 
     /**
      * Constructor
@@ -419,12 +435,29 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
     public List<LinkedDiGraphEdge<N, E>> getOutEdges() {
       return outEdgeList;
     }
+
+    @Override
+    public boolean hasPriority() {
+      return this.priority >= 0;
+    }
+
+    @Override
+    public int getPriority() {
+      checkState(this.priority >= 0, "priority not set");
+      return this.priority;
+    }
+
+    @Override
+    public void setPriority(int priority) {
+      checkArgument(priority >= 0, "priorities must be non-negative");
+      this.priority = priority;
+    }
   }
 
   /** A directed graph node with annotations. */
   static final class AnnotatedLinkedDiGraphNode<N, E> extends LinkedDiGraphNode<N, E> {
 
-    protected Annotation annotation;
+    Annotation annotation;
 
     /** @param nodeValue Node's value. */
     private AnnotatedLinkedDiGraphNode(N nodeValue) {
@@ -455,9 +488,9 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
   /** A directed graph edge that stores the source and destination nodes at each edge. */
   public static class LinkedDiGraphEdge<N, E> implements DiGraphEdge<N, E>, GraphvizEdge {
 
-    private LinkedDiGraphNode<N, E> sourceNode;
+    private final LinkedDiGraphNode<N, E> sourceNode;
 
-    private LinkedDiGraphNode<N, E> destNode;
+    private final LinkedDiGraphNode<N, E> destNode;
 
     protected final E value;
 
@@ -512,12 +545,12 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
 
     @Override
     public String getNode1Id() {
-      return ((LinkedDiGraphNode<N, E>) sourceNode).getId();
+      return sourceNode.getId();
     }
 
     @Override
     public String getNode2Id() {
-      return ((LinkedDiGraphNode<N, E>) destNode).getId();
+      return destNode.getId();
     }
 
     @Override
@@ -539,7 +572,7 @@ public class LinkedDirectedGraph<N, E> extends DiGraph<N, E> implements Graphviz
   /** A directed graph edge that stores the source and destination nodes at each edge. */
   static final class AnnotatedLinkedDiGraphEdge<N, E> extends LinkedDiGraphEdge<N, E> {
 
-    protected Annotation annotation;
+    Annotation annotation;
 
     /**
      * Constructor.

@@ -16,7 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,10 +30,11 @@ import org.junit.runners.JUnit4;
 public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
   private static final String MATH =
-      lines(
-          "/** @const */ var Math = {};",
-          "/** @nosideeffects */ Math.random = function(){};",
-          "/** @nosideeffects */ Math.sin = function(){};");
+      """
+      /** @const */ var Math = {};
+      /** @nosideeffects */ Math.random = function(){};
+      /** @nosideeffects */ Math.sin = function(){};
+      """;
 
   public PeepholeRemoveDeadCodeTest() {
     super(MATH);
@@ -56,8 +56,12 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
   @Before
   public void setUp() throws Exception {
     super.setUp();
-
+    // This pass doesn't need the AST to be normalized as it runs both before and after
+    // `denormalize`. Since it runs PureFunctionsIdentifier pass which expects the AST to be
+    // normalized, we're doing `enableNormalize` for these tests.
     enableNormalize();
+    // TODO(bradfordcsmith): Stop normalizing the expected output or document why it is necessary.
+    enableNormalizeExpectedOutput();
     enableComputeSideEffects();
   }
 
@@ -79,11 +83,23 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     fold("a: break a;", "");
     fold("a: { break a; }", "");
 
-    foldSame("a: { break a; console.log('unreachable'); }");
-    foldSame("a: { break a; var x = 1; } x = 2;");
+    fold( //
+        "a: { break a; console.log('unreachable'); }", //
+        "");
+    fold( //
+        "a: { break a; var x = 1; } x = 2;", //
+        "var x; x = 2;");
 
     foldSame("b: { var x = 1; } x = 2;");
     foldSame("a: b: { var x = 1; } x = 2;");
+  }
+
+  @Test
+  public void testRemoveUselessLabelWithFollowingBreak() {
+    fold("a:b: break b;", "");
+    // Note: the break is only removed if the parent
+    // is the break target.
+    foldSame("a:b: break a;");
   }
 
   @Test
@@ -115,7 +131,10 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
   }
 
   @Test
-  public void testFoldBlockWithDeclaration() {
+  public void testFoldBlockWithDeclaration_notNormalized() {
+    disableNormalize();
+    disableComputeSideEffects();
+
     foldSame("{let x}");
     foldSame("function f() {let x}");
     foldSame("{const x = 1}");
@@ -128,17 +147,29 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     foldSame("{label: var x; let y;}");
   }
 
+  @Test
+  public void testFoldBlockWithDeclaration_normalized() {
+    fold("{let x}", "let x");
+    foldSame("function f() {let x}");
+    fold("{const x = 1}", "const x = 1;");
+    fold("{x = 2; y = 4; let z;}", "x = 2; y = 4; let z;");
+    fold("{'hi'; let x;}", "let x;");
+    fold("{x = 4; {let y}}", "x = 4; let y;");
+    fold("{class C {}} {class C {}}", "class C {} class C$jscomp$1 {}");
+    fold("{label: var x}", "label: var x");
+    // `{label: let x}` is a syntax error
+    fold("{label: var x; let y;}", "label: var x; let y;");
+  }
+
   /** Try to remove spurious blocks with multiple children */
   @Test
   public void testFoldBlocksWithManyChildren() {
     fold("function f() { if (false) {} }", "function f(){}");
-    fold("function f() { { if (false) {} if (true) {} {} } }",
-         "function f(){}");
+    fold("function f() { { if (false) {} if (true) {} {} } }", "function f(){}");
     fold(
         "{var x; var y; var z; class Foo { constructor() { var a; { var b; } } } }",
-        "{var x;var y;var z;class Foo { constructor() { var a;var b} } }");
-    fold("{var x; var y; var z; { { var a; { var b; } } } }",
-        "var x;var y;var z; var a;var b");
+        "var x;var y;var z;class Foo { constructor() { var a;var b} }");
+    fold("{var x; var y; var z; { { var a; { var b; } } } }", "var x;var y;var z; var a;var b");
   }
 
   @Test
@@ -148,12 +179,9 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     fold("if (undefined){ x = 1; } else { x = 2; }", "x=2");
     fold("if (null){ x = 1; } else { x = 2; }", "x=2");
     fold("if (void 0){ x = 1; } else { x = 2; }", "x=2");
-    fold("if (void foo()){ x = 1; } else { x = 2; }",
-         "foo();x=2");
-    fold("if (false){ x = 1; } else if (true) { x = 3; } else { x = 2; }",
-         "x=3");
-    fold("if (x){ x = 1; } else if (false) { x = 3; }",
-         "if(x)x=1");
+    fold("if (void foo()){ x = 1; } else { x = 2; }", "foo();x=2");
+    fold("if (false){ x = 1; } else if (true) { x = 3; } else { x = 2; }", "x=3");
+    fold("if (x){ x = 1; } else if (false) { x = 3; }", "if(x)x=1");
   }
 
   @Test
@@ -166,14 +194,11 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
     fold("(a = true) ? b() : c()", "a = true, b()");
     fold("(a = false) ? b() : c()", "a = false, c()");
-    fold("do {f()} while((a = true) ? b() : c())",
-         "do {f()} while((a = true) , b())");
-    fold("do {f()} while((a = false) ? b() : c())",
-         "do {f()} while((a = false) , c())");
+    fold("do {f()} while((a = true) ? b() : c())", "do {f()} while((a = true) , b())");
+    fold("do {f()} while((a = false) ? b() : c())", "do {f()} while((a = false) , c())");
 
     fold("var x = (true) ? 1 : 0", "var x=1");
-    fold("var y = (true) ? ((false) ? 12 : (cond ? 1 : 2)) : 13",
-         "var y=cond?1:2");
+    fold("var y = (true) ? ((false) ? 12 : (cond ? 1 : 2)) : 13", "var y=cond?1:2");
 
     foldSame("var z=x?void 0:y()");
     foldSame("z=x?void 0:y()");
@@ -199,7 +224,7 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     foldSame("var b=f();if(b)x=1;");
     foldSame("b=b++;if(b)x=b;");
     fold("(b=0,b=1);if(b)x=b;", "b=0,b=1;if(b)x=b;");
-    fold("b=1;if(foo,b)x=b;","b=1;x=b;");
+    fold("b=1;if(foo,b)x=b;", "b=1;x=b;");
     foldSame("b=1;if(foo=1,b)x=b;");
   }
 
@@ -215,6 +240,20 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
   }
 
   @Test
+  public void testConstantConditionWithSideEffect_coalesce() {
+    fold("b = null; b ?? (x = 1)", "b = null; void 0 ?? (x = 1)");
+    fold("b = undefined; b ?? (x = 1)", "b = undefined; void 0 ?? (x = 1)");
+    fold("b = (fn(), null); b ?? (x = 1)", "b = (fn(), null); void 0 ?? (x = 1)");
+
+    fold("b = 34; b ?? (x = 1)", "b = 34; 0 ?? (x = 1)");
+    fold("b = 'test'; b ?? (x = 1)", "b = 'test'; 0 ?? (x = 1)");
+    fold("b = []; b ?? (x = 1)", "b = []; 0 ?? (x = 1)");
+    fold("b = (fn(), 0); b ?? (x = 1)", " b= (fn(), 0); 0 ?? (x = 1)");
+
+    foldSame("b = fn(); b ?? (x = 1)");
+  }
+
+  @Test
   public void testVarLifting() {
     fold("if(true)var a", "var a");
     fold("if(false)var a", "var a");
@@ -224,10 +263,120 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
   @Test
   public void testLetConstLifting() {
-    fold("if(true) {const x = 1}", "{const x = 1}");
+    fold("if(true) {const x = 1}", "const x = 1;");
     fold("if(false) {const x = 1}", "");
-    fold("if(true) {let x}", "{let x}");
+    fold("if(true) {let x}", "let x;");
     fold("if(false) {let x}", "");
+    fold("if(false) {const x = 1;  function f() { return x; }}", "");
+  }
+
+  @Test
+  public void testLetConstLifting_removePartOfBlock() {
+    fold(
+        """
+        function f() {
+          return 0;
+          let x = 0;
+          x++;
+        }
+        """,
+        """
+        function f() {
+          let x;
+          return 0;
+        }
+        """);
+    fold(
+        """
+        function f() {
+          return 0;
+          const [x, y, [[z]]] = 1;
+        }
+        """,
+        """
+        function f() {
+          let x;
+          let y;
+          let z;
+          return 0;
+        }
+        """);
+    fold(
+        """
+        function f() {
+          return 0;
+          const C = class Bar {};
+        }
+        """,
+        """
+        function f() {
+          let C;
+          return 0;
+        }
+        """);
+  }
+
+  @Test
+  public void testLetConstLifting_removePartOfBlock_withHoistedFunction() {
+    fold(
+        """
+        function f() {
+          return 0;
+          // Everything after this is dead code, except for the function declaration, which is
+          // hoisted. `foo` could in theory reference x, y, or C. Add a stub 'let' declaration for
+          // each to avoid violating the invariant that all NAME nodes in the AST are declared.
+          const x = 1;
+          let y;
+          class C {}
+          function foo() {}
+        }
+        """,
+        """
+        function f() {
+          function foo() {}
+          let C;
+          let y;
+          let x;
+          return 0;
+        }
+        """);
+    fold(
+        """
+        function f(param) {
+          return 0;
+          // everything after this is dead code.
+          if (param) {
+            function foo() {}
+            const x = 1;
+            let y;
+            class C {}
+          }
+        }
+        """,
+        """
+        function f(param) {
+          return 0;
+        }
+        """);
+    fold(
+        """
+        function f(param) {
+          if (param) {
+            return 0;
+            const x = 1;
+          }
+          return 1;
+        }
+        """,
+        """
+        function f(param) {
+          if (param) {
+            let x;
+            return 0;
+          }
+          return 1;
+        }
+        """);
   }
 
   @Test
@@ -243,6 +392,8 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
     // Make sure it plays nice with minimizing
     fold("for(;false;) { foo(); continue }", "");
+
+    fold("l1:for(;false;) {  }", "");
   }
 
   @Test
@@ -262,14 +413,18 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     fold("do { for (;;) {foo(); continue;} } while(0)", "for (;;) {foo(); continue;}");
     foldSame("l1: do { for (;;) { foo() } } while(0)");
     fold("do { switch (1) { default: foo(); break} } while(0)", "foo();");
-    fold("do { switch (1) { default: foo(); continue} } while(0)",
+    fold(
+        "do { switch (1) { default: foo(); continue} } while(0)",
         "do { foo(); continue } while(0)");
 
-    fold("l1: { do { x = 1; break l1; } while (0); x = 2; }", "l1: { x = 1; break l1; x = 2;}");
+    fold(
+        "l1: { do { x = 1; break l1; } while (0); x = 2; }", //
+        "l1: { x = 1; break l1; }");
 
     fold("do { x = 1; } while (x = 0);", "x = 1; x = 0;");
-    fold("let x = 1; (function() { do { let x = 2; } while (x = 10, false); })();",
-        "let x = 1; (function() { { let x = 2 } x = 10 })();");
+    fold(
+        "let x = 1; (function() { do { let x = 2; } while (x = 10, false); })();",
+        "let x = 1; (function() { let x$jscomp$1 = 2; x = 10 })();");
   }
 
   @Test
@@ -304,11 +459,29 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     fold("if (true, false) {foo()}", "");
     fold("if (false, true) {foo()}", "foo()");
     fold("true, foo()", "foo()");
+    fold("true, foo?.()", "foo?.()");
     fold("(1 + 2 + ''), foo()", "foo()");
+    fold("(1 + 2 + ''), foo?.()", "foo?.()");
   }
 
   @Test
   public void testRemoveUselessOps1() {
+    foldSame("(function () { f(); })();");
+  }
+
+  @Test
+  public void testCallSideEffectsPreserved() {
+    // Functions calls known to be free of side effects are removed.
+    fold("Math.random()", "");
+    fold("Math?.random()", "");
+    fold("Math.random(f() + g())", "f(),g();");
+    fold("Math?.random(f() + g())", "f(),g();");
+    fold("Math.random(f(),g(),h())", "f(),g(),h();");
+    fold("Math?.random(f(),g(),h())", "f(),g(),h();");
+
+    // Calls to functions with unknown side-effects are preserved.
+    foldSame("f();");
+    foldSame("f?.();");
     foldSame("(function () { f(); })();");
   }
 
@@ -319,15 +492,6 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     //  - the LHS of a COMMA
     //  - the FOR init expression
     //  - the FOR increment expression
-
-    // Known side-effect free functions calls are removed.
-    fold("Math.random()", "");
-    fold("Math.random(f() + g())", "f(),g();");
-    fold("Math.random(f(),g(),h())", "f(),g(),h();");
-
-    // Calls to functions with unknown side-effects are are left.
-    foldSame("f();");
-    foldSame("(function () { f(); })();");
 
     // We know that this function has no side effects because of the
     // PureFunctionIdentifier.
@@ -342,7 +506,9 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
     // Useless operators are removed.
     fold("+f()", "f()");
+    fold("+f?.()", "f?.()");
     fold("a=(+f(),g())", "a=(f(),g())");
+    fold("a=(+f?.(),g())", "a=(f?.(),g())");
     fold("a=(true,g())", "a=g()");
     fold("f(),true", "f()");
     fold("f() + g()", "f(),g()");
@@ -385,10 +551,8 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     fold("switch(a){case 1: default:}", "");
     fold("switch(a){default: case 1:}", "");
     fold("switch(a){default: break; case 1:break;}", "");
-    fold("switch(a){default: var b; break; case 1: var c; break;}",
-        "var c; var b;");
-    fold("var x=1; switch(x) { case 1: var y; }",
-        "var y; var x=1;");
+    fold("switch(a){default: var b; break; case 1: var c; break;}", "var c; var b;");
+    fold("var x=1; switch(x) { case 1: var y; }", "var y; var x=1;");
 
     // Can't remove cases if a default exists and is not the last case.
     foldSame("function f() {switch(a){default: return; case 1: break;}}");
@@ -397,8 +561,7 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     foldSame("function f() {switch(a){case 3: case 2: case 1: foo();}}");
 
     fold("function f() {switch(a){case 2: case 1: default: foo();}}", "function f() { foo(); }");
-    fold("switch(a){case 1: default:break; case 2: foo()}",
-         "switch(a){case 2: foo()}");
+    fold("switch(a){case 1: default:break; case 2: foo()}", "switch(a){case 2: foo()}");
     foldSame("switch(a){case 1: goo(); default:break; case 2: foo()}");
 
     // TODO(johnlenz): merge the useless "case 2"
@@ -406,14 +569,17 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
     // Can't remove unused code with a "var" in it.
     fold("switch(1){case 2: var x=0;}", "var x;");
-    fold("switch ('repeated') {\n" +
-        "case 'repeated':\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 'repeated':\n" +
-        "  var x=0;\n" +
-        "  break;\n" +
-        "}",
+    fold(
+        """
+        switch ('repeated') {
+        case 'repeated':
+          foo();
+          break;
+        case 'repeated':
+          var x=0;
+          break;
+        }
+        """,
         "var x; foo();");
 
     // Can't remove cases if something useful is done.
@@ -421,643 +587,940 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
     foldSame("function f() {switch(a){case 1: return;}}");
     foldSame("x:switch(a){case 1: break x;}");
 
-    fold("switch ('foo') {\n" +
-        "case 'foo':\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 'bar':\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "}",
+    fold(
+        """
+        switch ('foo') {
+        case 'foo':
+          foo();
+          break;
+        case 'bar':
+          bar();
+          break;
+        }
+        """,
         "foo();");
-    fold("switch ('noMatch') {\n" +
-        "case 'foo':\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 'bar':\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "}",
+    fold(
+        """
+        switch ('noMatch') {
+        case 'foo':
+          foo();
+          break;
+        case 'bar':
+          bar();
+          break;
+        }
+        """,
         "");
     fold(
-        lines(
-            "switch ('fallThru') {",
-            "case 'fallThru':",
-            "  if (foo(123) > 0) {",
-            "    foobar(1);",
-            "    break;",
-            "  }",
-            "  foobar(2);",
-            "case 'bar':",
-            "  bar();",
-            "}"),
-        lines(
-            "switch ('fallThru') {",
-            "case 'fallThru':",
-            "  if (foo(123) > 0) {",
-            "    foobar(1);",
-            "    break;",
-            "  }",
-            "  foobar(2);",
-            "  bar();",
-            "}"));
+        """
+        switch ('fallThru') {
+        case 'fallThru':
+          if (foo(123) > 0) {
+            foobar(1);
+            break;
+          }
+          foobar(2);
+        case 'bar':
+          bar();
+        }
+        """,
+        """
+        switch ('fallThru') {
+        case 'fallThru':
+          if (foo(123) > 0) {
+            foobar(1);
+            break;
+          }
+          foobar(2);
+          bar();
+        }
+        """);
     fold(
-        lines(
-            "switch ('fallThru') {",
-            "case 'fallThru':",
-            "  foo();",
-            "case 'bar':",
-            "  bar();",
-            "}"),
-        lines(
-            "foo();",
-            "bar();"));
+        """
+        switch ('fallThru') {
+        case 'fallThru':
+          foo();
+        case 'bar':
+          bar();
+        }
+        """,
+        """
+        foo();
+        bar();
+        """);
     fold(
-        lines(
-            "switch ('hasDefaultCase') {",
-            "  case 'foo':",
-            "    foo();",
-            "    break;",
-            "  default:",
-            "    bar();",
-            "    break;",
-            "}"),
+        """
+        switch ('hasDefaultCase') {
+          case 'foo':
+            foo();
+            break;
+          default:
+            bar();
+            break;
+        }
+        """,
         "bar();");
-    fold("switch ('repeated') {\n" +
-        "case 'repeated':\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 'repeated':\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "}",
-        "foo();");
-    fold("switch ('foo') {\n" +
-        "case 'bar':\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "case notConstant:\n" +
-        "  foobar();\n" +
-        "  break;\n" +
-        "case 'foo':\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "}",
-        "switch ('foo') {\n" +
-        "case notConstant:\n" +
-        "  foobar();\n" +
-        "  break;\n" +
-        "case 'foo':\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "}");
-    fold("switch (1) {\n" +
-        "case 1:\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 2:\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "}",
-        "foo();");
-    fold("switch (1) {\n" +
-        "case 1.1:\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 2:\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "}",
-        "");
-    fold("switch (0) {\n" +
-        "case NaN:\n" +
-        "  foobar();\n" +
-        "  break;\n" +
-        "case -0.0:\n" +
-        "  foo();\n" +
-        "  break;\n" +
-        "case 2:\n" +
-        "  bar();\n" +
-        "  break;\n" +
-        "}",
-        "foo();");
-    foldSame("switch ('\\v') {\n" +
-        "case '\\u000B':\n" +
-        "  foo();\n" +
-        "}");
     fold(
-        lines(
-            "switch ('empty') {",
-            "case 'empty':",
-            "case 'foo':",
-            "  foo();",
-            "}"),
+        """
+        switch ('repeated') {
+        case 'repeated':
+          foo();
+          break;
+        case 'repeated':
+          bar();
+          break;
+        }
+        """,
+        "foo();");
+    foldSame(
+        """
+        switch ('foo') {
+        case 'bar':
+          bar();
+          break;
+        case notConstant:
+          foobar();
+          break;
+        case 'foo':
+          foo();
+          break;
+        }
+        """);
+    fold(
+        """
+        switch (1) {
+        case 1:
+          foo();
+          break;
+        case 2:
+          bar();
+          break;
+        }
+        """,
+        "foo();");
+    fold(
+        """
+        switch (1) {
+        case 1.1:
+          foo();
+          break;
+        case 2:
+          bar();
+          break;
+        }
+        """,
+        "");
+    fold(
+        """
+        switch (0) {
+        case NaN:
+          foobar();
+          break;
+        case -0.0:
+          foo();
+          break;
+        case 2:
+          bar();
+          break;
+        }
+        """,
+        "foo();");
+    foldSame(
+        """
+        switch ('\\v') {
+        case '\\u000B':
+          foo();
+        }
+        """);
+    fold(
+        """
+        switch ('empty') {
+        case 'empty':
+        case 'foo':
+          foo();
+        }
+        """,
         "foo()");
 
     fold(
-        lines(
-            "let x;", //
-            "switch (use(x)) {",
-            "  default: {let y;}",
-            "}"),
-        lines(
-            "let x;", //
-            "use(x);", "{let y}"));
+        """
+        let x;
+        switch (use(x)) {
+          default: {let y;}
+        }
+        """,
+        """
+        let x;
+        use(x);
+        let y;
+        """);
 
     fold(
-        lines(
-            "let x;", //
-            "switch (use(x)) {",
-            "  default: let y;",
-            "}"),
-        lines(
-            "let x;", //
-            "use(x);", //
-            "{let y}"));
+        """
+        let x;
+        switch (use?.(x)) {
+          default: {let y;}
+        }
+        """,
+        """
+        let x;
+        use?.(x);
+        let y;
+        """);
+
+    fold(
+        """
+        let x;
+        switch (use(x)) {
+          default: let y;
+        }
+        """,
+        """
+        let x;
+        use(x);
+        let y;
+        """);
+  }
+
+  @Test
+  public void testOptimizeSwitchBug335145701() {
+    foldSame(
+        """
+        function foo() { alert('foo()'); }
+        switch (1) {
+          case 1: break;
+          case foo(): break;
+        }
+        """);
+
+    foldSame(
+        """
+        function foo() { alert('foo()'); }
+        switch (1) {
+          case 0: break;
+          case 1: break;
+          case foo(): break;
+        }
+        """);
+
+    foldSame(
+        """
+        function foo() { alert('foo()'); }
+        switch (1) {
+          case 0: alert('bar'); break;
+          case 1: break;
+          case foo(): break;
+        }
+        """);
+
+    foldSame(
+        """
+        function foo() { alert('foo()'); return 1; }
+        switch (1) {
+          case 0: break;
+          case foo(): break;
+          case 2: break;
+        }
+        """);
+
+    fold(
+        """
+        function foo() { alert('foo()'); }
+        switch (1) {
+          case foo(): break;
+          case (0,1): break;
+        }
+        """,
+        """
+        function foo() { alert('foo()'); }
+        switch (1) {
+          case foo(): break;
+          case 1: break;
+        }
+        """);
+
+    foldSame(
+        """
+        function foo() { alert('foo()'); }
+        switch (x) {
+          case 1: break;
+          case foo(): break;
+        }
+        """);
+
+    fold(
+        """
+        // not valid to remove the useless case 1,
+        // it would cause the default to run and it has side-effects
+        switch (1) {
+          case 1: break;
+          default:
+            bar();
+            break;
+        }
+        """,
+        "");
+
+    foldSame(
+        """
+        function foo() { alert('foo()'); }
+        switch (1) {
+          case 0: alert('bar'); break;
+          case 1: break;
+          case foo(): break;
+        }
+        """);
+
+    foldSame(
+        """
+            function foo() { alert('foo()'); }
+            switch (bar()) {
+              case 1: break;
+              case foo(): break;
+            }
+        """);
+
+    fold(
+        """
+        // is not valid to remove the first useless case 1,
+        // because it matches and the second should not run
+        switch (1) {
+          case 1: break;
+          case 1: bar(); break;
+        }
+        """,
+        "");
   }
 
   @Test
   public void testOptimizeSwitchBug11536863() {
     fold(
-        "outer: {" +
-        "  switch (2) {\n" +
-        "    case 2:\n" +
-        "      f();\n" +
-        "      break outer;\n" +
-        "  }" +
-        "}",
+        """
+        outer: {
+          switch (2) {
+            case 2:
+              f();
+              break outer;
+          }
+        }
+        """,
         "outer: {f(); break outer;}");
+  }
+
+  // `a[b]` could trigger a getter or setter, and have side effects. However, we always assume it
+  // does not (even though it's unsound) because the code size cost of assuming all GETELEM nodes
+  // have side effects is unacceptable.
+  @Test
+  public void testUnusedGetElemRemoved() {
+    fold("a[b]", "");
+    fold("a?.[b]", "");
   }
 
   @Test
   public void testOptimizeSwitch2() {
     fold(
-        "outer: switch (2) {\n" +
-        "  case 2:\n" +
-        "    f();\n" +
-        "    break outer;\n" +
-        "}",
+        """
+        outer: switch (2) {
+          case 2:
+            f();
+            break outer;
+        }
+        """,
         "outer: {f(); break outer;}");
   }
 
   @Test
   public void testOptimizeSwitch3() {
     fold(
-        lines(
-            "switch (1) {",
-            "  case 1:",
-            "  case 2:",
-            "  case 3: {",
-            "    break;",
-            "  }",
-            "  case 4:",
-            "  case 5:",
-            "  case 6:",
-            "  default:",
-            "    fail('Should not get here');",
-            "    break;",
-            "}"),
-            "");
+        """
+        switch (1) {
+          case 1:
+          case 2:
+          case 3: {
+            break;
+          }
+          case 4:
+          case 5:
+          case 6:
+          default:
+            fail('Should not get here');
+            break;
+        }
+        """,
+        "");
   }
 
   @Test
   public void testOptimizeSwitchWithLabellessBreak() {
-    test(
-        lines(
-            "function f() {",
-            "  switch('x') {",
-            "    case 'x': var x = 1; break;",
-            "    case 'y': break;",
-            "  }",
-            "}"),
+    fold(
+        """
+        function f() {
+          switch('x') {
+            case 'x': var x = 1; break;
+            case 'y': break;
+          }
+        }
+        """,
         "function f() { var x = 1; }");
 
     // TODO(moz): Convert this to an if statement for better optimization
-    testSame(
-        lines(
-            "function f() {",
-            "  switch(x) {",
-            "    case 'y': break;",
-            "    default: var x = 1;",
-            "  }",
-            "}"));
+    foldSame(
+        """
+        function f() {
+          switch(x) {
+            case 'y': break;
+            default: var x = 1;
+          }
+        }
+        """);
 
-    test(
-        lines(
-            "var exit;",
-            "switch ('a') {",
-            "  case 'a':",
-            "    break;",
-            "  default:",
-            "    exit = 21;",
-            "    break;",
-            "}",
-            "switch(exit) {",
-            "  case 21: throw 'x';",
-            "  default : console.log('good');",
-            "}"),
-        lines(
-            "var exit;",
-            "switch(exit) {",
-            "  case 21: throw 'x';",
-            "  default : console.log('good');",
-            "}"));
+    fold(
+        """
+        var exit;
+        switch ('a') {
+          case 'a':
+            break;
+          default:
+            exit = 21;
+            break;
+        }
+        switch(exit) {
+          case 21: throw 'x';
+          default : console.log('good');
+        }
+        """,
+        """
+        var exit;
+        switch(exit) {
+          case 21: throw 'x';
+          default : console.log('good');
+        }
+        """);
 
-    test(
-        lines(
-            "let x = 1;",
-            "switch('x') {",
-            "  case 'x': let x = 2; break;",
-            "}"
-        ),
-        lines(
-            "let x = 1;",
-            "{let x = 2}"
-        ));
+    fold(
+        """
+        let x = 1;
+        switch('x') {
+          case 'x': let x = 2; break;
+        }
+        """,
+        """
+        let x = 1;
+        let x$jscomp$1 = 2
+        """);
   }
 
   @Test
   public void testOptimizeSwitchWithLabelledBreak() {
-    test(
-        lines(
-            "function f() {",
-            "  label:",
-            "  switch('x') {",
-            "    case 'x': break label;",
-            "    case 'y': throw f;",
-            "  }",
-            "}"),
+    fold(
+        """
+        function f() {
+          label:
+          switch('x') {
+            case 'x': break label;
+            case 'y': throw f;
+          }
+        }
+        """,
         "function f() { }");
 
-    test(
-        lines(
-            "function f() {",
-            "  label:",
-            "  switch('x') {",
-            "    case 'x': break label;",
-            "    default: throw f;",
-            "  }",
-            "}"),
+    fold(
+        """
+        function f() {
+          label:
+          switch('x') {
+            case 'x': break label;
+            default: throw f;
+          }
+        }
+        """,
         "function f() { }");
   }
 
   @Test
   public void testOptimizeSwitchWithReturn() {
-    test(
-        lines(
-            "function f() {",
-            "  switch('x') {",
-            "    case 'x': return 1;",
-            "    case 'y': return 2;",
-            "  }",
-            "}"),
+    fold(
+        """
+        function f() {
+          switch('x') {
+            case 'x': return 1;
+            case 'y': return 2;
+          }
+        }
+        """,
         "function f() { return 1; }");
 
-    test(
-        lines(
-            "function f() {",
-            "  let x = 1;",
-            "  switch('x') {",
-            "    case 'x': { let x = 2; } return 3;",
-            "    case 'y': return 4;",
-            "  }",
-            "}"),
-        lines(
-            "function f() {",
-            "  let x = 1;",
-            "  { let x = 2; } return 3; ",
-            "}"));
+    fold(
+        """
+        function f() {
+          let x = 1;
+          switch('x') {
+            case 'x': { let x = 2; } return 3;
+            case 'y': return 4;
+          }
+        }
+        """,
+        """
+        function f() {
+          let x = 1;
+          let x$jscomp$1 = 2;
+          return 3;
+        }
+        """);
   }
 
   @Test
   public void testOptimizeSwitchWithThrow() {
-    test(
-        lines(
-            "function f() {",
-            "  switch('x') {",
-            "    case 'x': throw f;",
-            "    case 'y': throw f;",
-            "  }",
-            "}"),
+    fold(
+        """
+        function f() {
+          switch('x') {
+            case 'x': throw f;
+            case 'y': throw f;
+          }
+        }
+        """,
         "function f() { throw f; }");
   }
 
   @Test
   public void testOptimizeSwitchWithContinue() {
-    test(
-        lines(
-            "function f() {",
-            "  for (;;) {",
-            "    switch('x') {",
-            "      case 'x': continue;",
-            "      case 'y': continue;",
-            "    }",
-            "  }",
-            "}"),
+    fold(
+        """
+        function f() {
+          for (;;) {
+            switch('x') {
+              case 'x': continue;
+              case 'y': continue;
+            }
+          }
+        }
+        """,
         "function f() { for (;;) { continue; } }");
   }
 
   @Test
   public void testOptimizeSwitchWithDefaultCaseWithFallthru() {
-    testSame(
-        lines(
-            "function f() {",
-            "  switch(a) {",
-            "    case 'x':",
-            "    case foo():",
-            "    default: return 3",
-            "  }",
-            "}"));
+    foldSame(
+        """
+        function f() {
+          switch(a) {
+            case 'x':
+            case foo():
+            default: return 3
+          }
+        }
+        """);
   }
 
   // GitHub issue #1722: https://github.com/google/closure-compiler/issues/1722
   @Test
   public void testOptimizeSwitchWithDefaultCase() {
-    test(
-        lines(
-            "function f() {",
-            "  switch('x') {",
-            "    case 'x': return 1;",
-            "    case 'y': return 2;",
-            "    default: return 3",
-            " }",
-            "}"),
+    fold(
+        """
+        function f() {
+          switch('x') {
+            case 'x': return 1;
+            case 'y': return 2;
+            default: return 3
+         }
+        }
+        """,
         "function f() { return 1; }");
 
-    test(
-        lines(
-            "switch ('hasDefaultCase') {",
-            "  case 'foo':",
-            "    foo();",
-            "    break;",
-            "  default:",
-            "    bar();",
-            "    break;",
-            "}"),
+    fold(
+        """
+        switch ('hasDefaultCase') {
+          case 'foo':
+            foo();
+            break;
+          default:
+            bar();
+            break;
+        }
+        """,
         "bar();");
 
-    testSame("switch (x) { default: if (a) { break; } bar(); }");
+    foldSame("switch (x) { default: if (a) { break; } bar(); }");
 
     // Potentially foldable
-    testSame(
-        lines(
-            "switch (x) {",
-            "  case x:",
-            "    foo();",
-            "    break;",
-            "  default:",
-            "    if (a) { break; }",
-            "    bar();",
-            "}"));
+    foldSame(
+        """
+        switch (x) {
+          case x:
+            foo();
+            break;
+          default:
+            if (a) { break; }
+            bar();
+        }
+        """);
 
-    test(
-        lines(
-            "switch ('hasDefaultCase') {",
-            "  case 'foo':",
-            "    foo();",
-            "    break;",
-            "  default:",
-            "    if (true) { break; }",
-            "    bar();",
-            "}"),
+    fold(
+        """
+        switch ('hasDefaultCase') {
+          case 'foo':
+            foo();
+            break;
+          default:
+            if (true) { break; }
+            bar();
+        }
+        """,
         "");
 
-    test(
-        lines(
-            "switch ('hasDefaultCase') {",
-            "  case 'foo':",
-            "    foo();",
-            "    break;",
-            "  default:",
-            "    if (a) { break; }",
-            "    bar();",
-            "}"),
+    fold(
+        """
+        switch ('hasDefaultCase') {
+          case 'foo':
+            foo();
+            break;
+          default:
+            if (a) { break; }
+            bar();
+        }
+        """,
         "switch ('hasDefaultCase') { default: if (a) { break; } bar(); }");
 
-    test(
-        lines(
-            "l: switch ('hasDefaultCase') {",
-            "  case 'foo':",
-            "    foo();",
-            "    break;",
-            "  default:",
-            "    if (a) { break l; }",
-            "    bar();",
-            "    break;",
-            "}"),
+    fold(
+        """
+        l: switch ('hasDefaultCase') {
+          case 'foo':
+            foo();
+            break;
+          default:
+            if (a) { break l; }
+            bar();
+            break;
+        }
+        """,
         "l:{ if (a) { break l; } bar(); }");
 
-    test(
-        lines(
-            "switch ('hasDefaultCase') {",
-            "  case 'foo':",
-            "    bar();",
-            "    break;",
-            "  default:",
-            "    foo();",
-            "    break;",
-            "}"),
+    fold(
+        """
+        switch ('hasDefaultCase') {
+          case 'foo':
+            bar();
+            break;
+          default:
+            foo();
+            break;
+        }
+        """,
         "foo();");
 
-    test("switch (a()) { default: bar(); break;}", "a(); bar();");
+    fold("switch (a()) { default: bar(); break;}", "a(); bar();");
 
-    test("switch (a()) { default: break; bar();}", "a();");
+    fold("switch (a?.()) { default: bar(); break;}", "a?.(); bar();");
 
-    test(
-        lines(
-            "loop: ",
-            "for (;;) {",
-            "  switch (a()) {",
-            "    default:",
-            "      bar();",
-            "      break loop;",
-            "  }",
-            "}"),
+    fold("switch (a()) { default: break; bar();}", "a();");
+
+    fold(
+        """
+        loop:
+        for (;;) {
+          switch (a()) {
+            default:
+              bar();
+              break loop;
+          }
+        }
+        """,
         "loop: for (;;) { a(); bar(); break loop; }");
   }
 
   @Test
+  public void testTreatSwitchAsExit() {
+    fold(
+        "a: {switch(x){ case 1: case 2: break a; default: foo(); break a;} bar(); }",
+        "a: {switch(x){ case 1: case 2: break a; default: foo(); break a;} }");
+  }
+
+  @Test
+  public void testDontTreatSwitchAsExit() {
+    foldSame("a: {switch(x){ case 1:break a; default: b: {foo(); break b;}} bar(); }");
+
+    foldSame("a: {switch(x){ case 1:break a; default: foo(); break;} bar(); }");
+
+    foldSame("a: {b: switch(x){ case 1:break a; default: foo(); break b;} bar(); }");
+
+    foldSame("a: {switch(x){ case 1: b: { foo(); break b; } default: break a; } bar(); }");
+
+    foldSame("a: {switch(x){ case 1: break a; } bar(); }");
+
+    foldSame("a: {switch(x){ case 1: if (y) { break; } default: break a;} bar(); }");
+
+    foldSame("a: {switch(x){ case 1: if (y) { break; } break a; default: break a;} bar(); }");
+  }
+
+  @Test
+  public void testTreatTryAsExit() {
+    fold(
+        "a: {try { foo(); break a; } catch (e) { foo(); break a; } bar(); }",
+        "a: {try { foo(); break a; } catch (e) { foo(); break a; } }");
+
+    fold(
+        "a: {try { foo(); } finally { foo(); break a; } bar(); }",
+        "a: {try { foo(); } finally { foo(); break a; } }");
+
+    fold(
+        "a: {try { foo(); break a; } finally { foo(); } bar(); }",
+        "a: {try { foo(); break a; } finally { foo(); } }");
+  }
+
+  @Test
+  public void testDontTreatTryAsExit() {
+    foldSame("a: {try { foo(); break a; } catch (e) { foo(); } bar(); }");
+
+    foldSame("a: {try { foo(); break a; } catch (e) { } bar(); }");
+
+    foldSame("a: {try { foo(); } catch (e) { foo(); break a; } bar(); }");
+
+    foldSame("a: {try { foo(); } finally { foo(); } bar(); }");
+
+    foldSame("a: {try { b: { foo(); break b; } } finally { foo(); } bar(); }");
+
+    foldSame("a: { b: try { foo(); break a; } finally { foo(); } bar(); }");
+  }
+
+  @Test
   public void testRemoveNumber() {
-    test("3", "");
+    fold("3", "");
   }
 
   @Test
   public void testRemoveVarGet1() {
-    test("a", "");
+    fold("a", "");
   }
 
   @Test
   public void testRemoveVarGet2() {
-    test("var a = 1;a", "var a = 1");
+    fold("var a = 1;a", "var a = 1");
   }
 
   @Test
-  public void testRemoveNamespaceGet1() {
-    test("var a = {};a.b", "var a = {}");
+  public void testRemoveUnusedGetProp() {
+    fold("var a = {};a.b", "var a = {}");
   }
 
   @Test
-  public void testRemoveNamespaceGet2() {
-    test("var a = {};a.b=1;a.b", "var a = {};a.b=1");
+  public void testRemoveUnusedOptChainGetProp() {
+    fold("var a = {};a?.b", "var a = {}");
+  }
+
+  @Test
+  public void testRemoveUnusedGetProp2() {
+    fold("var a = {};a.b=1;a.b", "var a = {};a.b=1");
+  }
+
+  @Test
+  public void testRemoveUnusedOptChainGetProp2() {
+    fold("var a = {};a.b=1;a?.b", "var a = {};a.b=1");
   }
 
   @Test
   public void testRemovePrototypeGet1() {
-    test("var a = {};a.prototype.b", "var a = {}");
+    fold("var a = {};a.prototype.b", "var a = {}");
+  }
+
+  @Test
+  public void testRemoveOptChainPrototypeGet1() {
+    fold("var a = {};a?.prototype.b", "var a = {}");
   }
 
   @Test
   public void testRemovePrototypeGet2() {
-    test("var a = {};a.prototype.b = 1;a.prototype.b",
-         "var a = {};a.prototype.b = 1");
+    fold("var a = {};a.prototype.b = 1;a.prototype.b", "var a = {};a.prototype.b = 1");
+  }
+
+  @Test
+  public void testRemoveOptChainPrototypeGet2() {
+    fold("var a = {};a.prototype.b = 1;a?.prototype.b", "var a = {};a.prototype.b = 1");
+  }
+
+  @Test
+  public void testNotRemovePrototypeGet2() {
+    foldSame("var a = {};a.prototype.b = 1; let x = a.prototype.b");
+  }
+
+  @Test
+  public void testNotRemoveOptChainPrototypeGet2() {
+    foldSame("var a = {};a.prototype.b = 1; let x = a?.prototype.b");
   }
 
   @Test
   public void testRemoveAdd1() {
-    test("1 + 2", "");
+    fold("1 + 2", "");
   }
 
   @Test
   public void testNoRemoveVar1() {
-    testSame("var a = 1");
+    foldSame("var a = 1");
   }
 
   @Test
   public void testNoRemoveVar2() {
-    testSame("var a = 1, b = 2");
+    foldSame("var a = 1, b = 2");
   }
 
   @Test
   public void testNoRemoveAssign1() {
-    testSame("a = 1");
+    foldSame("a = 1");
   }
 
   @Test
   public void testNoRemoveAssign2() {
-    testSame("a = b = 1");
+    foldSame("a = b = 1");
   }
 
   @Test
   public void testNoRemoveAssign3() {
-    test("1 + (a = 2)", "a = 2");
+    fold("1 + (a = 2)", "a = 2");
   }
 
   @Test
   public void testNoRemoveAssign4() {
-    testSame("x.a = 1");
+    foldSame("x.a = 1");
   }
 
   @Test
   public void testNoRemoveAssign5() {
-    testSame("x.a = x.b = 1");
+    foldSame("x.a = x.b = 1");
   }
 
   @Test
   public void testNoRemoveAssign6() {
-    test("1 + (x.a = 2)", "x.a = 2");
+    fold("1 + (x.a = 2)", "x.a = 2");
   }
 
   @Test
   public void testNoRemoveCall1() {
-    testSame("a()");
+    foldSame("a()");
+  }
+
+  @Test
+  public void testNoRemoveOptChainCall1() {
+    foldSame("a?.()");
   }
 
   @Test
   public void testNoRemoveCall2() {
-    test("a()+b()", "a(),b()");
+    fold("a()+b()", "a(),b()");
+  }
+
+  @Test
+  public void testNoRemoveOptChainCall2() {
+    fold("a?.()+b?.()", "a?.(),b?.()");
   }
 
   @Test
   public void testNoRemoveCall3() {
-    testSame("a() && b()");
+    foldSame("a() && b()");
+  }
+
+  @Test
+  public void testNoRemoveOptChainCall3() {
+    foldSame("a?.() && b?.()");
   }
 
   @Test
   public void testNoRemoveCall4() {
-    testSame("a() || b()");
+    foldSame("a() || b()");
+  }
+
+  @Test
+  public void testNoRemoveOptChainCall4() {
+    foldSame("a?.() || b?.()");
   }
 
   @Test
   public void testNoRemoveCall4NullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    testSame("a() ?? b()");
+    foldSame("a() ?? b()");
+  }
+
+  @Test
+  public void testNoRemoveOptChainCall4NullishCoalesce() {
+    foldSame("a?.() ?? b?.()");
   }
 
   @Test
   public void testNoRemoveCall5NullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    test("a() ?? 1", "a()");
+    fold("a() ?? 1", "a()");
+  }
+
+  @Test
+  public void testNoRemoveOptChainCall5NullishCoalesce() {
+    fold("a?.() ?? 1", "a?.()");
   }
 
   @Test
   public void testNoRemoveCall6NullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    testSame("1 ?? a()");
+    foldSame("1 ?? a()");
   }
 
   @Test
   public void testNoRemoveCall5() {
-    test("a() || 1", "a()");
+    fold("a() || 1", "a()");
   }
 
   @Test
   public void testNoRemoveCall6() {
-    testSame("1 || a()");
+    foldSame("1 || a()");
   }
 
   @Test
   public void testNoRemoveThrow1() {
-    testSame("function f(){throw a()}");
+    foldSame("function f(){throw a()}");
   }
 
   @Test
   public void testNoRemoveThrow2() {
-    testSame("function f(){throw a}");
+    foldSame("function f(){throw a}");
   }
 
   @Test
   public void testNoRemoveThrow3() {
-    testSame("function f(){throw 10}");
+    foldSame("function f(){throw 10}");
   }
 
   @Test
-  public void testRemoveInControlStructure1() {
-    test("if(x()) 1", "x()");
+  public void testRedundantIfRemoved() {
+    fold("if(x()) 1", "x()");
   }
 
   @Test
   public void testRemoveInControlStructure3() {
-    test("for(1;2;3) 4", "for(;;);");
+    fold("for(1;2;3) 4", "for(;;);");
   }
 
   @Test
   public void testHook1() {
-    test("1 ? 2 : 3", "");
+    fold("1 ? 2 : 3", "");
   }
 
   @Test
   public void testHook2() {
-    test("x ? a() : 3", "x && a()");
+    fold("x ? a() : 3", "x && a()");
   }
 
   @Test
   public void testHook3() {
-    test("x ? 2 : a()", "x || a()");
+    fold("x ? 2 : a()", "x || a()");
   }
 
   @Test
   public void testHook4() {
-    testSame("x ? a() : b()");
+    foldSame("x ? a() : b()");
   }
 
   @Test
   public void testHook5() {
-    test("a() ? 1 : 2", "a()");
+    fold("a() ? 1 : 2", "a()");
   }
 
   @Test
   public void testHook6() {
-    test("a() ? b() : 2", "a() && b()");
+    fold("a() ? b() : 2", "a() && b()");
   }
 
   // TODO(johnlenz): Consider adding a post optimization pass to
@@ -1065,12 +1528,12 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
   // precedents would require them.
   @Test
   public void testHook7() {
-    test("a() ? 1 : b()", "a() || b()");
+    fold("a() ? 1 : b()", "a() || b()");
   }
 
   @Test
   public void testHook8() {
-    testSame("a() ? b() : c()");
+    foldSame("a() ? b() : c()");
   }
 
   @Test
@@ -1087,499 +1550,739 @@ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
   @Test
   public void testShortCircuit1() {
-    testSame("1 && a()");
+    foldSame("1 && a()");
   }
 
   @Test
   public void testShortCircuit2NullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    test("1 ?? a() ?? 2", "1 ?? a()");
+    fold("1 ?? a() ?? 2", "1 ?? a()");
   }
 
   @Test
   public void testShortCircuit3NullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    test("a() ?? 1 ?? 2", "a()");
+    fold("a() ?? 1 ?? 2", "a()");
   }
 
   @Test
   public void testShortCircuit4NullishCoalesce() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
-    testSame("a() ?? 1 ?? b()");
+    foldSame("a() ?? 1 ?? b()");
   }
 
   @Test
   public void testShortCircuit2() {
-    test("1 && a() && 2", "1 && a()");
+    fold("1 && a() && 2", "1 && a()");
   }
 
   @Test
   public void testShortCircuit3() {
-    test("a() && 1 && 2", "a()");
+    fold("a() && 1 && 2", "a()");
   }
 
   @Test
   public void testShortCircuit4() {
-    testSame("a() && 1 && b()");
+    foldSame("a() && 1 && b()");
   }
 
   @Test
   public void testComplex1() {
-    test("1 && a() + b() + c()", "1 && (a(), b(), c())");
+    fold("1 && a() + b() + c()", "1 && (a(), b(), c())");
   }
 
   @Test
   public void testComplex2() {
-    test("1 && (a() ? b() : 1)", "1 && (a() && b())");
+    fold("1 && (a() ? b() : 1)", "1 && (a() && b())");
   }
 
   @Test
   public void testComplex3() {
-    test("1 && (a() ? b() : 1 + c())", "1 && (a() ? b() : c())");
+    fold("1 && (a() ? b() : 1 + c())", "1 && (a() ? b() : c())");
   }
 
   @Test
   public void testComplex4() {
-    test("1 && (a() ? 1 : 1 + c())", "1 && (a() || c())");
+    fold("1 && (a() ? 1 : 1 + c())", "1 && (a() || c())");
   }
 
   @Test
   public void testComplex5() {
     // can't simplify LHS of short circuit statements with side effects
-    testSame("(a() ? 1 : 1 + c()) && foo()");
+    foldSame("(a() ? 1 : 1 + c()) && foo()");
   }
 
   @Test
   public void testNoRemoveFunctionDeclaration1() {
-    testSame("function foo(){}");
+    foldSame("function foo(){}");
   }
 
   @Test
   public void testNoRemoveFunctionDeclaration2() {
-    testSame("var foo = function (){}");
+    foldSame("var foo = function (){}");
   }
 
   @Test
   public void testNoSimplifyFunctionArgs1() {
-    testSame("f(1 + 2, 3 + g())");
+    foldSame("f(1 + 2, 3 + g())");
   }
 
   @Test
   public void testNoSimplifyFunctionArgs2() {
-    testSame("1 && f(1 + 2, 3 + g())");
+    foldSame("1 && f(1 + 2, 3 + g())");
   }
 
   @Test
   public void testNoSimplifyFunctionArgs3() {
-    testSame("1 && foo(a() ? b() : 1 + c())");
+    foldSame("1 && foo(a() ? b() : 1 + c())");
   }
 
   @Test
   public void testNoRemoveInherits1() {
-    testSame("var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a)");
+    foldSame("var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a)");
   }
 
   @Test
   public void testNoRemoveInherits2() {
-    test("var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a) + 1",
-         "var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a)");
+    fold(
+        "var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a) + 1",
+        "var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a)");
   }
 
   @Test
   public void testNoRemoveInherits3() {
-    testSame("this.a = {}; var b = {}; b.inherits(a);");
+    foldSame("this.a = {}; var b = {}; b.inherits(a);");
   }
 
   @Test
   public void testNoRemoveInherits4() {
-    test("this.a = {}; var b = {}; b.inherits(a) + 1;",
-         "this.a = {}; var b = {}; b.inherits(a)");
+    fold("this.a = {}; var b = {}; b.inherits(a) + 1;", "this.a = {}; var b = {}; b.inherits(a)");
   }
 
   @Test
   public void testRemoveFromLabel1() {
-    test("LBL: void 0", "");
+    fold("LBL: void 0", "");
   }
 
   @Test
   public void testRemoveFromLabel2() {
-    test("LBL: foo() + 1 + bar()", "LBL: foo(),bar()");
+    fold("LBL: foo() + 1 + bar()", "LBL: foo(),bar()");
   }
 
   @Test
   public void testCall() {
-    testSame("foo(0)");
+    foldSame("foo(0)");
     // We use a function with no side-effects, otherwise the entire invocation would be preserved.
-    test("Math.sin(0);", "");
-    test("1 + Math.sin(0);", "");
+    fold("Math.sin(0);", "");
+    fold("1 + Math.sin(0);", "");
   }
 
   @Test
   public void testCall_containingSpread() {
     // We use a function with no side-effects, otherwise the entire invocation would be preserved.
-    test("Math.sin(...c)", "([...c])");
-    test("Math.sin(4, ...c, a)", "([...c])");
-    test("Math.sin(foo(), ...c, bar())", "(foo(), [...c], bar())");
-    test("Math.sin(...a, b, ...c)", "([...a], [...c])");
-    test("Math.sin(...b, ...c)", "([...b], [...c])");
+    fold("Math.sin(...c)", "([...c])");
+    fold("Math.sin(4, ...c, a)", "([...c])");
+    fold("Math.sin(foo(), ...c, bar())", "(foo(), [...c], bar())");
+    fold("Math.sin(...a, b, ...c)", "([...a], [...c])");
+    fold("Math.sin(...b, ...c)", "([...b], [...c])");
+  }
+
+  @Test
+  public void testOptChainCall_containingSpread() {
+    // We use a function with no side-effects, otherwise the entire invocation would be preserved.
+    fold("Math?.sin(...c)", "([...c])");
+    fold("Math?.sin(4, ...c, a)", "([...c])");
+    fold("Math?.sin(foo(), ...c, bar())", "(foo(), [...c], bar())");
+    fold("Math?.sin(...a, b, ...c)", "([...a], [...c])");
+    fold("Math?.sin(...b, ...c)", "([...b], [...c])");
   }
 
   @Test
   public void testNew() {
-    testSame("new foo(0)");
+    foldSame("new foo(0)");
     // We use a function with no side-effects, otherwise the entire invocation would be preserved.
-    test("new Date;", "");
-    test("1 + new Date;", "");
+    fold("new Date;", "");
+    fold("1 + new Date;", "");
   }
 
   @Test
   public void testNew_containingSpread() {
     // We use a function with no side-effects, otherwise the entire invocation would be preserved.
-    test("new Date(...c)", "([...c])");
-    test("new Date(4, ...c, a)", "([...c])");
-    test("new Date(foo(), ...c, bar())", "(foo(), [...c], bar())");
-    test("new Date(...a, b, ...c)", "([...a], [...c])");
-    test("new Date(...b, ...c)", "([...b], [...c])");
+    fold("new Date(...c)", "([...c])");
+    fold("new Date(4, ...c, a)", "([...c])");
+    fold("new Date(foo(), ...c, bar())", "(foo(), [...c], bar())");
+    fold("new Date(...a, b, ...c)", "([...a], [...c])");
+    fold("new Date(...b, ...c)", "([...b], [...c])");
   }
 
   @Test
   public void testTaggedTemplateLit_simpleTemplate() {
-    testSame("foo`Simple`");
+    foldSame("foo`Simple`");
     // We use a function with no side-effects, otherwise the entire invocation would be preserved.
-    test("Math.sin`Simple`", "");
-    test("1 + Math.sin`Simple`", "");
+    fold("Math.sin`Simple`", "");
+    fold("1 + Math.sin`Simple`", "");
   }
 
   @Test
   public void testTaggedTemplateLit_substitutingTemplate() {
-    testSame("foo`Complex ${butSafe}`");
+    foldSame("foo`Complex ${butSafe}`");
     // We use a function with no side-effects, otherwise the entire invocation would be preserved.
-    test("Math.sin`Complex ${butSafe}`", "");
-    test("Math.sin`Complex ${andDangerous()}`", "andDangerous()");
+    fold("Math.sin`Complex ${butSafe}`", "");
+    fold("Math.sin`Complex ${andDangerous()}`", "andDangerous()");
   }
 
   @Test
   public void testFoldAssign() {
-    test("x=x", "");
-    testSame("x=xy");
-    testSame("x=x + 1");
-    testSame("x.a=x.a");
-    test("var y=(x=x)", "var y=x");
-    test("y=1 + (x=x)", "y=1 + x");
+    fold("x=x", "");
+    foldSame("x=xy");
+    foldSame("x=x + 1");
+    foldSame("x.a=x.a");
+    fold("var y=(x=x)", "var y=x");
+    fold("y=1 + (x=x)", "y=1 + x");
   }
 
   @Test
   public void testTryCatchFinally() {
-    testSame("try {foo()} catch (e) {bar()}");
-    testSame("try { try {foo()} catch (e) {bar()}} catch (x) {bar()}");
-    test("try {var x = 1} finally {}", "var x = 1;");
-    testSame("try {var x = 1} finally {x()}");
-    test("function f() { return; try{var x = 1}finally{} }",
-        "function f() { return; var x = 1; }");
-    test("try {} finally {x()}", "x()");
-    test("try {} catch (e) { bar()} finally {x()}", "x()");
-    test("try {} catch (e) { bar()}", "");
-    test("try {} catch (e) { var a = 0; } finally {x()}", "var a; x()");
-    test("try {} catch (e) {}", "");
-    test("try {} finally {}", "");
-    test("try {} catch (e) {} finally {}", "");
+    foldSame("try {foo()} catch (e) {bar()}");
+    foldSame("try { try {foo()} catch (e) {bar()}} catch (x) {bar()}");
+    fold("try {var x = 1} finally {}", "var x = 1;");
+    foldSame("try {var x = 1} finally {x()}");
+    fold( //
+        "function f() { return; try{ var x = 1; }finally{} }", "function f() { var x; return; }");
+    fold("try {} finally {x()}", "x()");
+    fold("try {} catch (e) { bar()} finally {x()}", "x()");
+    fold("try {} catch (e) { bar()}", "");
+    fold("try {} catch (e) { var a = 0; } finally {x()}", "var a; x()");
+    fold("try {} catch (e) {}", "");
+    fold("try {} finally {}", "");
+    fold("try {} catch (e) {} finally {}", "");
+    fold("L1:try {} catch (e) {} finally {}", "");
+    fold("L2:L1:try {} catch (e) {} finally {}", "");
   }
 
   @Test
   public void testObjectLiteral() {
-    test("({})", "");
-    test("({a:1})", "");
-    test("({a:foo()})", "foo()");
-    test("({'a':foo()})", "foo()");
+    fold("({})", "");
+    fold("({a:1})", "");
+    fold("({a:foo()})", "foo()");
+    fold("({'a':foo()})", "foo()");
     // Object-spread may tigger getters.
-    testSame("({...a})");
-    testSame("({...foo()})");
+    foldSame("({...a})");
+    foldSame("({...foo()})");
   }
 
   @Test
   public void testArrayLiteral() {
-    test("([])", "");
-    test("([1])", "");
-    test("([a])", "");
-    test("([foo()])", "foo()");
+    fold("([])", "");
+    fold("([1])", "");
+    fold("([a])", "");
+    fold("([foo()])", "foo()");
   }
 
   @Test
   public void testArrayLiteral_containingSpread() {
-    testSame("([...c])");
-    test("([4, ...c, a])", "([...c])");
-    test("([foo(), ...c, bar()])", "(foo(), [...c], bar())");
-    test("([...a, b, ...c])", "([...a], [...c])");
-    testSame("([...b, ...c])"); // It would also be fine if the spreads were split apart.
+    foldSame("([...c])");
+    fold("([4, ...c, a])", "([...c])");
+    fold("([foo(), ...c, bar()])", "(foo(), [...c], bar())");
+    fold("([...a, b, ...c])", "([...a], [...c])");
+    foldSame("([...b, ...c])"); // It would also be fine if the spreads were split apart.
   }
 
   @Test
   public void testAwait() {
-    testSame("async function f() { await something(); }");
-    testSame("async function f() { await some.thing(); }");
+    foldSame("async function f() { await something(); }");
+    foldSame("async function f() { await some.thing(); }");
   }
 
   @Test
   public void testEmptyPatternInDeclarationRemoved() {
-    test("var [] = [];", "");
-    test("let [] = [];", "");
-    test("const [] = [];", "");
-    test("var {} = [];", "");
-    test("var [] = foo();", "foo()");
+    fold("var [] = [];", "");
+    fold("let [] = [];", "");
+    fold("const [] = [];", "");
+    fold("var {} = [];", "");
+    fold("var [] = foo();", "foo()");
   }
 
   @Test
   public void testEmptyArrayPatternInAssignRemoved() {
-    test("({} = {});", "");
-    test("({} = foo());", "foo()");
-    test("[] = [];", "");
-    test("[] = foo();", "foo()");
+    fold("({} = {});", "");
+    fold("({} = foo());", "foo()");
+    fold("[] = [];", "");
+    fold("[] = foo();", "foo()");
   }
 
   @Test
   public void testEmptyPatternInParamsNotRemoved() {
-    testSame("function f([], a) {}");
-    testSame("function f({}, a) {}");
+    foldSame("function f([], a) {}");
+    foldSame("function f({}, a) {}");
   }
 
   @Test
   public void testEmptyPatternInForOfLoopNotRemoved() {
-    testSame("for (let [] of foo()) {}");
-    testSame("for (const [] of foo()) {}");
-    testSame("for ([] of foo()) {}");
-    testSame("for ({} of foo()) {}");
+    foldSame("for (let [] of foo()) {}");
+    foldSame("for (const [] of foo()) {}");
+    foldSame("for ([] of foo()) {}");
+    foldSame("for ({} of foo()) {}");
   }
 
   @Test
   public void testEmptySlotInArrayPatternRemoved() {
-    test("[,,] = foo();", "foo()");
-    test("[a,b,,] = foo();", "[a,b] = foo();");
-    test("[a,[],b,[],[]] = foo();", "[a,[],b] = foo();");
-    test("[a,{},b,{},{}] = foo();", "[a,{},b] = foo();");
-    test("function f([,,,]) {}", "function f([]) {}");
-    testSame("[[], [], [], ...rest] = foo()");
+    fold("[,,] = foo();", "foo()");
+    fold("[a,b,,] = foo();", "[a,b] = foo();");
+    fold("[a,[],b,[],[]] = foo();", "[a,[],b] = foo();");
+    fold("[a,{},b,{},{}] = foo();", "[a,{},b] = foo();");
+    fold("function f([,,,]) {}", "function f([]) {}");
+    foldSame("[[], [], [], ...rest] = foo()");
   }
 
   @Test
   public void testEmptySlotInArrayPatternWithDefaultValueMaybeRemoved() {
-    test("[a,[] = 0] = [];", "[a] = [];");
-    testSame("[a,[] = foo()] = [];");
+    fold("[a,[] = 0] = [];", "[a] = [];");
+    foldSame("[a,[] = foo()] = [];");
   }
 
   @Test
   public void testEmptyKeyInObjectPatternRemoved() {
-    test("const {f: {}} = {};", "");
-    test("const {f: []} = {};", "");
-    test("const {f: {}, g} = {};", "const {g} = {};");
-    test("const {f: [], g} = {};", "const {g} = {};");
-    testSame("const {[foo()]: {}} = {};");
+    fold("const {f: {}} = {};", "");
+    fold("const {f: []} = {};", "");
+    fold("const {f: {}, g} = {};", "const {g} = {};");
+    fold("const {f: [], g} = {};", "const {g} = {};");
+    foldSame("const {[foo()]: {}} = {};");
   }
 
   @Test
   public void testEmptyKeyInObjectPatternWithDefaultValueMaybeRemoved() {
-    test("const {f: {} = 0} = {};", "");
+    fold("const {f: {} = 0} = {};", "");
     // In theory the following case could be reduced to `foo()`, but that gets more complicated to
     // implement for object patterns with multiple keys with side effects.
     // Instead the pass backs off for any default with a possible side effect
-    testSame("const {f: {} = foo()} = {};");
+    foldSame("const {f: {} = foo()} = {};");
   }
 
   @Test
   public void testEmptyKeyInObjectPatternNotRemovedWithObjectRest() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2018);
-    testSame("const {f: {}, ...g} = foo()");
-    testSame("const {f: [], ...g} = foo()");
+    foldSame("const {f: {}, ...g} = foo()");
+    foldSame("const {f: [], ...g} = foo()");
   }
 
   @Test
   public void testUndefinedDefaultParameterRemoved() {
-    test(
+    fold(
         "function f(x=undefined,y) {  }", //
         "function f(x,y)             {  }");
-    test(
+    fold(
         "function f(x,y=undefined,z) {  }", //
         "function f(x,y          ,z) {  }");
-    test(
+    fold(
         "function f(x=undefined,y=undefined,z=undefined) {  }", //
         "function f(x,          y,          z)           {  }");
   }
 
   @Test
   public void testPureVoidDefaultParameterRemoved() {
-    test(
+    fold(
         "function f(x = void 0) {  }", //
         "function f(x         ) {  }");
-    test(
+    fold(
         "function f(x = void \"XD\") {  }", //
         "function f(x              ) {  }");
-    test(
+    fold(
         "function f(x = void f()) {  }", //
         "function f(x)            {  }");
   }
 
   @Test
   public void testNoDefaultParameterNotRemoved() {
-    testSame("function f(x,y) {  }");
-    testSame("function f(x) {  }");
-    testSame("function f() {  }");
+    foldSame("function f(x,y) {  }");
+    foldSame("function f(x) {  }");
+    foldSame("function f() {  }");
   }
 
   @Test
   public void testEffectfulDefaultParameterNotRemoved() {
-    testSame("function f(x = void console.log(1)) {  }");
-    testSame("function f(x = void f()) { alert(x); }");
+    foldSame("function f(x = void console.log(1)) {  }");
+    foldSame("function f(x = void f()) { alert(x); }");
   }
 
   @Test
   public void testDestructuringUndefinedDefaultParameter() {
-    test(
+    fold(
         "function f({a=undefined,b=1,c}) {  }", //
         "function f({a          ,b=1,c}) {  }");
-    test(
+    fold(
         "function f({a={},b=0}=undefined) {  }", //
         "function f({a={},b=0}) {  }");
-    test(
+    fold(
         "function f({a=undefined,b=0}) {  }", //
         "function f({a,b=0}) {  }");
-    test(
+    fold(
         " function f({a: {b = undefined}}) {  }", //
         " function f({a: {b}}) {  }");
-    testSame("function f({a,b}) {  }");
-    testSame("function f({a=0, b=1}) {  }");
-    testSame("function f({a=0,b=0}={}) {  }");
-    testSame("function f({a={},b=0}={}) {  }");
+    foldSame("function f({a,b}) {  }");
+    foldSame("function f({a=0, b=1}) {  }");
+    foldSame("function f({a=0,b=0}={}) {  }");
+    foldSame("function f({a={},b=0}={}) {  }");
   }
 
   @Test
   public void testUndefinedDefaultObjectPatterns() {
-    test(
+    fold(
         "const {a = undefined} = obj;", //
         "const {a} = obj;");
-    test(
+    fold(
         "const {a = void 0} = obj;", //
         "const {a} = obj;");
   }
 
   @Test
   public void testDoNotRemoveGetterOnlyAccess() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  get property() {}",
-            "};",
-            "a.property;"));
+    foldSame(
+        """
+        var a = {
+          get property() {}
+        };
+        a.property;
+        """);
 
-    testSame(
-        lines(
-            "var a = {};", //
-            "Object.defineProperty(a, 'property', {",
-            "  get() {}",
-            "});",
-            "a.property;"));
+    foldSame(
+        """
+        var a = {
+          get property() {}
+        };
+        a?.property;
+        """);
+
+    foldSame(
+        """
+        var a = {};
+        Object.defineProperty(a, 'property', {
+          get() {}
+        });
+        a.property;
+        """);
+
+    foldSame(
+        """
+        var a = {};
+        Object.defineProperty(a, 'property', {
+          get() {}
+        });
+        a?.property;
+        """);
   }
 
   @Test
   public void testDoNotRemoveNestedGetterOnlyAccess() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  b: { get property() {} }",
-            "};",
-            "a.b.property;"));
+    foldSame(
+        """
+        var a = {
+          b: { get property() {} }
+        };
+        a.b.property;
+        """);
   }
 
   @Test
   public void testRemoveAfterNestedGetterOnlyAccess() {
-    test(
-        lines(
-            "var a = {", //
-            "  b: { get property() {} }",
-            "};",
-            "a.b.property.d.e;"),
-        lines(
-            "var a = {", //
-            "  b: { get property() {} }",
-            "};",
-            "a.b.property;"));
+    fold(
+        """
+        var a = {
+          b: { get property() {} }
+        };
+        a.b.property.d.e;
+        """,
+        """
+        var a = {
+          b: { get property() {} }
+        };
+        a.b.property;
+        """);
+  }
+
+  @Test
+  public void testFoldLabelledEmptyBlock() {
+    fold("a:{}", "");
+    fold("a:b:{}", "");
+    fold("a:b:c:{}", "");
   }
 
   @Test
   public void testRetainSetterOnlyAccess() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(v) {}",
-            "};",
-            "a.property;"));
+    foldSame(
+        """
+        var a = {
+          set property(v) {}
+        };
+        a.property;
+        """);
+
+    foldSame(
+        """
+        var a = {
+          set property(v) {}
+        };
+        a?.property;
+        """);
   }
 
   @Test
   public void testDoNotRemoveGetterSetterAccess() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  get property() {},",
-            "  set property(x) {}",
-            "};",
-            "a.property;"));
+    foldSame(
+        """
+        var a = {
+          get property() {},
+          set property(x) {}
+        };
+        a.property;
+        """);
   }
 
   @Test
   public void testDoNotRemoveSetSetterToGetter() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  get property() {},",
-            "  set property(x) {}",
-            "};",
-            "a.property = a.property;"));
+    foldSame(
+        """
+        var a = {
+          get property() {},
+          set property(x) {}
+        };
+        a.property = a.property;
+        """);
   }
 
   @Test
   public void testDoNotRemoveAccessIfOtherPropertyIsGetter() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  get property() {}",
-            "};",
-            "var b = {",
-            "  property: 0,",
-            "};",
-            // This pass should be conservative and not remove this since it sees a getter for
-            // "property"
-            "b.property;"));
+    foldSame(
+        """
+        var a = {
+          get property() {}
+        };
+        var b = {
+          property: 0,
+        };
+        // This pass should be conservative and not remove this since it sees a getter for
+        // "property"
+        b.property;
+        """);
 
-    testSame(
-        lines(
-            "var a = {};", //
-            "Object.defineProperty(a, 'property', {",
-            "  get() {}",
-            "});",
-            "var b = {",
-            "  property: 0,",
-            "};",
-            "b.property;"));
+    foldSame(
+        """
+        var a = {};
+        Object.defineProperty(a, 'property', {
+          get() {}
+        });
+        var b = {
+          property: 0,
+        };
+        b.property;
+        """);
   }
 
   @Test
   public void testFunctionCallReferencesGetterIsNotRemoved() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  get property() {}",
-            "};",
-            "function foo() { a.property; }",
-            "foo();"));
+    foldSame(
+        """
+        var a = {
+          get property() {}
+        };
+        function foo() { a.property; }
+        foo();
+        """);
   }
 
   @Test
   public void testFunctionCallReferencesSetterIsNotRemoved() {
-    testSame(
-        lines(
-            "var a = {", //
-            "  set property(v) {}",
-            "};",
-            "function foo() { a.property = 0; }",
-            "foo();"));
+    foldSame(
+        """
+        var a = {
+          set property(v) {}
+        };
+        function foo() { a.property = 0; }
+        foo();
+        """);
+  }
+
+  @Test
+  public void testClassField() {
+    fold(
+        """
+        class C {
+          f1 = (5,2);
+        }
+        """,
+        """
+        class C {
+          f1 = 2;
+        }
+        """);
+  }
+
+  @Test
+  public void testThis() {
+    fold(
+        """
+        class C {
+          constructor() {
+            this.f1 = (5,2);
+          }
+        }
+        """,
+        """
+        class C {
+          constructor() {
+            this.f1 = 2;
+          }
+        }
+        """);
+  }
+
+  @Test
+  public void testClassStaticBlock() {
+    fold(
+        """
+        class C {
+          static {
+          }
+        }
+        """,
+        """
+        class C {
+        }
+        """);
+
+    foldSame(
+        """
+        class C {
+          static {
+            this.x = 0;
+          }
+        }
+        """);
+  }
+
+  @Test
+  public void testRemoveUnreachableOptionalChainingCall() {
+    fold("(null)?.();", "");
+    fold("(void 0)?.();", "");
+    fold("(undefined)?.();", "");
+    fold("(void 0)?.(0)", "");
+    fold("(void 0)?.(function f() {})", "");
+    fold("(null)?.x;", "");
+    fold("(void 0)?.x;", "");
+    fold("(null)?.['x'];", "");
+    fold("(void 0)?.['x'];", "");
+    fold("(null)?.[x];", "");
+    fold("(void 0)?.[x];", "");
+    // arguments with unknown side effects are also removed
+    fold("(void 0)?.(f(), g())", "");
+
+    // void arguments with unknown side effects are preserved
+    fold("(void f())?.();", "f();");
+    fold("g((void f())?.());", "g(void f());");
+
+    foldSame("(f(), null)?.()");
+    foldSame("f?.()");
+    fold("a?.x;", "");
+    fold("a?.['x'];", "");
+  }
+
+  @Test
+  public void testRemoveUnusedVoid() {
+    // remove void at statement level
+    fold("void 0;", "");
+    fold("void foo();", "foo();");
+    // preserve void when passed somewhere else
+    foldSame("use(void 0);");
+    foldSame("use(void foo());");
+    foldSame("use(() => void foo());");
+
+    fold("void use(() => void foo());", "use(() => void foo());");
+  }
+
+  private void testInFn(String js, String expected) {
+    String pre = "function f() {";
+    String post = "}";
+    test(pre + js + post, pre + expected + post);
+  }
+
+  private void testInLoop(String js, String expected) {
+    testInLoop(js, "", expected);
+  }
+
+  private void testInLoop(String js, String expectedBeforeLoop, String expected) {
+    String pre = "for (;;) {";
+    String post = "}";
+    test(pre + js + post, expectedBeforeLoop + pre + expected + post);
+  }
+
+  @Test
+  public void testRemoveDeadStatements1() {
+    test("throw 1; x;", "throw 1;");
+    test("throw 1; alert(1)", "throw 1;");
+    test("throw 1; var x = 1", "var x; throw 1;");
+  }
+
+  @Test
+  public void testRemoveDeadStatements2() {
+    testInFn("return; x;", "return;");
+    testInFn("return; alert(1)", "return;");
+    testInFn("return; var x = 1", "var x; return;");
+  }
+
+  @Test
+  public void testRemoveDeadStatements3() {
+    testInLoop("break; x;", "break;");
+    testInLoop("break; alert(1)", "break;");
+    testInLoop("break; var x = 1", "var x;", "break;");
+  }
+
+  @Test
+  public void testRemoveDeadStatements4() {
+    testInLoop("continue; x;", "continue;");
+    testInLoop("continue; alert(1)", "continue;");
+    testInLoop("continue; var x = 1", "var x;", "continue;");
+  }
+
+  @Test
+  public void testRemovalRequiresRedeclaration() {
+    test( //
+        "while(1) { break; var x = 1}", //
+        "var x; for(;;) { break }");
+    test( //
+        "while(1) { break; var x=1; var y=1 }", //
+        "var y; var x; for(;;) { break }");
+    test( //
+        "while(1) { break; var [x, [[[y]]]] = [];}", //
+        "var y; var x; for(;;) { break }");
+  }
+
+  @Test
+  public void testRemovalRequiresRedeclaration_normalizeDisabled() {
+    disableNormalize();
+    disableComputeSideEffects();
+    test( //
+        "while(1) { break; var x = 1}", //
+        "var x; while (1) { break; }");
+    test( //
+        "while(1) { break; var x=1; var y=1 }", //
+        "var y; var x; while (1) { break; }");
+    test( //
+        "while(1) { break; var [x, [[[y]]]] = [];}", //
+        "var y; var x; while (1) { break; }");
+  }
+
+  @Test
+  public void testRemoveDo() {
+    test("do { print(1); break } while(1)", "do { print(1); break } while(1)");
+    test("while(1) { break; do { print(1); break } while(1) }", "for (;;) { break; }");
+  }
+
+  @Test
+  public void testSwitchCase() {
+    test(
+        "function f() { switch(x) { case 1: break; default: return 5; foo()}}",
+        "function f() { switch(x) { case 1: break; default: return 5;}}");
+    test(
+        "function f() { switch(x) { default: return; case 1: foo(); bar()}}",
+        "function f() { switch(x) { default: return; case 1: foo(); bar()}}");
+    test(
+        "function f() { switch(x) { default: return; case 1: return 5;bar()}}",
+        "function f() { switch(x) { default: return; case 1: return 5;}}");
   }
 }

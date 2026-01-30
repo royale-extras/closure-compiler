@@ -16,8 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
-
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -48,14 +46,9 @@ public final class LoggerErrorManager extends BasicErrorManager {
   @Override
   public void println(CheckLevel level, JSError error) {
     switch (level) {
-      case ERROR:
-        logger.severe(error.format(level, formatter));
-        break;
-      case WARNING:
-        logger.warning(error.format(level, formatter));
-        break;
-      case OFF:
-        break;
+      case ERROR -> logger.severe(error.format(level, formatter));
+      case WARNING -> logger.warning(error.format(level, formatter));
+      case OFF -> {}
     }
   }
 
@@ -64,13 +57,14 @@ public final class LoggerErrorManager extends BasicErrorManager {
     Level level = (getErrorCount() + getWarningCount() == 0) ?
         Level.INFO : Level.WARNING;
     if (getTypedPercent() > 0.0) {
-      logger.log(level, SimpleFormat.format(
-          "%d error(s), %d warning(s), %.1f%% typed",
-          getErrorCount(), getWarningCount(), getTypedPercent()));
+      logger.log(
+          level,
+          String.format(
+              "%d error(s), %d warning(s), %.1f%% typed",
+              getErrorCount(), getWarningCount(), getTypedPercent()));
     } else if (getErrorCount() + getWarningCount() > 0) {
-      logger.log(level, SimpleFormat.format(
-          "%d error(s), %d warning(s)",
-          getErrorCount(), getWarningCount()));
+      logger.log(
+          level, String.format("%d error(s), %d warning(s)", getErrorCount(), getWarningCount()));
     }
   }
 }

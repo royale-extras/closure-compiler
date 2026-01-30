@@ -18,11 +18,11 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.TernaryValue;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Transform the structure of the AST so that the number of explicit exits
@@ -31,46 +31,31 @@ import javax.annotation.Nullable;
 class MinimizeExitPoints extends AbstractPeepholeOptimization {
   @Override
   Node optimizeSubtree(Node n) {
+    checkState(this.isASTNormalized(), "MinimizeExitPoints requires the AST to be normalized");
     switch (n.getToken()) {
-      case LABEL:
-        tryMinimizeExits(
-            n.getLastChild(), Token.BREAK, n.getFirstChild().getString());
-        break;
-
-      case FOR:
-      case FOR_IN:
-      case FOR_OF:
-      case FOR_AWAIT_OF:
-      case WHILE:
-        tryMinimizeExits(NodeUtil.getLoopCodeBlock(n), Token.CONTINUE, null);
-        break;
-
-      case DO:
+      case LABEL -> tryMinimizeExits(n.getLastChild(), Token.BREAK, n.getFirstChild().getString());
+      case FOR, FOR_IN, FOR_OF, FOR_AWAIT_OF, WHILE ->
+          tryMinimizeExits(NodeUtil.getLoopCodeBlock(n), Token.CONTINUE, null);
+      case DO -> {
         tryMinimizeExits(NodeUtil.getLoopCodeBlock(n), Token.CONTINUE, null);
 
         Node cond = NodeUtil.getConditionExpression(n);
-        if (getSideEffectFreeBooleanValue(cond) == TernaryValue.FALSE) {
+        if (getSideEffectFreeBooleanValue(cond) == Tri.FALSE) {
           // Normally, we wouldn't be able to optimize BREAKs inside a loop
           // but as we know the condition will always be false, we can treat them
           // as we would a CONTINUE.
           tryMinimizeExits(n.getFirstChild(), Token.BREAK, null);
         }
-        break;
-
-      case BLOCK:
-        if (n.getParent() != null && n.getParent().isFunction()) {
+      }
+      case BLOCK -> {
+        if (n.hasParent() && n.getParent().isFunction()) {
           tryMinimizeExits(n, Token.RETURN, null);
         }
-        break;
-
-      case SWITCH:
-        tryMinimizeSwitchExits(n, Token.BREAK, null);
-        break;
-
-        // TODO(johnlenz): Minimize any block that ends in a optimizable statements:
-        //   break, continue, return
-      default:
-        break;
+      }
+      case SWITCH -> tryMinimizeSwitchExits(n, Token.BREAK, null);
+      // TODO(johnlenz): Minimize any block that ends in a optimizable statements:
+      //   break, continue, return
+      default -> {}
     }
     return n;
   }
@@ -200,8 +185,9 @@ class MinimizeExitPoints extends AbstractPeepholeOptimization {
   void tryMinimizeSwitchExits(Node n, Token exitType, @Nullable String labelName) {
     checkState(n.isSwitch());
     // Skipping the switch condition, visit all the children.
-    for (Node c = n.getSecondChild(); c != null; c = c.getNext()) {
-      if (c != n.getLastChild()) {
+    Node switchBody = n.getSecondChild();
+    for (Node c = switchBody.getFirstChild(); c != null; c = c.getNext()) {
+      if (c != switchBody.getLastChild()) {
         tryMinimizeSwitchCaseExits(c, exitType, labelName);
       } else {
         // Last case, the last case block can be optimized more aggressively.
@@ -289,18 +275,18 @@ class MinimizeExitPoints extends AbstractPeepholeOptimization {
         ifNode.addChildToBack(newDestBlock);
       } else if (destBlock.isEmpty()) {
         // Use the new block.
-        ifNode.replaceChild(destBlock, newDestBlock);
+        destBlock.replaceWith(newDestBlock);
       } else if (destBlock.isBlock()) {
         // Reuse the existing block.
         newDestBlock = destBlock;
       } else {
         // Add the existing statement to the new block.
-        ifNode.replaceChild(destBlock, newDestBlock);
+        destBlock.replaceWith(newDestBlock);
         newDestBlock.addChildToBack(destBlock);
       }
 
       // Move all the if node's following siblings.
-      moveAllFollowing(ifNode, ifNode.getParent(), newDestBlock);
+      moveAllFollowing(ifNode, newDestBlock);
       reportChangeToEnclosingScope(ifNode);
     }
   }
@@ -334,17 +320,16 @@ class MinimizeExitPoints extends AbstractPeepholeOptimization {
   }
 
   /**
-   * Move all the child nodes following start in srcParent to the end of
-   * destParent's child list.
+   * Move all the child nodes following start in srcParent to the end of destParent's child list.
+   *
    * @param start The start point in the srcParent child list.
    * @param srcParent The parent node of start.
    * @param destParent The destination node.
    */
-  private static void moveAllFollowing(
-      Node start, Node srcParent, Node destParent) {
+  private static void moveAllFollowing(Node start, Node destParent) {
     for (Node n = start.getNext(); n != null; n = start.getNext()) {
       boolean isFunctionDeclaration = NodeUtil.isFunctionDeclaration(n);
-      srcParent.removeChild(n);
+      n.detach();
       if (isFunctionDeclaration) {
         destParent.addChildToFront(n);
       } else {

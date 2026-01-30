@@ -19,21 +19,16 @@ package com.google.javascript.jscomp;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableSet;
-import java.util.Set;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link GatherRawExports}.
- *
- * @author johnlenz@google.com (John Lenz)
- */
+/** Tests for {@link GatherRawExports}. */
 @RunWith(JUnit4.class)
 public final class GatherRawExportsTest extends CompilerTestCase {
 
-  private static final String EXTERNS = "var window;";
+  private static final String EXTERNS = "var window;var self;";
   private GatherRawExports last;
 
   public GatherRawExportsTest() {
@@ -45,6 +40,8 @@ public final class GatherRawExportsTest extends CompilerTestCase {
   public void setUp() throws Exception {
     super.setUp();
     enableNormalize();
+    // TODO(bradfordcsmith): Stop normalizing the expected output or document why it is necessary.
+    enableNormalizeExpectedOutput();
   }
 
   @Override
@@ -54,18 +51,29 @@ public final class GatherRawExportsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testExportsFound1() {
+  public void testTopLevelVar() {
+    // Global vars are not what we are looking for.
     assertExported("var a");
   }
 
   @Test
-  public void testExportsFound2() {
+  public void testExportsFoundQuoted() {
     assertExported("window['a']", "a");
   }
 
   @Test
-  public void testExportsFound3() {
+  public void testExportsFoundUnquoted() {
     assertExported("window.a", "a");
+  }
+
+  @Test
+  public void testExportWithOptChainFoundQuoted() {
+    assertExported("window?.['a']", "a");
+  }
+
+  @Test
+  public void testExportWithOptChainFoundUnquoted() {
+    assertExported("window?.a", "a");
   }
 
   @Test
@@ -154,6 +162,56 @@ public final class GatherRawExportsTest extends CompilerTestCase {
   }
 
   @Test
+  public void testExportOnGlobalThis1() {
+    assertExported("globalThis['a']", "a");
+  }
+
+  @Test
+  public void testExportOnGlobalThis2() {
+    assertExported("globalThis.a", "a");
+  }
+
+  @Test
+  public void testExportOnPolyfillGlobal1() {
+    assertExported("$jscomp.global['a']", "a");
+  }
+
+  @Test
+  public void testExportOnPolyfillGlobal2() {
+    assertExported("$jscomp.global.a", "a");
+  }
+
+  @Test
+  public void testExportOnPolyfillGlobal1Collapsed() {
+    assertExported("$jscomp$global['a']", "a");
+  }
+
+  @Test
+  public void testExportOnPolyfillGlobal2Collapsed() {
+    assertExported("$jscomp$global.a", "a");
+  }
+
+  @Test
+  public void testExportOnSelf1() {
+    assertExported("self['a']", "a");
+  }
+
+  @Test
+  public void testExportOnSelf2() {
+    assertExported("self.a", "a");
+  }
+
+  @Test
+  public void testNoExportOnLocalSelf1() {
+    assertExported("function fn(self) { self['a']; }");
+  }
+
+  @Test
+  public void testNoExportOnLocalSelf2() {
+    assertExported("function fn(self) { self.a; }");
+  }
+
+  @Test
   public void testExportOnGoogGlobalFound1() {
     assertExported("goog.global['a']", "a");
   }
@@ -173,8 +231,8 @@ public final class GatherRawExportsTest extends CompilerTestCase {
     assertExported("goog$global.a", "a");
   }
 
-  private void assertExported(String js, String ... names) {
-    Set<String> setNames = ImmutableSet.copyOf(names);
+  private void assertExported(String js, String... names) {
+    ImmutableSet<String> setNames = ImmutableSet.copyOf(names);
     testSame(js);
     assertThat(last.getExportedVariableNames()).isEqualTo(setNames);
   }

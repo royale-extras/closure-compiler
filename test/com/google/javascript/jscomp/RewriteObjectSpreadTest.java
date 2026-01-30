@@ -15,9 +15,11 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.rhino.testing.TypeSubject.assertType;
+import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.colors.StandardColors;
+import com.google.javascript.jscomp.testing.CodeSubTree;
 import com.google.javascript.jscomp.testing.TestExternsBuilder;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
@@ -33,20 +35,20 @@ public final class RewriteObjectSpreadTest extends CompilerTestCase {
     super(new TestExternsBuilder().addObject().build());
   }
 
-  @Override
   @Before
-  public void setUp() throws Exception {
-    super.setUp();
+  public void customSetUp() throws Exception {
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT);
     setLanguageOut(LanguageMode.ECMASCRIPT_2017);
   }
 
   @Before
   public void enableTypeCheckBeforePass() {
+    enableNormalize();
     enableTypeCheck();
     enableTypeInfoValidation();
-    disableCompareSyntheticCode();
     allowExternsChanges();
+    replaceTypesWithColors();
+    enableMultistageCompilation();
   }
 
   @Override
@@ -67,26 +69,37 @@ public final class RewriteObjectSpreadTest extends CompilerTestCase {
     test(
         "({first, [foo()]: baz(), ...spread});",
         "Object.assign({}, {first, [foo()]: baz()}, spread)");
+    test(
+        "({type : 'object', ...spread && spread});",
+        "Object.assign({}, {type:'object'}, spread && spread);");
   }
 
   @Test
   public void testTyping_ofSpreadResult_isObject() {
     test(
-        lines(
-            "const first = 0;", //
-            "const spread = {bar: 'str', qux: false};",
-            "const obj = ({first, ...spread});"),
-        lines(
-            "const first = 0;", //
-            "const spread = {bar: 'str', qux: false};",
-            "const obj = Object.assign({}, {first}, spread)"));
+        """
+        const first = 0;
+        const spread = {bar: 'str', qux: false};
+        const obj = ({first, ...spread});
+        """,
+        """
+        const first = 0;
+        const spread = {bar: 'str', qux: false};
+        const obj = Object.assign({}, {first}, spread)
+        """);
 
     Compiler lastCompiler = getLastCompiler();
 
     Node obj = getNodeMatchingQName(lastCompiler.getJsRoot(), "obj");
-    assertType(obj.getJSType()).toStringIsEqualTo("Object");
-    assertType(obj.getFirstFirstChild().getJSType())
-        .toStringIsEqualTo("function(Object, ...(Object|null)): Object");
+    assertNode(obj).hasColorThat().isEqualTo(StandardColors.TOP_OBJECT);
+    assertNode(obj.getFirstFirstChild())
+        .hasColorThat()
+        .isEqualTo(
+            CodeSubTree.findFirstNode(
+                    getLastCompiler().getExternsRoot(),
+                    (node) -> node.matchesQualifiedName("Object.assign"))
+                .getNext()
+                .getColor());
   }
 
   /** Returns the first node (preorder) in the given AST that matches the given qualified name */
@@ -94,7 +107,7 @@ public final class RewriteObjectSpreadTest extends CompilerTestCase {
     if (root.matchesQualifiedName(qname)) {
       return root;
     }
-    for (Node child : root.children()) {
+    for (Node child = root.getFirstChild(); child != null; child = child.getNext()) {
       Node result = getNodeMatchingQName(child, qname);
       if (result != null) {
         return result;

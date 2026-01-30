@@ -16,9 +16,9 @@
 
 package com.google.javascript.jscomp;
 
-/**
- * All warnings should be reported as errors.
- */
+import org.jspecify.annotations.Nullable;
+
+/** All warnings should be reported as errors. */
 public final class StrictWarningsGuard extends WarningsGuard {
   private static final long serialVersionUID = 1L;
 
@@ -26,21 +26,15 @@ public final class StrictWarningsGuard extends WarningsGuard {
       DiagnosticType.warning("JSC_UNRAISABLE_WARNING", "{0}");
 
   @Override
-  public CheckLevel level(JSError error) {
-    if (error.getType() == UNRAISABLE_WARNING) {
+  public @Nullable CheckLevel level(JSError error) {
+    if (error.type() == UNRAISABLE_WARNING) {
       return null;
     }
-    return error.getDefaultLevel().isOn() ? CheckLevel.ERROR : null;
+    return error.defaultLevel().isOn() ? CheckLevel.ERROR : null;
   }
 
   @Override
   protected int getPriority() {
     return WarningsGuard.Priority.STRICT.value; // applied last
-  }
-
-  @Override
-  protected WarningsGuard makeNonStrict() {
-    throw new UnsupportedOperationException(
-        "Cannot make a StrictWarningsGuard non-strict");
   }
 }

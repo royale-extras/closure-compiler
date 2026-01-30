@@ -17,14 +17,15 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.errorprone.annotations.Immutable;
+import com.google.errorprone.annotations.InlineMe;
 import java.io.Serializable;
 import java.util.List;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Options for how to manage dependencies between input files.
@@ -37,10 +38,28 @@ import javax.annotation.Nullable;
  * <p>Also see {@link CodingConvention#extractClassNameIfProvide(Node, Node)} and {@link
  * CodingConvention#extractClassNameIfRequire(Node, Node)}, which affect what the compiler considers
  * to be goog.provide and goog.require statements.
+ *
+ * @param mode Returns the dependency management mode.
+ * @param entryPoints Returns the list of explicit entry points.
  */
-@AutoValue
 @Immutable
-public abstract class DependencyOptions implements Serializable {
+public record DependencyOptions(DependencyMode mode, ImmutableList<ModuleIdentifier> entryPoints)
+    implements Serializable {
+  public DependencyOptions {
+    requireNonNull(mode, "mode");
+    requireNonNull(entryPoints, "entryPoints");
+  }
+
+  @InlineMe(replacement = "this.mode()")
+  public DependencyMode getMode() {
+    return mode();
+  }
+
+  @InlineMe(replacement = "this.entryPoints()")
+  public ImmutableList<ModuleIdentifier> getEntryPoints() {
+    return entryPoints();
+  }
+
   /** Describes how the compiler should manage dependencies. */
   public enum DependencyMode {
     /** All input files will be included in the compilation in the order they were specified in. */
@@ -64,18 +83,25 @@ public abstract class DependencyOptions implements Serializable {
      *
      * <p>All entry points must be explicitly defined.
      */
-    PRUNE;
+    PRUNE,
+
+    /**
+     * Identical to PRUNE unless there are no entry points specifified, in which case drops all
+     * other input files instead of crashing with an error about invalid flag usage.
+     *
+     * <p>PRUNE mode will report an error if used without a specified entry point because that
+     * usually indicates user error, where the user actually wants pruning starting from one/more
+     * entry points.
+     *
+     * <p>This mode is only recommended for use when using some macro to generate JSCompiler flags
+     * for a variety of targets, some of which have entry points and some of which do not.
+     */
+    PRUNE_ALLOW_NO_ENTRY_POINTS;
   }
-
-  /** Returns the dependency management mode. */
-  public abstract DependencyMode getMode();
-
-  /** Returns the list of explicit entry points. */
-  public abstract ImmutableList<ModuleIdentifier> getEntryPoints();
 
   /** Returns whether dependency management is enabled. */
   public boolean needsManagement() {
-    return getMode() != DependencyMode.NONE;
+    return mode() != DependencyMode.NONE;
   }
 
   /**
@@ -85,7 +111,7 @@ public abstract class DependencyOptions implements Serializable {
    * not be reordered.
    */
   public boolean shouldSort() {
-    return getMode() != DependencyMode.NONE;
+    return mode() != DependencyMode.NONE;
   }
 
   /**
@@ -95,7 +121,9 @@ public abstract class DependencyOptions implements Serializable {
    * dependency of an entry point. Otherwise, all input files should be included.
    */
   public boolean shouldPrune() {
-    return getMode() == DependencyMode.PRUNE_LEGACY || getMode() == DependencyMode.PRUNE;
+    return mode() == DependencyMode.PRUNE_LEGACY
+        || mode() == DependencyMode.PRUNE
+        || mode() == DependencyMode.PRUNE_ALLOW_NO_ENTRY_POINTS;
   }
 
   /**
@@ -107,17 +135,17 @@ public abstract class DependencyOptions implements Serializable {
    * <p>If true, moochers should not be considered implicit entry points.
    */
   public boolean shouldDropMoochers() {
-    return getMode() == DependencyMode.PRUNE;
+    return mode() == DependencyMode.PRUNE || mode() == DependencyMode.PRUNE_ALLOW_NO_ENTRY_POINTS;
   }
 
   /** Returns a {@link DependencyOptions} using the {@link DependencyMode#NONE} mode. */
   public static DependencyOptions none() {
-    return new AutoValue_DependencyOptions(DependencyMode.NONE, ImmutableList.of());
+    return new DependencyOptions(DependencyMode.NONE, ImmutableList.of());
   }
 
   /** Returns a {@link DependencyOptions} using the {@link DependencyMode#SORT_ONLY} mode. */
   public static DependencyOptions sortOnly() {
-    return new AutoValue_DependencyOptions(DependencyMode.SORT_ONLY, ImmutableList.of());
+    return new DependencyOptions(DependencyMode.SORT_ONLY, ImmutableList.of());
   }
 
   /**
@@ -129,8 +157,16 @@ public abstract class DependencyOptions implements Serializable {
   @Deprecated
   public static DependencyOptions pruneLegacyForEntryPoints(
       Iterable<ModuleIdentifier> entryPoints) {
-    return new AutoValue_DependencyOptions(
-        DependencyMode.PRUNE_LEGACY, ImmutableList.copyOf(entryPoints));
+    return new DependencyOptions(DependencyMode.PRUNE_LEGACY, ImmutableList.copyOf(entryPoints));
+  }
+
+  /**
+   * Returns a {@link DependencyOptions} using the {@link DependencyMode#PRUNE} mode with the given
+   * entry points.
+   */
+  public static DependencyOptions pruneAllowNoEntryPoints(Iterable<ModuleIdentifier> entryPoints) {
+    return new DependencyOptions(
+        DependencyMode.PRUNE_ALLOW_NO_ENTRY_POINTS, ImmutableList.copyOf(entryPoints));
   }
 
   /**
@@ -140,7 +176,7 @@ public abstract class DependencyOptions implements Serializable {
   public static DependencyOptions pruneForEntryPoints(Iterable<ModuleIdentifier> entryPoints) {
     checkState(
         !Iterables.isEmpty(entryPoints), "DependencyMode.PRUNE requires at least one entry point");
-    return new AutoValue_DependencyOptions(DependencyMode.PRUNE, ImmutableList.copyOf(entryPoints));
+    return new DependencyOptions(DependencyMode.PRUNE, ImmutableList.copyOf(entryPoints));
   }
 
   /**
@@ -152,8 +188,7 @@ public abstract class DependencyOptions implements Serializable {
    * <p>TODO(tjgq): Simplify this once we deprecate and remove all legacy flags and standardize on
    * --dependency_mode and --entry_point.
    */
-  @Nullable
-  public static DependencyOptions fromFlags(
+  public static @Nullable DependencyOptions fromFlags(
       @Nullable DependencyMode dependencyModeFlag,
       List<String> entryPointFlag,
       List<String> closureEntryPointFlag,
@@ -213,6 +248,8 @@ public abstract class DependencyOptions implements Serializable {
     DependencyMode dependencyMode;
     if (dependencyModeFlag == DependencyMode.PRUNE || onlyClosureDependenciesFlag) {
       dependencyMode = DependencyMode.PRUNE;
+    } else if (dependencyModeFlag == DependencyMode.PRUNE_ALLOW_NO_ENTRY_POINTS) {
+      dependencyMode = DependencyMode.PRUNE_ALLOW_NO_ENTRY_POINTS;
     } else if (dependencyModeFlag == DependencyMode.PRUNE_LEGACY
         || manageClosureDependenciesFlag
         || hasEntryPoint) {
@@ -234,16 +271,13 @@ public abstract class DependencyOptions implements Serializable {
       entryPointsBuilder.add(ModuleIdentifier.forClosure(closureEntryPoint));
     }
 
-    switch (dependencyMode) {
-      case NONE:
-        return DependencyOptions.none();
-      case SORT_ONLY:
-        return DependencyOptions.sortOnly();
-      case PRUNE_LEGACY:
-        return DependencyOptions.pruneLegacyForEntryPoints(entryPointsBuilder.build());
-      case PRUNE:
-        return DependencyOptions.pruneForEntryPoints(entryPointsBuilder.build());
-    }
-    throw new AssertionError("Invalid DependencyMode");
+    return switch (dependencyMode) {
+      case NONE -> DependencyOptions.none();
+      case SORT_ONLY -> DependencyOptions.sortOnly();
+      case PRUNE_LEGACY -> DependencyOptions.pruneLegacyForEntryPoints(entryPointsBuilder.build());
+      case PRUNE_ALLOW_NO_ENTRY_POINTS ->
+          DependencyOptions.pruneAllowNoEntryPoints(entryPointsBuilder.build());
+      case PRUNE -> DependencyOptions.pruneForEntryPoints(entryPointsBuilder.build());
+    };
   }
 }

@@ -29,7 +29,7 @@ import com.google.javascript.rhino.jstype.StaticTypedScope;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A symbol table for references that are removed by preprocessor passes (like {@code
@@ -58,12 +58,12 @@ final class PreprocessorSymbolTable
   }
 
   @Override
-  public JSType getTypeOfThis() {
+  public @Nullable JSType getTypeOfThis() {
     return null;
   }
 
   @Override
-  public StaticTypedScope getParentScope() {
+  public @Nullable StaticTypedScope getParentScope() {
     return null;
   }
 
@@ -99,9 +99,7 @@ final class PreprocessorSymbolTable
   void addReference(Node node, String name) {
     checkNotNull(name);
 
-    if (!symbols.containsKey(name)) {
-      symbols.put(name, new SimpleSlot(name, null, true));
-    }
+    symbols.computeIfAbsent(name, (String k) -> new SimpleSlot(k, null, true));
 
     refs.put(name, new Reference(symbols.get(name), node));
   }
@@ -111,7 +109,7 @@ final class PreprocessorSymbolTable
    * module names.
    */
   public String getQualifiedName(Node n) {
-    return n.isString() ? n.getString() : n.getQualifiedName();
+    return n.isStringLit() ? n.getString() : n.getQualifiedName();
   }
 
   static final class Reference extends SimpleReference<SimpleSlot> {
@@ -129,7 +127,7 @@ final class PreprocessorSymbolTable
    */
   public static class CachedInstanceFactory {
 
-    @Nullable private PreprocessorSymbolTable instance;
+    private @Nullable PreprocessorSymbolTable instance;
 
     public void maybeInitialize(AbstractCompiler compiler) {
       if (compiler.getOptions().preservesDetailedSourceInfo()) {
@@ -140,8 +138,7 @@ final class PreprocessorSymbolTable
       }
     }
 
-    @Nullable
-    public PreprocessorSymbolTable getInstanceOrNull() {
+    public @Nullable PreprocessorSymbolTable getInstanceOrNull() {
       return instance;
     }
   }

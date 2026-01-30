@@ -17,31 +17,31 @@
 package com.google.javascript.jscomp.parsing;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Ascii;
 import com.google.common.base.CharMatcher;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.parsing.Config.LanguageMode;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.JSTypeExpression;
+import com.google.javascript.rhino.Msg;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.SimpleErrorReporter;
 import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.TokenStream;
 import com.google.javascript.rhino.TokenUtil;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 // TODO(nicksantos): Unify all the JSDocInfo stuff into one package, instead of
 // spreading it across multiple packages.
@@ -54,61 +54,61 @@ public final class JsDocInfoParser {
   private static final String TTL_END_DELIMITER = "=:";
 
   private static final CharMatcher TEMPLATE_NAME_MATCHER =
-      CharMatcher.javaLetterOrDigit().or(CharMatcher.is('_'));
+      CharMatcher.javaLetterOrDigit().or(CharMatcher.anyOf("_$"));
 
   @VisibleForTesting
   public static final String BAD_TYPE_WIKI_LINK =
       " See https://github.com/google/closure-compiler/wiki/Annotating-JavaScript-for-the-Closure-Compiler"
           + " for more information.";
 
+  private static final String TSICKLE_MISSING_TYPE_PLACEHOLDER =
+      "JsDocInfoParser_TsickleMode_MissingSupertypePlaceholder";
+  private static final String TS_TYPE_PLACEHOLDER = "JsDocInfoParser_tsType_PlaceHolder";
+
   private final JsDocTokenStream stream;
-  private final JSDocInfoBuilder jsdocBuilder;
+  private final JSDocInfo.Builder jsdocBuilder;
   private final ErrorReporter errorReporter;
+  private final JsDocSourceKind jsDocSourceKind;
 
   // Use a template node for properties set on all nodes to minimize the
   // memory footprint associated with these (similar to IRFactory).
   private final Node templateNode;
 
-
-  private void addParserWarning(String messageId, String messageArg) {
-    addParserWarning(messageId, messageArg, stream.getLineno(), stream.getCharno());
+  private void addParserWarning(Msg msg, String messageArg) {
+    addParserWarning(msg, messageArg, stream.getLineno(), stream.getCharno());
   }
 
-  private void addParserWarning(String messageId, String messageArg, int lineno, int charno) {
+  private void addParserWarning(Msg msg, String messageArg, int lineno, int charno) {
+    errorReporter.warning(msg.format(messageArg), getSourceName(), lineno, charno);
+  }
+
+  private void addParserWarning(Msg msg) {
+    addParserWarning(msg, stream.getLineno(), stream.getCharno());
+  }
+
+  private void addParserWarning(Msg msg, int lineno, int charno) {
+    errorReporter.warning(msg.format(), getSourceName(), lineno, charno);
+  }
+
+  private void addTypeWarning(Msg msg, String messageArg) {
+    addTypeWarning(msg, messageArg, stream.getLineno(), stream.getCharno());
+  }
+
+  private void addTypeWarning(Msg msg, String messageArg, int lineno, int charno) {
     errorReporter.warning(
-        SimpleErrorReporter.getMessage1(messageId, messageArg), getSourceName(), lineno, charno);
-  }
-
-  private void addParserWarning(String messageId) {
-    addParserWarning(messageId, stream.getLineno(), stream.getCharno());
-  }
-
-  private void addParserWarning(String messageId, int lineno, int charno) {
-    errorReporter.warning(
-        SimpleErrorReporter.getMessage0(messageId), getSourceName(), lineno, charno);
-  }
-
-  private void addTypeWarning(String messageId, String messageArg) {
-    addTypeWarning(messageId, messageArg, stream.getLineno(), stream.getCharno());
-  }
-
-  private void addTypeWarning(String messageId, String messageArg, int lineno, int charno) {
-    errorReporter.warning(
-        "Bad type annotation. " + SimpleErrorReporter.getMessage1(messageId, messageArg)
-            + BAD_TYPE_WIKI_LINK,
+        "Bad type annotation. " + msg.format(messageArg) + BAD_TYPE_WIKI_LINK,
         getSourceName(),
         lineno,
         charno);
   }
 
-  private void addTypeWarning(String messageId) {
-    addTypeWarning(messageId, stream.getLineno(), stream.getCharno());
+  private void addTypeWarning(Msg msg) {
+    addTypeWarning(msg, stream.getLineno(), stream.getCharno());
   }
 
-  private void addTypeWarning(String messageId, int lineno, int charno) {
+  private void addTypeWarning(Msg msg, int lineno, int charno) {
     errorReporter.warning(
-        "Bad type annotation. " + SimpleErrorReporter.getMessage0(messageId)
-            + BAD_TYPE_WIKI_LINK,
+        "Bad type annotation. " + msg.format() + BAD_TYPE_WIKI_LINK,
         getSourceName(),
         lineno,
         charno);
@@ -119,37 +119,36 @@ public final class JsDocInfoParser {
   }
 
   // The DocInfo with the fileoverview tag for the whole file.
-  private JSDocInfo fileOverviewJSDocInfo = null;
+  private @Nullable JSDocInfo fileOverviewJSDocInfo = null;
   private State state;
 
-  private final Map<String, Annotation> annotations;
-  private final Set<String> suppressionNames;
-  private final Set<String> closurePrimitiveNames;
+  private final ImmutableMap<String, Annotation> annotations;
+  private final ImmutableSet<String> suppressionNames;
+  private final ImmutableSet<String> closurePrimitiveNames;
   private final boolean preserveWhitespace;
-  private static final Set<String> modifiesAnnotationKeywords =
+  private static final ImmutableSet<String> modifiesAnnotationKeywords =
       ImmutableSet.of("this", "arguments");
-  private static final Set<String> idGeneratorAnnotationKeywords =
+  private static final ImmutableSet<String> idGeneratorAnnotationKeywords =
       ImmutableSet.of("unique", "consistent", "stable", "mapped", "xid");
-  private static final Set<String> primitiveTypes =
+  private static final ImmutableSet<String> primitiveTypes =
       ImmutableSet.of("number", "string", "boolean", "symbol");
+  private final boolean onlyParseLicenseJsDoc;
 
-  private JSDocInfoBuilder fileLevelJsDocBuilder;
+  private @Nullable String licenseText;
 
-  /**
-   * Sets the JsDocBuilder for the file-level (root) node of this parse. The
-   * parser uses the builder to append any preserve annotations it encounters
-   * in JsDoc comments.
-   *
-   * @param fileLevelJsDocBuilder
-   */
-  void setFileLevelJsDocBuilder(
-      JSDocInfoBuilder fileLevelJsDocBuilder) {
-    this.fileLevelJsDocBuilder = fileLevelJsDocBuilder;
+  private void setLicenseTextMonotonic(String x) {
+    checkNotNull(x);
+    checkState(this.licenseText == null);
+    this.licenseText = x;
+  }
+
+  @Nullable String getLicenseText() {
+    return this.licenseText;
   }
 
   /**
-   * Sets the file overview JSDocInfo, in order to warn about multiple uses of
-   * the @fileoverview tag in a file.
+   * Sets the file overview JSDocInfo, in order to warn about multiple uses of the @fileoverview tag
+   * in a file.
    */
   void setFileOverviewJSDocInfo(JSDocInfo fileOverviewJSDocInfo) {
     this.fileOverviewJSDocInfo = fileOverviewJSDocInfo;
@@ -165,39 +164,53 @@ public final class JsDocInfoParser {
     NEXT_IS_ANNOTATION
   }
 
+  /** How to handle unexpected JSDoc format */
+  public enum JsDocSourceKind {
+    NORMAL, // classic Closure Compiler
+    TSICKLE // make some extra allowances for tsickle-generated JSDoc
+  }
+
+  private final boolean recordTsType;
+
   public JsDocInfoParser(
       JsDocTokenStream stream,
       String comment,
       int commentPosition,
-      Node templateNode,
+      @Nullable Node templateNode,
       Config config,
+      JsDocSourceKind jsDocSourceKind,
       ErrorReporter errorReporter) {
     this.stream = stream;
 
     boolean parseDocumentation = config.jsDocParsingMode().shouldParseDescriptions();
-    this.jsdocBuilder = new JSDocInfoBuilder(parseDocumentation);
+    this.jsdocBuilder = JSDocInfo.builder();
+    if (parseDocumentation) {
+      this.jsdocBuilder.parseDocumentation();
+    }
     if (comment != null) {
       this.jsdocBuilder.recordOriginalCommentString(comment);
       this.jsdocBuilder.recordOriginalCommentPosition(commentPosition);
     }
+    this.recordTsType = config.jsDocParsingMode().shouldParseDescriptions();
     this.annotations = config.annotations();
     this.suppressionNames = config.suppressionNames();
     this.closurePrimitiveNames = config.closurePrimitiveNames();
     this.preserveWhitespace = config.jsDocParsingMode().shouldPreserveWhitespace();
+    this.jsDocSourceKind = jsDocSourceKind;
+    this.onlyParseLicenseJsDoc =
+        config.jsDocParsingMode() == Config.JsDocParsing.LICENSE_COMMENTS_ONLY;
 
     this.errorReporter = errorReporter;
     this.templateNode = templateNode == null ? IR.script() : templateNode;
   }
 
-  private String getSourceName() {
+  private @Nullable String getSourceName() {
     StaticSourceFile sourceFile = getSourceFile();
     return sourceFile == null ? null : sourceFile.getName();
   }
 
-  /**
-   * Parse a description as a {@code @type}.
-   */
-  public JSDocInfo parseInlineTypeDoc() {
+  /** Parse a description as a {@code @type}. */
+  public @Nullable JSDocInfo parseInlineTypeDoc() {
     skipEOLs();
 
     JsDocToken token = next();
@@ -215,19 +228,17 @@ public final class JsDocInfoParser {
     return null;
   }
 
-  private void recordTypeNode(int lineno, int startCharno, Node typeAst,
-      boolean matchingLC) {
+  private void recordTypeNode(int lineno, int startCharno, Node typeAst, boolean matchingLC) {
     if (typeAst != null) {
       int endLineno = stream.getLineno();
       int endCharno = stream.getCharno();
-      jsdocBuilder.markTypeNode(
-          typeAst, lineno, startCharno, endLineno, endCharno, matchingLC);
+      jsdocBuilder.markTypeNode(typeAst, lineno, startCharno, endLineno, endCharno, matchingLC);
     }
   }
 
   /**
-   * Parses a string containing a JsDoc type declaration, returning the
-   * type if the parsing succeeded or {@code null} if it failed.
+   * Parses a string containing a JsDoc type declaration, returning the type if the parsing
+   * succeeded or {@code null} if it failed.
    */
   public static Node parseTypeString(String typeString) {
     JsDocInfoParser parser = getParser(typeString);
@@ -235,8 +246,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Parses a string containing a JsDoc declaration, returning the entire JSDocInfo
-   * if the parsing succeeded or {@code null} if it failed.
+   * Parses a string containing a JsDoc declaration, returning the entire JSDocInfo if the parsing
+   * succeeded or {@code null} if it failed.
    */
   public static JSDocInfo parseJsdoc(String toParse) {
     JsDocInfoParser parser = getParser(toParse);
@@ -258,11 +269,14 @@ public final class JsDocInfoParser {
             .setStrictMode(Config.StrictMode.SLOPPY)
             .setClosurePrimitiveNames(ImmutableSet.of("testPrimitive"))
             .build();
-    JsDocInfoParser parser =
-        new JsDocInfoParser(
-            new JsDocTokenStream(toParse), toParse, 0, null, config, ErrorReporter.NULL_INSTANCE);
-
-    return parser;
+    return new JsDocInfoParser(
+        new JsDocTokenStream(toParse),
+        toParse,
+        0,
+        null,
+        config,
+        JsDocSourceKind.NORMAL,
+        ErrorReporter.NULL_INSTANCE);
   }
 
   /**
@@ -285,8 +299,7 @@ public final class JsDocInfoParser {
         jsdocBuilder.recordBlockDescription(blockInfo.string);
       }
     } else {
-      if (token != JsDocToken.ANNOTATION &&
-          token != JsDocToken.EOC) {
+      if (token != JsDocToken.ANNOTATION && token != JsDocToken.EOC) {
         // Mark that there was a description, but don't bother marking
         // what it was.
         jsdocBuilder.recordBlockDescription("");
@@ -312,29 +325,26 @@ public final class JsDocInfoParser {
     // so we need to add one here so they will be identical
     String license = " " + info.string;
 
-    if (fileLevelJsDocBuilder != null) {
-      fileLevelJsDocBuilder.addLicense(license);
-    } else if (jsdocBuilder.shouldParseDocumentation()) {
+    this.setLicenseTextMonotonic(license);
+    if (jsdocBuilder.shouldParseDocumentation()) {
       jsdocBuilder.recordBlockDescription(license);
     } else {
       jsdocBuilder.recordBlockDescription("");
     }
   }
 
-  private boolean parseHelperLoop(JsDocToken token,
-                                  List<ExtendedTypeInfo> extendedTypes) {
+  private boolean parseHelperLoop(JsDocToken token, List<ExtendedTypeInfo> extendedTypes) {
     while (true) {
       switch (token) {
-        case ANNOTATION:
+        case ANNOTATION -> {
           if (state == State.SEARCHING_ANNOTATION) {
             state = State.SEARCHING_NEWLINE;
             token = parseAnnotation(token, extendedTypes);
           } else {
             token = next();
           }
-          break;
-
-        case EOC:
+        }
+        case EOC -> {
           boolean success = true;
           // TODO(johnlenz): It should be a parse error to have an @extends
           // or similiar annotations in a file overview block.
@@ -347,7 +357,7 @@ public final class JsDocInfoParser {
               case PROTECTED:
                 // PRIVATE and PROTECTED are not allowed in @fileoverview JsDoc.
                 addParserWarning(
-                    "msg.bad.fileoverview.visibility.annotation",
+                    Msg.BAD_FILEOVERVIEW_VISIBIIITY_ANNOTATION,
                     Ascii.toLowerCase(visibility.toString()));
                 success = false;
                 break;
@@ -358,35 +368,33 @@ public final class JsDocInfoParser {
             }
           }
           return success;
-
-        case EOF:
+        }
+        case EOF -> {
           // discard any accumulated information
           jsdocBuilder.build();
-          addParserWarning("msg.unexpected.eof");
+          addParserWarning(Msg.UNEXPECTED_EOF);
           checkExtendedTypes(extendedTypes);
           return false;
-
-        case EOL:
+        }
+        case EOL -> {
           if (state == State.SEARCHING_NEWLINE) {
             state = State.SEARCHING_ANNOTATION;
           }
           token = next();
-          break;
-
-        default:
+        }
+        default -> {
           if (token == JsDocToken.STAR && state == State.SEARCHING_ANNOTATION) {
             token = next();
           } else {
             state = State.SEARCHING_NEWLINE;
             token = eatTokensUntilEOL();
           }
-          break;
+        }
       }
     }
   }
 
-  private JsDocToken parseAnnotation(JsDocToken token,
-      List<ExtendedTypeInfo> extendedTypes) {
+  private JsDocToken parseAnnotation(JsDocToken token, List<ExtendedTypeInfo> extendedTypes) {
     // JSTypes are represented as Rhino AST nodes, and then resolved later.
     JSTypeExpression type;
     int lineno = stream.getLineno();
@@ -394,80 +402,93 @@ public final class JsDocInfoParser {
 
     String annotationName = stream.getString();
     Annotation annotation = annotations.get(annotationName);
+
+    if (this.onlyParseLicenseJsDoc
+        && !(annotation == Annotation.LICENSE || annotation == Annotation.PRESERVE)) {
+      return next();
+    }
+
     if (annotation == null || annotationName.isEmpty()) {
-      addParserWarning("msg.bad.jsdoc.tag", annotationName);
+      addParserWarning(Msg.BAD_JSDOC_TAG, annotationName);
     } else {
       // Mark the beginning of the annotation.
       jsdocBuilder.markAnnotation(annotationName, lineno, charno);
 
+      boolean matchingRc;
       switch (annotation) {
-        case NG_INJECT:
+        case NG_INJECT -> {
           if (jsdocBuilder.isNgInjectRecorded()) {
-            addParserWarning("msg.jsdoc.nginject.extra");
+            addParserWarning(Msg.JSDOC_NGINJECT_EXTRA);
           } else {
             jsdocBuilder.recordNgInject(true);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case ABSTRACT:
+        }
+        case ABSTRACT -> {
           if (!jsdocBuilder.recordAbstract()) {
-            addTypeWarning("msg.jsdoc.incompat.type");
+            addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case AUTHOR:
+        }
+        case AUTHOR -> {
           if (jsdocBuilder.shouldParseDocumentation()) {
             ExtractionInfo authorInfo = extractSingleLineBlock();
             String author = authorInfo.string;
 
             if (author.isEmpty()) {
-              addParserWarning("msg.jsdoc.authormissing");
+              addParserWarning(Msg.JSDOC_AUTHORMISSING);
             } else {
-              jsdocBuilder.addAuthor(author);
+              jsdocBuilder.recordAuthor(author);
             }
             token = authorInfo.token;
           } else {
             token = eatUntilEOLIfNotAnnotation();
           }
           return token;
-
-        case UNRESTRICTED:
+        }
+        case UNRESTRICTED -> {
           if (!jsdocBuilder.recordUnrestricted()) {
-            addTypeWarning("msg.jsdoc.incompat.type");
+            addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case STRUCT:
+        }
+        case STRUCT -> {
           if (!jsdocBuilder.recordStruct()) {
-            addTypeWarning("msg.jsdoc.incompat.type");
+            addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case DICT:
+        }
+        case DICT -> {
           if (!jsdocBuilder.recordDict()) {
-            addTypeWarning("msg.jsdoc.incompat.type");
+            addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case CONSTRUCTOR:
+        }
+        case COLLAPSIBLE_OR_BREAK_MY_CODE -> {
+          if (!jsdocBuilder.recordCollapsibleOrBreakMyCode()) {
+            addParserWarning(Msg.JSDOC_COLLAPSIBLEORBREAKMYCODE);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case CONSTRUCTOR -> {
           if (!jsdocBuilder.recordConstructor()) {
             if (jsdocBuilder.isInterfaceRecorded()) {
-              addTypeWarning("msg.jsdoc.interface.constructor");
+              addTypeWarning(Msg.JSDOC_INTERFACE_CONSTRUCTOR);
             } else {
-              addTypeWarning("msg.jsdoc.incompat.type");
+              addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE);
             }
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case RECORD:
+        }
+        case RECORD -> {
           if (!jsdocBuilder.recordImplicitMatch()) {
-            addTypeWarning("msg.jsdoc.record");
+            addTypeWarning(Msg.JSDOC_RECORD);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case DEPRECATED:
+        }
+        case DEPRECATED -> {
           if (!jsdocBuilder.recordDeprecated()) {
-            addParserWarning("msg.jsdoc.deprecated");
+            addParserWarning(Msg.JSDOC_DEPRECATED);
           }
 
           // Find the reason/description, if any.
@@ -481,24 +502,23 @@ public final class JsDocInfoParser {
 
           token = reasonInfo.token;
           return token;
-
-        case INTERFACE:
+        }
+        case INTERFACE -> {
           if (!jsdocBuilder.recordInterface()) {
             if (jsdocBuilder.isConstructorRecorded()) {
-              addTypeWarning("msg.jsdoc.interface.constructor");
+              addTypeWarning(Msg.JSDOC_INTERFACE_CONSTRUCTOR);
             } else {
-              addTypeWarning("msg.jsdoc.incompat.type");
+              addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE);
             }
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case DESC:
+        }
+        case DESC -> {
           if (jsdocBuilder.isDescriptionRecorded()) {
-            addParserWarning("msg.jsdoc.desc.extra");
+            addParserWarning(Msg.JSDOC_DESC_EXTRA);
             return eatUntilEOLIfNotAnnotation();
           } else {
-            ExtractionInfo descriptionInfo =
-                extractMultilineTextualBlock(token);
+            ExtractionInfo descriptionInfo = extractMultilineTextualBlock(token);
 
             String description = descriptionInfo.string;
 
@@ -506,12 +526,26 @@ public final class JsDocInfoParser {
             token = descriptionInfo.token;
             return token;
           }
+        }
+        case TS_TYPE -> {
+          ExtractionInfo tsTypeInfo = extractMultilineTextualBlock(token);
 
-        case FILE_OVERVIEW:
+          String tsType = tsTypeInfo.string;
+
+          if (recordTsType) {
+            jsdocBuilder.recordTsType(tsType);
+          } else {
+            jsdocBuilder.recordTsType(TS_TYPE_PLACEHOLDER);
+          }
+          token = tsTypeInfo.token;
+          return token;
+        }
+        case FILE_OVERVIEW -> {
           String fileOverview = "";
           if (jsdocBuilder.shouldParseDocumentation() && !lookAheadForAnnotation()) {
-            ExtractionInfo fileOverviewInfo = extractMultilineTextualBlock(
-                token, getWhitespaceOption(WhitespaceOption.TRIM), false);
+            ExtractionInfo fileOverviewInfo =
+                extractMultilineTextualBlock(
+                    token, getWhitespaceOption(WhitespaceOption.TRIM), false);
 
             fileOverview = fileOverviewInfo.string;
 
@@ -521,28 +555,44 @@ public final class JsDocInfoParser {
           }
 
           if (!jsdocBuilder.recordFileOverview(fileOverview)) {
-            addParserWarning("msg.jsdoc.fileoverview.extra");
+            addParserWarning(Msg.JSDOC_FILEOVERVIEW_EXTRA);
           }
           return token;
-
-        case LICENSE:
-        case PRESERVE:
+        }
+        case LICENSE, PRESERVE -> {
           // Always use PRESERVE for @license and @preserve blocks.
-          ExtractionInfo preserveInfo = extractMultilineTextualBlock(
-              token, WhitespaceOption.PRESERVE, true);
+          ExtractionInfo preserveInfo =
+              extractMultilineTextualBlock(token, WhitespaceOption.PRESERVE, true);
 
           String preserve = preserveInfo.string;
 
           if (preserve.length() > 0) {
-            if (fileLevelJsDocBuilder != null) {
-              fileLevelJsDocBuilder.addLicense(preserve);
-            }
+            this.setLicenseTextMonotonic(preserve);
           }
 
           token = preserveInfo.token;
           return token;
+        }
+        case ENHANCE -> {
+          ExtractionInfo enhanceInfo = extractSingleLineBlock();
+          String enhance = enhanceInfo.string;
+          token = enhanceInfo.token;
 
-        case ENUM:
+          jsdocBuilder.recordEnhance(enhance);
+          return token;
+        }
+        case MODS -> {
+          if (jsdocBuilder.isModsRecorded()) {
+            addParserWarning(Msg.JSDOC_MODS_EXTRA);
+          } else {
+            token = parseModsTag(next());
+          }
+          if (token != JsDocToken.EOC && token != JsDocToken.EOF) {
+            token = eatUntilEOLIfNotAnnotation();
+          }
+          return token;
+        }
+        case ENUM -> {
           token = next();
           lineno = stream.getLineno();
           charno = stream.getCharno();
@@ -550,7 +600,7 @@ public final class JsDocInfoParser {
           type = null;
           if (token != JsDocToken.EOL && token != JsDocToken.EOC) {
             Node typeNode = parseAndRecordTypeNode(token);
-            if (typeNode != null && typeNode.isString()) {
+            if (typeNode != null && typeNode.isStringLit()) {
               String typeName = typeNode.getString();
               if (!primitiveTypes.contains(typeName)) {
                 typeNode = wrapNode(Token.BANG, typeNode);
@@ -565,36 +615,34 @@ public final class JsDocInfoParser {
             type = createJSTypeExpression(newStringNode("number"));
           }
           if (!jsdocBuilder.recordEnumParameterType(type)) {
-            addTypeWarning("msg.jsdoc.incompat.type", lineno, charno);
+            addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, lineno, charno);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case EXPOSE:
-          if (!jsdocBuilder.recordExpose()) {
-            addParserWarning("msg.jsdoc.expose");
-          }
-          return eatUntilEOLIfNotAnnotation();
-
-        case EXTERNS:
+        }
+        case EXTERNS -> {
           if (!jsdocBuilder.recordExterns()) {
-            addParserWarning("msg.jsdoc.externs");
+            addParserWarning(Msg.JSDOC_EXTERNS);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case TYPE_SUMMARY:
+        }
+        case NO_COVERAGE -> {
+          if (!jsdocBuilder.recordNoCoverage()) {
+            addParserWarning(Msg.JSDOC_NOCOVERAGE);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case TYPE_SUMMARY -> {
           if (!jsdocBuilder.recordTypeSummary()) {
-            addParserWarning("msg.jsdoc.typesummary");
+            addParserWarning(Msg.JSDOC_TYPESUMMARY);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case EXTENDS:
-        case IMPLEMENTS:
+        }
+        case EXTENDS, IMPLEMENTS -> {
           skipEOLs();
           token = next();
           lineno = stream.getLineno();
           charno = stream.getCharno();
-          boolean matchingRc = false;
-
+          matchingRc = false;
           if (token == JsDocToken.LEFT_CURLY) {
             token = next();
             matchingRc = true;
@@ -615,36 +663,30 @@ public final class JsDocInfoParser {
             } else {
               checkState(annotation == Annotation.IMPLEMENTS);
               if (!jsdocBuilder.recordImplementedInterface(type)) {
-                addTypeWarning("msg.jsdoc.implements.duplicate", lineno, charno);
+                addTypeWarning(Msg.JSDOC_IMPLEMENTS_DUPLICATE, lineno, charno);
               }
             }
             token = next();
             if (matchingRc) {
               if (token != JsDocToken.RIGHT_CURLY) {
-                addTypeWarning("msg.jsdoc.missing.rc");
+                addTypeWarning(Msg.JSDOC_MISSING_RC);
               } else {
                 token = next();
               }
             } else if (token != JsDocToken.EOL
                 && token != JsDocToken.EOF
                 && token != JsDocToken.EOC) {
-              addTypeWarning("msg.end.annotation.expected");
+              addTypeWarning(Msg.END_ANNOTATION_EXPECTED);
             }
           } else if (token == JsDocToken.BANG || token == JsDocToken.QMARK) {
-            addTypeWarning("msg.jsdoc.implements.extraqualifier", lineno, charno);
+            addTypeWarning(Msg.JSDOC_IMPLEMENTS_EXTRAQUALIFIER, lineno, charno);
           } else {
-            addTypeWarning("msg.no.type.name", lineno, charno);
+            addTypeWarning(Msg.NO_TYPE_NAME, lineno, charno);
           }
           token = eatUntilEOLIfNotAnnotation(token);
           return token;
-
-        case HIDDEN:
-          if (!jsdocBuilder.recordHiddenness()) {
-            addParserWarning("msg.jsdoc.hidden");
-          }
-          return eatUntilEOLIfNotAnnotation();
-
-        case LENDS:
+        }
+        case LENDS -> {
           skipEOLs();
 
           matchingRc = false;
@@ -656,152 +698,191 @@ public final class JsDocInfoParser {
           if (match(JsDocToken.STRING)) {
             JSTypeExpression lendsExpression = createJSTypeExpression(parseNameExpression(next()));
             if (!jsdocBuilder.recordLends(lendsExpression)) {
-              addTypeWarning("msg.jsdoc.lends.incompatible");
+              addTypeWarning(Msg.JSDOC_LENDS_INCOMPATIBLE);
             }
           } else {
-            addTypeWarning("msg.jsdoc.lends.missing");
+            addTypeWarning(Msg.JSDOC_LENDS_MISSING);
           }
 
           if (matchingRc && !match(JsDocToken.RIGHT_CURLY)) {
-            addTypeWarning("msg.jsdoc.missing.rc");
+            addTypeWarning(Msg.JSDOC_MISSING_RC);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case MEANING:
+        }
+        case MEANING -> {
           ExtractionInfo meaningInfo = extractMultilineTextualBlock(token);
           String meaning = meaningInfo.string;
           token = meaningInfo.token;
           if (!jsdocBuilder.recordMeaning(meaning)) {
-            addParserWarning("msg.jsdoc.meaning.extra");
+            addParserWarning(Msg.JSDOC_MEANING_EXTRA);
           }
           return token;
-
-        case ALTERNATE_MESSAGE_ID:
+        }
+        case ALTERNATE_MESSAGE_ID -> {
           ExtractionInfo alternateMessageIdInfo = extractSingleLineBlock();
           String alternateMessageId = alternateMessageIdInfo.string;
           token = alternateMessageIdInfo.token;
           if (!jsdocBuilder.recordAlternateMessageId(alternateMessageId)) {
-            addParserWarning("msg.jsdoc.alternateMessageId.extra");
+            addParserWarning(Msg.JSDOC_ALTERNATEMESSAGEID_EXTRA);
           }
           return token;
-
-        case CLOSURE_PRIMITIVE:
+        }
+        case CLOSURE_PRIMITIVE -> {
           skipEOLs();
           return parseClosurePrimitiveTag(next());
-
-        case NO_COMPILE:
+        }
+        case NO_COMPILE -> {
           if (!jsdocBuilder.recordNoCompile()) {
-            addParserWarning("msg.jsdoc.nocompile");
+            addParserWarning(Msg.JSDOC_NOCOMPILE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case NO_COLLAPSE:
+        }
+        case NO_DTS -> {
+          if (!jsdocBuilder.recordNoDts()) {
+            addParserWarning(Msg.JSDOC_NODTS);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case NO_COLLAPSE -> {
           if (!jsdocBuilder.recordNoCollapse()) {
-            addParserWarning("msg.jsdoc.nocollapse");
+            addParserWarning(Msg.JSDOC_NOCOLLAPSE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case NO_INLINE:
+        }
+        case ENCOURAGE_INLINING -> {
+          if (!jsdocBuilder.recordEncourageInlining()) {
+            addParserWarning(Msg.JSDOC_ENCOURAGE_INLINING);
+          }
+          if (jsdocBuilder.isRequireInlining()) {
+            addParserWarning(Msg.JSDOC_INCOMPAT_INLINING);
+          }
+          if (jsdocBuilder.isNoInline()) {
+            addParserWarning(Msg.JSDOC_INCOMPAT_INLINING);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case REQUIRE_INLINING -> {
+          if (!jsdocBuilder.recordRequireInlining()) {
+            addParserWarning(Msg.JSDOC_REQUIRE_INLINING);
+          }
+          if (jsdocBuilder.isEncourageInlining()) {
+            addParserWarning(Msg.JSDOC_INCOMPAT_INLINING);
+          }
+          if (jsdocBuilder.isNoInline()) {
+            addParserWarning(Msg.JSDOC_INCOMPAT_INLINING);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case NO_INLINE -> {
           if (!jsdocBuilder.recordNoInline()) {
-            addParserWarning("msg.jsdoc.noinline");
+            addParserWarning(Msg.JSDOC_NOINLINE);
+          }
+          if (jsdocBuilder.isEncourageInlining()) {
+            addParserWarning(Msg.JSDOC_INCOMPAT_INLINING);
+          }
+          if (jsdocBuilder.isRequireInlining()) {
+            addParserWarning(Msg.JSDOC_INCOMPAT_INLINING);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case NOT_IMPLEMENTED:
+        }
+        case PROVIDE_GOOG -> {
+          if (!jsdocBuilder.recordProvideGoog()) {
+            addParserWarning(Msg.JSDOC_PROVIDE_GOOG);
+          }
           return eatUntilEOLIfNotAnnotation();
-
-        case INHERIT_DOC:
-        case OVERRIDE:
+        }
+        case PROVIDE_ALREADY_PROVIDED -> {
+          if (!jsdocBuilder.recordProvideAlreadyProvided()) {
+            addParserWarning(Msg.JSDOC_PROVIDE_ALREADY_PROVIDED);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case PURE_OR_BREAK_MY_CODE -> {
+          if (!jsdocBuilder.recordPureOrBreakMyCode()) {
+            addParserWarning(Msg.JSDOC_PUREORBREAKMYCODE);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case INHERIT_DOC, OVERRIDE -> {
           if (!jsdocBuilder.recordOverride()) {
-            addTypeWarning("msg.jsdoc.override");
+            addTypeWarning(Msg.JSDOC_OVERRIDE);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case POLYMER:
+        }
+        case POLYMER -> {
           if (jsdocBuilder.isPolymerRecorded()) {
-            addParserWarning("msg.jsdoc.polymer.extra");
+            addParserWarning(Msg.JSDOC_POLYMER_EXTRA);
           } else {
             jsdocBuilder.recordPolymer();
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case POLYMER_BEHAVIOR:
+        }
+        case POLYMER_BEHAVIOR -> {
           if (jsdocBuilder.isPolymerBehaviorRecorded()) {
-            addParserWarning("msg.jsdoc.polymerBehavior.extra");
+            addParserWarning(Msg.JSDOC_POLYMERBEHAVIOR_EXTRA);
           } else {
             jsdocBuilder.recordPolymerBehavior();
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case CUSTOM_ELEMENT:
+        }
+        case CUSTOM_ELEMENT -> {
           if (jsdocBuilder.isCustomElementRecorded()) {
-            addParserWarning("msg.jsdoc.customElement.extra");
+            addParserWarning(Msg.JSDOC_CUSTOMELEMENT_EXTRA);
           } else {
             jsdocBuilder.recordCustomElement();
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case MIXIN_CLASS:
+        }
+        case MIXIN_CLASS -> {
           if (jsdocBuilder.isMixinClassRecorded()) {
-            addParserWarning("msg.jsdoc.mixinClass.extra");
+            addParserWarning(Msg.JSDOC_MIXINCLASS_EXTRA);
           } else {
             jsdocBuilder.recordMixinClass();
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case MIXIN_FUNCTION:
+        }
+        case MIXIN_FUNCTION -> {
           if (jsdocBuilder.isMixinFunctionRecorded()) {
-            addParserWarning("msg.jsdoc.mixinFunction.extra");
+            addParserWarning(Msg.JSDOC_MIXINFUNCTION_EXTRA);
           } else {
             jsdocBuilder.recordMixinFunction();
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case THROWS: {
-          skipEOLs();
-          token = next();
+        }
+        case SASS_GENERATED_CSS_TS -> {
+          if (jsdocBuilder.isSassGeneratedCssTsRecorded()) {
+            addParserWarning(Msg.JSDOC_SASS_GENERATED_CSS_TS);
+          } else {
+            jsdocBuilder.recordSassGeneratedCssTs();
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case CLOSURE_UNAWARE_CODE -> {
+          if (!jsdocBuilder.recordClosureUnawareCode()) {
+            addParserWarning(Msg.JSDOC_CLOSURE_UNAWARE_CODE_EXTRA);
+          } else {
+            // This warning that is always reported is translated into an off-by-default error,
+            // and that is conditionally elevated into a build-blocking error using the relevant
+            // DiagnosticGroup flags.
+            addParserWarning(Msg.JSDOC_CLOSURE_UNAWARE_CODE_INVALID);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case THROWS -> {
           lineno = stream.getLineno();
           charno = stream.getCharno();
-          type = null;
-
-          if (token == JsDocToken.LEFT_CURLY) {
-            type = createJSTypeExpression(
-                parseAndRecordTypeNode(token));
-
-            if (type == null) {
-              // parsing error reported during recursive descent
-              // recovering parsing
-              return eatUntilEOLIfNotAnnotation();
+          if (!lookAheadForAnnotation()) {
+            ExtractionInfo throwsInfo = extractMultilineTextualBlock(token);
+            String throwsAnnotation = throwsInfo.string;
+            throwsAnnotation = throwsAnnotation.trim();
+            if (throwsAnnotation.length() > 0) {
+              jsdocBuilder.recordThrowsAnnotation(throwsAnnotation);
             }
-          }
-
-          // *Update* the token to that after the type annotation.
-          token = current();
-
-          // Save the throw type.
-          jsdocBuilder.recordThrowType(type);
-
-          boolean isAnnotationNext = lookAheadForAnnotation();
-
-          // Find the throw's description (if applicable).
-          if (jsdocBuilder.shouldParseDocumentation() && !isAnnotationNext) {
-            ExtractionInfo descriptionInfo =
-                extractMultilineTextualBlock(token);
-
-            String description = descriptionInfo.string;
-
-            if (description.length() > 0) {
-              jsdocBuilder.recordThrowDescription(type, description);
-            }
-
-            token = descriptionInfo.token;
-          } else {
-            token = eatUntilEOLIfNotAnnotation();
+            token = throwsInfo.token;
           }
           return token;
         }
-
-        case PARAM:
+        case PARAM -> {
           skipEOLs();
           token = next();
           lineno = stream.getLineno();
@@ -811,8 +892,7 @@ public final class JsDocInfoParser {
           boolean hasParamType = false;
 
           if (token == JsDocToken.LEFT_CURLY) {
-            type = createJSTypeExpression(
-                parseAndRecordParamTypeNode(token));
+            type = createJSTypeExpression(parseAndRecordParamTypeNode(token));
 
             if (type == null) {
               // parsing error reported during recursive descent
@@ -826,7 +906,6 @@ public final class JsDocInfoParser {
             hasParamType = true;
           }
 
-
           String name = null;
           boolean isBracketedParam = JsDocToken.LEFT_SQUARE == token;
           if (isBracketedParam) {
@@ -834,7 +913,7 @@ public final class JsDocInfoParser {
           }
 
           if (JsDocToken.STRING != token) {
-            addTypeWarning("msg.missing.variable.name", lineno, charno);
+            addTypeWarning(Msg.MISSING_VARIABLE_NAME, lineno, charno);
           } else {
             if (!hasParamType) {
               addMissingTypeWarning(stream.getLineno(), stream.getCharno());
@@ -856,7 +935,7 @@ public final class JsDocInfoParser {
               }
 
               if (JsDocToken.RIGHT_SQUARE != token) {
-                reportTypeSyntaxWarning("msg.jsdoc.missing.rb");
+                reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RB);
               } else if (type != null) {
                 // Make the type expression optional, if it isn't
                 // already.
@@ -869,13 +948,13 @@ public final class JsDocInfoParser {
             // in it, report a warning and throw it out.
             // See https://github.com/google/closure-compiler/issues/499
             if (!TokenStream.isJSIdentifier(name)) {
-              addParserWarning("msg.invalid.variable.name", name, lineno, charno);
+              addParserWarning(Msg.INVALID_VARIABLE_NAME, name, lineno, charno);
               name = null;
             } else if (!jsdocBuilder.recordParameter(name, type)) {
               if (jsdocBuilder.hasParameter(name)) {
-                addTypeWarning("msg.dup.variable.name", name, lineno, charno);
+                addTypeWarning(Msg.DUP_VARIABLE_NAME, name, lineno, charno);
               } else {
-                addTypeWarning("msg.jsdoc.incompat.type", name, lineno, charno);
+                addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, name, lineno, charno);
               }
             }
           }
@@ -888,16 +967,13 @@ public final class JsDocInfoParser {
           jsdocBuilder.markName(name, templateNode, lineno, charno);
 
           // Find the parameter's description (if applicable).
-          if (jsdocBuilder.shouldParseDocumentation()
-              && token != JsDocToken.ANNOTATION) {
-            ExtractionInfo paramDescriptionInfo =
-                extractMultilineTextualBlock(token);
+          if (jsdocBuilder.shouldParseDocumentation() && token != JsDocToken.ANNOTATION) {
+            ExtractionInfo paramDescriptionInfo = extractMultilineTextualBlock(token);
 
             String paramDescription = paramDescriptionInfo.string;
 
             if (paramDescription.length() > 0) {
-              jsdocBuilder.recordParameterDescription(name,
-                  paramDescription);
+              jsdocBuilder.recordParameterDescription(name, paramDescription);
             }
 
             token = paramDescriptionInfo.token;
@@ -905,32 +981,32 @@ public final class JsDocInfoParser {
             token = eatUntilEOLIfNotAnnotation();
           }
           return token;
-
-        case NO_SIDE_EFFECTS:
+        }
+        case NO_SIDE_EFFECTS -> {
           if (!jsdocBuilder.recordNoSideEffects()) {
-            addParserWarning("msg.jsdoc.nosideeffects");
+            addParserWarning(Msg.JSDOC_NOSIDEEFFECTS);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case MODIFIES:
+        }
+        case MODIFIES -> {
           token = parseModifiesTag(next());
           return token;
-
-        case IMPLICIT_CAST:
+        }
+        case IMPLICIT_CAST -> {
           if (!jsdocBuilder.recordImplicitCast()) {
-            addTypeWarning("msg.jsdoc.implicitcast");
+            addTypeWarning(Msg.JSDOC_IMPLICITCAST);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case SEE:
+        }
+        case SEE -> {
           if (jsdocBuilder.shouldParseDocumentation()) {
             ExtractionInfo referenceInfo = extractSingleLineBlock();
             String reference = referenceInfo.string;
 
             if (reference.isEmpty()) {
-              addParserWarning("msg.jsdoc.seemissing");
+              addParserWarning(Msg.JSDOC_SEEMISSING);
             } else {
-              jsdocBuilder.addReference(reference);
+              jsdocBuilder.recordReference(reference);
             }
 
             token = referenceInfo.token;
@@ -938,128 +1014,137 @@ public final class JsDocInfoParser {
             token = eatUntilEOLIfNotAnnotation();
           }
           return token;
-
-        case SUPPRESS:
+        }
+        case SUPPRESS -> {
           token = parseSuppressTag(next());
           return token;
+        }
+        case TEMPLATE -> {
+          // Attempt to parse a template bound type.
+          JSTypeExpression boundTypeExpression = null;
+          if (match(JsDocToken.LEFT_CURLY)) {
+            addParserWarning(Msg.JSDOC_TEMPLATE_BOUNDEDGENERICS_USED, lineno, charno);
 
-        case TEMPLATE: {
-            // Attempt to parse a template bound type.
-            JSTypeExpression boundTypeExpression = null;
-            if (match(JsDocToken.LEFT_CURLY)) {
-              addParserWarning("msg.jsdoc.template.boundedgenerics.used", lineno, charno);
-
-              Node boundTypeNode = parseTypeExpressionAnnotation(next());
-              if (boundTypeNode != null) {
-                boundTypeExpression = createJSTypeExpression(boundTypeNode);
-              }
+            Node boundTypeNode = parseTypeExpressionAnnotation(next());
+            if (boundTypeNode != null) {
+              boundTypeExpression = createJSTypeExpression(boundTypeNode);
             }
-
-            // Collect any names of template types.
-            List<String> templateNames = new ArrayList<>();
-            if (!match(JsDocToken.COLON)) {
-              // Skip colons so as not to consume TTLs accidentally.
-              // Parse a list of comma separated names.
-              do {
-                @Nullable Node nameNode = parseNameExpression(next());
-                @Nullable String templateName = (nameNode == null) ? null : nameNode.getString();
-
-                if (validTemplateTypeName(templateName)) {
-                  templateNames.add(templateName);
-                }
-              } while (eatIfMatch(JsDocToken.COMMA));
-            }
-
-            // Look for some TTL. Always use TRIM for template TTL expressions.
-            @Nullable Node ttlAst = null;
-            if (match(JsDocToken.COLON)) {
-              // TODO(nickreid): Fix `extractMultilineTextualBlock` so the result includes the
-              // current token. At present, it reads the stream directly and bypasses any previously
-              // read tokens.
-              ExtractionInfo ttlExtraction =
-                  extractMultilineTextualBlock(current(), WhitespaceOption.TRIM, false);
-              token = ttlExtraction.token;
-              ttlAst = parseTtlAst(ttlExtraction, lineno, charno);
-            } else {
-              token = eatUntilEOLIfNotAnnotation(current());
-            }
-
-            // Validate the number of declared template names, which depends on bounds and TTL.
-            switch (templateNames.size()) {
-              case 0:
-                addTypeWarning("msg.jsdoc.template.name.missing", lineno, charno);
-                return token; // There's nothing we can connect a bound or TTL to.
-              case 1:
-                break;
-              default:
-                if (boundTypeExpression != null || ttlAst != null) {
-                  addTypeWarning("msg.jsdoc.template.multipleDeclaration", lineno, charno);
-                }
-                break;
-            }
-
-            if (boundTypeExpression != null && ttlAst != null) {
-              addTypeWarning("msg.jsdoc.template.boundsWithTTL", lineno, charno);
-              return token; // It's undecidable what the user intent was.
-            }
-
-            // Based on the form form of the declaration, record the information in the JsDocInfo.
-            if (ttlAst != null) {
-              if (!jsdocBuilder.recordTypeTransformation(templateNames.get(0), ttlAst)) {
-                addTypeWarning("msg.jsdoc.template.name.redeclaration", lineno, charno);
-              }
-            } else if (boundTypeExpression != null) {
-              if (!jsdocBuilder.recordTemplateTypeName(templateNames.get(0), boundTypeExpression)) {
-                addTypeWarning("msg.jsdoc.template.name.redeclaration", lineno, charno);
-              }
-            } else {
-              for (String templateName : templateNames) {
-                if (!jsdocBuilder.recordTemplateTypeName(templateName)) {
-                  addTypeWarning("msg.jsdoc.template.name.redeclaration", lineno, charno);
-                }
-              }
-            }
-
-            return token;
           }
 
-        case IDGENERATOR:
+          // Collect any names of template types.
+          List<String> templateNames = new ArrayList<>();
+          if (!match(JsDocToken.COLON)) {
+            // Skip colons so as not to consume TTLs accidentally.
+            // Parse a list of comma separated names.
+            do {
+              @Nullable Node nameNode = parseNameExpression(next());
+              @Nullable String templateName = (nameNode == null) ? null : nameNode.getString();
+
+              if (validTemplateTypeName(templateName)) {
+                templateNames.add(templateName);
+              }
+            } while (eatIfMatch(JsDocToken.COMMA));
+          }
+
+          // Look for some TTL. Always use TRIM for template TTL expressions.
+          @Nullable Node ttlAst = null;
+          if (match(JsDocToken.COLON)) {
+            // TODO(nickreid): Fix `extractMultilineTextualBlock` so the result includes the
+            // current token. At present, it reads the stream directly and bypasses any previously
+            // read tokens.
+            ExtractionInfo ttlExtraction =
+                extractMultilineTextualBlock(current(), WhitespaceOption.TRIM, false);
+            token = ttlExtraction.token;
+            ttlAst = parseTtlAst(ttlExtraction, lineno, charno);
+          } else {
+            token = eatUntilEOLIfNotAnnotation(current());
+          }
+
+          // Validate the number of declared template names, which depends on bounds and TTL.
+          switch (templateNames.size()) {
+            case 0:
+              addTypeWarning(Msg.JSDOC_TEMPLATE_NAME_MISSING, lineno, charno);
+              return token; // There's nothing we can connect a bound or TTL to.
+            case 1:
+              break;
+            default:
+              if (boundTypeExpression != null || ttlAst != null) {
+                addTypeWarning(Msg.JSDOC_TEMPLATE_MULTIPLEDECLARATION, lineno, charno);
+              }
+              break;
+          }
+
+          if (boundTypeExpression != null && ttlAst != null) {
+            addTypeWarning(Msg.JSDOC_TEMPLATE_BOUNDSWITHTTL, lineno, charno);
+            return token; // It's undecidable what the user intent was.
+          }
+
+          // Based on the form form of the declaration, record the information in the JsDocInfo.
+          if (ttlAst != null) {
+            if (!jsdocBuilder.recordTypeTransformation(templateNames.get(0), ttlAst)) {
+              addTypeWarning(Msg.JSDOC_TEMPLATE_NAME_REDECLARATION, lineno, charno);
+            }
+          } else if (boundTypeExpression != null) {
+            if (!jsdocBuilder.recordTemplateTypeName(templateNames.get(0), boundTypeExpression)) {
+              addTypeWarning(Msg.JSDOC_TEMPLATE_NAME_REDECLARATION, lineno, charno);
+            }
+          } else {
+            for (String templateName : templateNames) {
+              if (!jsdocBuilder.recordTemplateTypeName(templateName)) {
+                addTypeWarning(Msg.JSDOC_TEMPLATE_NAME_REDECLARATION, lineno, charno);
+              }
+            }
+          }
+
+          return token;
+        }
+        case IDGENERATOR -> {
           token = parseIdGeneratorTag(next());
           return token;
-
-        case WIZACTION:
-          if (!jsdocBuilder.recordWizaction()) {
-            addParserWarning("msg.jsdoc.wizaction");
+        }
+        case LOG_TYPE_IN_COMPILER -> {
+          var unused = jsdocBuilder.recordLogTypeInCompiler();
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case NOT_IMPLEMENTED,
+            JSX,
+            JSX_FRAGMENT,
+            SOY_MODULE,
+            SOY_TEMPLATE,
+            WIZ_ANALYZER,
+            MAY_HAVE_EXTRA_EDGE -> {
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case USED_VIA_DOT_CONSTRUCTOR -> {
+          if (!jsdocBuilder.recordUsedViaDotConstructor()) {
+            addParserWarning(Msg.JSDOC_USEDVIADOTCONSTRUCTOR);
           }
           return eatUntilEOLIfNotAnnotation();
-
-        case VERSION:
-          ExtractionInfo versionInfo = extractSingleLineBlock();
-          String version = versionInfo.string;
-
-          if (version.isEmpty()) {
-            addParserWarning("msg.jsdoc.versionmissing");
-          } else {
-            if (!jsdocBuilder.recordVersion(version)) {
-              addParserWarning("msg.jsdoc.extraversion");
-            }
+        }
+        case WIZACTION -> {
+          if (!jsdocBuilder.recordWizaction()) {
+            addParserWarning(Msg.JSDOC_WIZACTION);
           }
-
-          token = versionInfo.token;
-          return token;
-
-        case CONSTANT:
-        case FINAL:
-        case DEFINE:
-        case EXPORT:
-        case RETURN:
-        case PACKAGE:
-        case PRIVATE:
-        case PROTECTED:
-        case PUBLIC:
-        case THIS:
-        case TYPE:
-        case TYPEDEF:
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case WIZCALLBACK -> {
+          if (!jsdocBuilder.recordWizcallback()) {
+            addParserWarning(Msg.JSDOC_WIZCALLBACK);
+          }
+          return eatUntilEOLIfNotAnnotation();
+        }
+        case CONSTANT,
+            FINAL,
+            DEFINE,
+            EXPORT,
+            RETURN,
+            PACKAGE,
+            PRIVATE,
+            PROTECTED,
+            PUBLIC,
+            THIS,
+            TYPE,
+            TYPEDEF -> {
           lineno = stream.getLineno();
           charno = stream.getCharno();
 
@@ -1105,7 +1190,7 @@ public final class JsDocInfoParser {
             // but should be mostly OK.
             if (((type != null && isAlternateTypeAnnotation) || annotation == Annotation.TYPE)
                 && !jsdocBuilder.recordType(type)) {
-              addTypeWarning("msg.jsdoc.incompat.type", lineno, charno);
+              addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, lineno, charno);
             }
 
             boolean isAnnotationNext = lookAheadForAnnotation();
@@ -1113,19 +1198,19 @@ public final class JsDocInfoParser {
             switch (annotation) {
               case CONSTANT:
                 if (!jsdocBuilder.recordConstancy()) {
-                  addParserWarning("msg.jsdoc.const");
+                  addParserWarning(Msg.JSDOC_CONST);
                 }
                 break;
 
               case FINAL:
                 if (!jsdocBuilder.recordFinality()) {
-                  addTypeWarning("msg.jsdoc.final");
+                  addTypeWarning(Msg.JSDOC_FINAL);
                 }
                 break;
 
               case DEFINE:
                 if (!jsdocBuilder.recordDefineType(type)) {
-                  addParserWarning("msg.jsdoc.define", lineno, charno);
+                  addParserWarning(Msg.JSDOC_DEFINE, lineno, charno);
                 }
                 if (!isAnnotationNext) {
                   return recordDescription(token);
@@ -1134,9 +1219,7 @@ public final class JsDocInfoParser {
 
               case EXPORT:
                 if (!jsdocBuilder.recordExport()) {
-                  addParserWarning("msg.jsdoc.export", lineno, charno);
-                } else if (!jsdocBuilder.recordVisibility(Visibility.PUBLIC)) {
-                  addParserWarning("msg.jsdoc.extra.visibility", lineno, charno);
+                  addParserWarning(Msg.JSDOC_EXPORT, lineno, charno);
                 }
                 if (!isAnnotationNext) {
                   return recordDescription(token);
@@ -1145,7 +1228,7 @@ public final class JsDocInfoParser {
 
               case PRIVATE:
                 if (!jsdocBuilder.recordVisibility(Visibility.PRIVATE)) {
-                  addParserWarning("msg.jsdoc.extra.visibility", lineno, charno);
+                  addParserWarning(Msg.JSDOC_EXTRA_VISIBILITY, lineno, charno);
                 }
                 if (!isAnnotationNext) {
                   return recordDescription(token);
@@ -1154,7 +1237,7 @@ public final class JsDocInfoParser {
 
               case PACKAGE:
                 if (!jsdocBuilder.recordVisibility(Visibility.PACKAGE)) {
-                  addParserWarning("msg.jsdoc.extra.visibility", lineno, charno);
+                  addParserWarning(Msg.JSDOC_EXTRA_VISIBILITY, lineno, charno);
                 }
                 if (!isAnnotationNext) {
                   return recordDescription(token);
@@ -1163,7 +1246,7 @@ public final class JsDocInfoParser {
 
               case PROTECTED:
                 if (!jsdocBuilder.recordVisibility(Visibility.PROTECTED)) {
-                  addParserWarning("msg.jsdoc.extra.visibility", lineno, charno);
+                  addParserWarning(Msg.JSDOC_EXTRA_VISIBILITY, lineno, charno);
                 }
                 if (!isAnnotationNext) {
                   return recordDescription(token);
@@ -1172,7 +1255,7 @@ public final class JsDocInfoParser {
 
               case PUBLIC:
                 if (!jsdocBuilder.recordVisibility(Visibility.PUBLIC)) {
-                  addParserWarning("msg.jsdoc.extra.visibility", lineno, charno);
+                  addParserWarning(Msg.JSDOC_EXTRA_VISIBILITY, lineno, charno);
                 }
                 if (!isAnnotationNext) {
                   return recordDescription(token);
@@ -1185,7 +1268,7 @@ public final class JsDocInfoParser {
                 }
 
                 if (!jsdocBuilder.recordReturnType(type)) {
-                  addTypeWarning("msg.jsdoc.incompat.type", lineno, charno);
+                  addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, lineno, charno);
                   break;
                 }
 
@@ -1195,17 +1278,13 @@ public final class JsDocInfoParser {
                 // "STRING" out of the stream.
 
                 // Find the return's description (if applicable).
-                if (jsdocBuilder.shouldParseDocumentation()
-                    && !isAnnotationNext) {
-                  ExtractionInfo returnDescriptionInfo =
-                      extractMultilineTextualBlock(token);
+                if (jsdocBuilder.shouldParseDocumentation() && !isAnnotationNext) {
+                  ExtractionInfo returnDescriptionInfo = extractMultilineTextualBlock(token);
 
-                  String returnDescription =
-                      returnDescriptionInfo.string;
+                  String returnDescription = returnDescriptionInfo.string;
 
                   if (returnDescription.length() > 0) {
-                    jsdocBuilder.recordReturnDescription(
-                        returnDescription);
+                    jsdocBuilder.recordReturnDescription(returnDescription);
                   }
 
                   token = returnDescriptionInfo.token;
@@ -1216,29 +1295,30 @@ public final class JsDocInfoParser {
 
               case THIS:
                 if (!jsdocBuilder.recordThisType(type)) {
-                  addTypeWarning("msg.jsdoc.incompat.type", lineno, charno);
+                  addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, lineno, charno);
                 }
                 break;
 
               case TYPEDEF:
                 if (!jsdocBuilder.recordTypedef(type)) {
-                  addTypeWarning("msg.jsdoc.incompat.type", lineno, charno);
+                  addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, lineno, charno);
                 }
                 break;
+
               default:
                 break;
             }
           }
 
           return eatUntilEOLIfNotAnnotation();
+        }
       }
     }
 
     return next();
   }
 
-  @Nullable
-  private Node parseTtlAst(ExtractionInfo ttlExtraction, int lineno, int charno) {
+  private @Nullable Node parseTtlAst(ExtractionInfo ttlExtraction, int lineno, int charno) {
     String ttlExpression = ttlExtraction.string;
     if (!ttlExpression.startsWith(TTL_START_DELIMITER)) {
       return null;
@@ -1250,12 +1330,12 @@ public final class JsDocInfoParser {
     if (endIndex >= 0) {
       ttlExpression = ttlExpression.substring(0, endIndex);
     } else {
-      addTypeWarning("msg.jsdoc.template.typetransformation.missingDelimiter", lineno, charno);
+      addTypeWarning(Msg.JSDOC_TEMPLATE_TYPETRANSFORMATION_MISSINGDELIMIIER, lineno, charno);
     }
     ttlExpression = ttlExpression.trim();
 
     if (ttlExpression.isEmpty()) {
-      addTypeWarning("msg.jsdoc.template.typetransformation.expressionMissing", lineno, charno);
+      addTypeWarning(Msg.JSDOC_TEMPLATE_TYPETRANSFORMATION_EXPRESSIONMISSING, lineno, charno);
       return null;
     }
 
@@ -1270,16 +1350,17 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * The types in @template annotations must contain only letters, digits, and underscores.
+   * The types in @template annotations must contain only letters, digits, underscores and dollar
+   * signs.
    */
   private static boolean validTemplateTypeName(String name) {
     return name != null && !name.isEmpty() && TEMPLATE_NAME_MATCHER.matchesAllOf(name);
   }
 
   /**
-   * Records a marker's description if there is one available and record it in
-   * the current marker.
+   * Records a marker's description if there is one available and record it in the current marker.
    */
+  // TODO(rishipal): This function is a misnomer as it does not record anything.
   private JsDocToken recordDescription(JsDocToken token) {
     // Find marker's description (if applicable).
     if (jsdocBuilder.shouldParseDocumentation()) {
@@ -1292,43 +1373,59 @@ public final class JsDocInfoParser {
   }
 
   private void checkExtendedTypes(List<ExtendedTypeInfo> extendedTypes) {
+    if (extendedTypes.size() > 1) {
+      // Multiple extends is always ok for an interface.
+      boolean isInterface = jsdocBuilder.isInterfaceRecorded();
+      // Normally having multiple extended types is an error for a non-interface, but in TSICKLE
+      // mode, we instead record there being a single @extends with a placeholder name. This
+      // works around some weirdness with TypeScript allowing extending classes.
+      boolean isFromTsickle = this.jsDocSourceKind.equals(JsDocSourceKind.TSICKLE);
+      if (!isInterface && isFromTsickle) {
+        boolean result =
+            jsdocBuilder.recordBaseType(
+                createJSTypeExpression(
+                    wrapNode(Token.BANG, newStringNode(TSICKLE_MISSING_TYPE_PLACEHOLDER))
+                        .srcrefTree(extendedTypes.get(0).type.getRoot())));
+        checkState(result, "Unexpected failure to record base type");
+        return;
+      }
+    }
     for (ExtendedTypeInfo typeInfo : extendedTypes) {
       // If interface, record the multiple extended interfaces
       if (jsdocBuilder.isInterfaceRecorded()) {
         if (!jsdocBuilder.recordExtendedInterface(typeInfo.type)) {
-          addParserWarning("msg.jsdoc.extends.duplicate", typeInfo.lineno, typeInfo.charno);
+          addParserWarning(Msg.JSDOC_EXTENDS_DUPLICATE, typeInfo.lineno, typeInfo.charno);
         }
       } else {
         if (!jsdocBuilder.recordBaseType(typeInfo.type)) {
-          addTypeWarning("msg.jsdoc.incompat.type", typeInfo.lineno, typeInfo.charno);
+          addTypeWarning(Msg.JSDOC_INCOMPAT_TYPE, typeInfo.lineno, typeInfo.charno);
         }
       }
     }
   }
 
   /**
-   * Parse a {@code @suppress} tag of the form
-   * {@code @suppress&#123;warning1|warning2&#125;}.
+   * Parse a {@code @suppress} tag of the form {@code @suppress&#123;warning1|warning2&#125;}.
    *
    * @param token The current token.
    */
   private JsDocToken parseSuppressTag(JsDocToken token) {
     if (token != JsDocToken.LEFT_CURLY) {
-      addParserWarning("msg.jsdoc.suppress");
+      addParserWarning(Msg.JSDOC_SUPPRESS);
       return token;
     } else {
-      Set<String> suppressions = new HashSet<>();
+      Set<String> suppressions = new LinkedHashSet<>();
       while (true) {
         if (match(JsDocToken.STRING)) {
           String name = stream.getString();
           if (!suppressionNames.contains(name)) {
-            addParserWarning("msg.jsdoc.suppress.unknown", name);
+            addParserWarning(Msg.JSDOC_SUPPRESS_UNKNOWN, name);
           }
 
           suppressions.add(stream.getString());
           token = next();
         } else {
-          addParserWarning("msg.jsdoc.suppress");
+          addParserWarning(Msg.JSDOC_SUPPRESS);
           return token;
         }
 
@@ -1340,13 +1437,47 @@ public final class JsDocInfoParser {
       }
 
       if (!match(JsDocToken.RIGHT_CURLY)) {
-        addParserWarning("msg.jsdoc.suppress");
+        addParserWarning(Msg.JSDOC_SUPPRESS);
       } else {
         token = next();
-        jsdocBuilder.recordSuppressions(suppressions);
+        // Find the suppressions' description (if applicable).
+        if (jsdocBuilder.shouldParseDocumentation() && token != JsDocToken.ANNOTATION) {
+          ExtractionInfo suppressDescriptionInfo = extractMultilineTextualBlock(token);
+          String suppressDescription = suppressDescriptionInfo.string;
+          jsdocBuilder.recordSuppressions(ImmutableSet.copyOf(suppressions), suppressDescription);
+          token = suppressDescriptionInfo.token;
+        } else if (token != JsDocToken.EOC && token != JsDocToken.EOF) {
+          token = eatUntilEOLIfNotAnnotation();
+          jsdocBuilder.recordSuppressions(suppressions);
+        }
       }
-      return eatUntilEOLIfNotAnnotation();
+      return token;
     }
+  }
+
+  /**
+   * Parse a {@code @mods} tag of the form {@code @mods &#123;google3.path.to.file&#125;}.
+   *
+   * @param token The current token.
+   */
+  private JsDocToken parseModsTag(JsDocToken token) {
+    if (token != JsDocToken.LEFT_CURLY) {
+      addParserWarning(Msg.JSDOC_MODS);
+      return token;
+    }
+    if (!match(JsDocToken.STRING)) {
+      addParserWarning(Msg.JSDOC_MODS);
+      return token;
+    }
+    String namespace = stream.getString();
+    token = next();
+    if (!match(JsDocToken.RIGHT_CURLY)) {
+      addParserWarning(Msg.JSDOC_MODS);
+    } else {
+      token = next();
+      jsdocBuilder.recordMods(namespace);
+    }
+    return token;
   }
 
   /**
@@ -1356,23 +1487,23 @@ public final class JsDocInfoParser {
    */
   private JsDocToken parseClosurePrimitiveTag(JsDocToken token) {
     if (token != JsDocToken.LEFT_CURLY) {
-      addParserWarning("msg.jsdoc.missing.lc");
+      addParserWarning(Msg.JSDOC_MISSING_LC);
       return token;
     } else if (match(JsDocToken.STRING)) {
       String name = stream.getString();
       if (!closurePrimitiveNames.contains(name)) {
-        addParserWarning("msg.jsdoc.closurePrimitive.invalid", name);
+        addParserWarning(Msg.JSDOC_CLOSUREPRIMITIVE_INVALID, name);
       } else if (!jsdocBuilder.recordClosurePrimitiveId(name)) {
-        addParserWarning("msg.jsdoc.closurePrimitive.extra");
+        addParserWarning(Msg.JSDOC_CLOSUREPRIMITIVE_EXTRA);
       }
       token = next();
     } else {
-      addParserWarning("msg.jsdoc.closurePrimitive.missing");
+      addParserWarning(Msg.JSDOC_CLOSUREPRIMITIVE_MISSING);
       return token;
     }
 
     if (!match(JsDocToken.RIGHT_CURLY)) {
-      addParserWarning("msg.jsdoc.missing.rc");
+      addParserWarning(Msg.JSDOC_MISSING_RC);
     } else {
       token = next();
     }
@@ -1380,26 +1511,24 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Parse a {@code @modifies} tag of the form
-   * {@code @modifies&#123;this|arguments|param&#125;}.
+   * Parse a {@code @modifies} tag of the form {@code @modifies&#123;this|arguments|param&#125;}.
    *
    * @param token The current token.
    */
   private JsDocToken parseModifiesTag(JsDocToken token) {
     if (token == JsDocToken.LEFT_CURLY) {
-      Set<String> modifies = new HashSet<>();
+      Set<String> modifies = new LinkedHashSet<>();
       while (true) {
         if (match(JsDocToken.STRING)) {
           String name = stream.getString();
-          if (!modifiesAnnotationKeywords.contains(name)
-              && !jsdocBuilder.hasParameter(name)) {
-            addParserWarning("msg.jsdoc.modifies.unknown", name);
+          if (!modifiesAnnotationKeywords.contains(name) && !jsdocBuilder.hasParameter(name)) {
+            addParserWarning(Msg.JSDOC_MODIFIES_UNKNOWN, name);
           }
 
           modifies.add(stream.getString());
           token = next();
         } else {
-          addParserWarning("msg.jsdoc.modifies");
+          addParserWarning(Msg.JSDOC_MODIFIES);
           return token;
         }
 
@@ -1411,11 +1540,11 @@ public final class JsDocInfoParser {
       }
 
       if (!match(JsDocToken.RIGHT_CURLY)) {
-        addParserWarning("msg.jsdoc.modifies");
+        addParserWarning(Msg.JSDOC_MODIFIES);
       } else {
         token = next();
         if (!jsdocBuilder.recordModifies(modifies)) {
-          addParserWarning("msg.jsdoc.modifies.duplicate");
+          addParserWarning(Msg.JSDOC_MODIFIES_DUPLICATE);
         }
       }
     }
@@ -1423,8 +1552,7 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Parse a {@code @idgenerator} tag of the form
-   * {@code @idgenerator} or
+   * Parse a {@code @idgenerator} tag of the form {@code @idgenerator} or
    * {@code @idgenerator&#123;consistent&#125;}.
    *
    * @param token The current token.
@@ -1434,66 +1562,65 @@ public final class JsDocInfoParser {
     if (token == JsDocToken.LEFT_CURLY) {
       if (match(JsDocToken.STRING)) {
         String name = stream.getString();
-        if (!idGeneratorAnnotationKeywords.contains(name)
-            && !jsdocBuilder.hasParameter(name)) {
-          addParserWarning("msg.jsdoc.idgen.unknown", name);
+        if (!idGeneratorAnnotationKeywords.contains(name) && !jsdocBuilder.hasParameter(name)) {
+          addParserWarning(Msg.JSDOC_IDGEN_UNKNOWN, name);
         }
 
         idgenKind = name;
         token = next();
       } else {
-        addParserWarning("msg.jsdoc.idgen.bad");
+        addParserWarning(Msg.JSDOC_IDGEN_BAD);
         return token;
       }
 
       if (!match(JsDocToken.RIGHT_CURLY)) {
-        addParserWarning("msg.jsdoc.idgen.bad");
+        addParserWarning(Msg.JSDOC_IDGEN_BAD);
       } else {
         token = next();
       }
     }
 
     switch (idgenKind) {
-      case "unique":
+      case "unique" -> {
         if (!jsdocBuilder.recordIdGenerator()) {
-          addParserWarning("msg.jsdoc.idgen.duplicate");
+          addParserWarning(Msg.JSDOC_IDGEN_DUPLICATE);
         }
-        break;
-      case "consistent":
+      }
+      case "consistent" -> {
         if (!jsdocBuilder.recordConsistentIdGenerator()) {
-          addParserWarning("msg.jsdoc.idgen.duplicate");
+          addParserWarning(Msg.JSDOC_IDGEN_DUPLICATE);
         }
-        break;
-      case "stable":
+      }
+      case "stable" -> {
         if (!jsdocBuilder.recordStableIdGenerator()) {
-          addParserWarning("msg.jsdoc.idgen.duplicate");
+          addParserWarning(Msg.JSDOC_IDGEN_DUPLICATE);
         }
-        break;
-      case "xid":
+      }
+      case "xid" -> {
         if (!jsdocBuilder.recordXidGenerator()) {
-          addParserWarning("msg.jsdoc.idgen.duplicate");
+          addParserWarning(Msg.JSDOC_IDGEN_DUPLICATE);
         }
-        break;
-      case "mapped":
+      }
+      case "mapped" -> {
         if (!jsdocBuilder.recordMappedIdGenerator()) {
-          addParserWarning("msg.jsdoc.idgen.duplicate");
+          addParserWarning(Msg.JSDOC_IDGEN_DUPLICATE);
         }
-        break;
+      }
     }
 
     return token;
   }
 
   /**
-   * Looks for a type expression at the current token and if found,
-   * returns it. Note that this method consumes input.
+   * Looks for a type expression at the current token and if found, returns it. Note that this
+   * method consumes input.
    *
    * @param token The current token.
    * @return The type expression found or null if none.
    */
   Node parseAndRecordTypeNode(JsDocToken token) {
-    return parseAndRecordTypeNode(token, stream.getLineno(), stream.getCharno(),
-        token == JsDocToken.LEFT_CURLY, false);
+    return parseAndRecordTypeNode(
+        token, stream.getLineno(), stream.getCharno(), token == JsDocToken.LEFT_CURLY, false);
   }
 
   /**
@@ -1527,8 +1654,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Looks for a type expression at the current token and if found,
-   * returns it. Note that this method consumes input.
+   * Looks for a type expression at the current token and if found, returns it. Note that this
+   * method consumes input.
    *
    * @param token The current token.
    * @param lineno The line of the type expression.
@@ -1536,16 +1663,17 @@ public final class JsDocInfoParser {
    * @param matchingLC Whether the type expression starts with a "{".
    * @return The type expression found or null if none.
    */
-  private Node parseAndRecordTypeNameNode(JsDocToken token, int lineno,
-                                          int startCharno, boolean matchingLC) {
+  private Node parseAndRecordTypeNameNode(
+      JsDocToken token, int lineno, int startCharno, boolean matchingLC) {
     return parseAndRecordTypeNode(token, lineno, startCharno, matchingLC, true);
   }
 
   /**
-   * Looks for a type expression at the current token and if found,
-   * returns it. Note that this method consumes input.
+   * Looks for a type expression at the current token and if found, returns it. Note that this
+   * method consumes input.
    *
-   * Parameter type expressions are special for two reasons:
+   * <p>Parameter type expressions are special for two reasons:
+   *
    * <ol>
    *   <li>They must begin with '{', to distinguish type names from param names.
    *   <li>They may end in '=', to denote optionality.
@@ -1564,83 +1692,43 @@ public final class JsDocInfoParser {
     return typeNode;
   }
 
-  /**
-   * Converts a JSDoc token to its string representation.
-   */
+  /** Converts a JSDoc token to its string representation. */
   private String toString(JsDocToken token) {
-    switch (token) {
-      case ANNOTATION:
-        return "@" + stream.getString();
-
-      case BANG:
-        return "!";
-
-      case COMMA:
-        return ",";
-
-      case COLON:
-        return ":";
-
-      case RIGHT_ANGLE:
-        return ">";
-
-      case LEFT_SQUARE:
-        return "[";
-
-      case LEFT_CURLY:
-        return "{";
-
-      case LEFT_PAREN:
-        return "(";
-
-      case LEFT_ANGLE:
-        return "<";
-
-      case QMARK:
-        return "?";
-
-      case PIPE:
-        return "|";
-
-      case RIGHT_SQUARE:
-        return "]";
-
-      case RIGHT_CURLY:
-        return "}";
-
-      case RIGHT_PAREN:
-        return ")";
-
-      case STAR:
-        return "*";
-
-      case ITER_REST:
-        return "...";
-
-      case EQUALS:
-        return "=";
-
-      case STRING:
-        return stream.getString();
-
-      default:
-        throw new IllegalStateException(token.toString());
-    }
+    return switch (token) {
+      case ANNOTATION -> "@" + stream.getString();
+      case BANG -> "!";
+      case COMMA -> ",";
+      case COLON -> ":";
+      case RIGHT_ANGLE -> ">";
+      case LEFT_SQUARE -> "[";
+      case LEFT_CURLY -> "{";
+      case LEFT_PAREN -> "(";
+      case LEFT_ANGLE -> "<";
+      case QMARK -> "?";
+      case PIPE -> "|";
+      case RIGHT_SQUARE -> "]";
+      case RIGHT_CURLY -> "}";
+      case RIGHT_PAREN -> ")";
+      case STAR -> "*";
+      case ITER_REST -> "...";
+      case EQUALS -> "=";
+      case STRING -> stream.getString();
+      default -> throw new IllegalStateException(token.toString());
+    };
   }
 
   /**
    * Constructs a new {@code JSTypeExpression}.
+   *
    * @param n A node. May be null.
    */
-  JSTypeExpression createJSTypeExpression(Node n) {
-    return n == null ? null :
-        new JSTypeExpression(n, getSourceName());
+  @Nullable JSTypeExpression createJSTypeExpression(Node n) {
+    return n == null ? null : new JSTypeExpression(n, getSourceName());
   }
 
   /**
-   * Tuple for returning both the string extracted and the
-   * new token following a call to any of the extract*Block
-   * methods.
+   * Tuple for returning both the string extracted and the new token following a call to any of the
+   * extract*Block methods.
    */
   private static class ExtractionInfo {
     private final String string;
@@ -1652,9 +1740,7 @@ public final class JsDocInfoParser {
     }
   }
 
-  /**
-   * Tuple for recording extended types
-   */
+  /** Tuple for recording extended types */
   private static class ExtendedTypeInfo {
     final JSTypeExpression type;
     final int lineno;
@@ -1668,9 +1754,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Extracts the text found on the current line starting at token. Note that
-   * token = token.info; should be called after this method is used to update
-   * the token properly in the parser.
+   * Extracts the text found on the current line starting at token. Note that token = token.info;
+   * should be called after this method is used to update the token properly in the parser.
    *
    * @return The extraction information.
    */
@@ -1685,8 +1770,7 @@ public final class JsDocInfoParser {
 
     // Record the textual description.
     if (line.length() > 0) {
-      jsdocBuilder.markText(line, lineno, charno, lineno,
-                            charno + line.length());
+      jsdocBuilder.markText(line, lineno, charno, lineno, charno + line.length());
     }
 
     return new ExtractionInfo(line, next());
@@ -1724,8 +1808,7 @@ public final class JsDocInfoParser {
 
   private enum WhitespaceOption {
     /**
-     * Preserves all whitespace and formatting. Needed for licenses and
-     * purposely formatted text.
+     * Preserves all whitespace and formatting. Needed for licenses and purposely formatted text.
      */
     PRESERVE,
 
@@ -1736,16 +1819,13 @@ public final class JsDocInfoParser {
     SINGLE_LINE
   }
 
-
   /**
-   * Extracts the top-level block comment from the JsDoc comment, if any.
-   * This method differs from the extractMultilineTextualBlock in that it
-   * terminates under different conditions (it doesn't have the same
-   * prechecks), it does not first read in the remaining of the current
-   * line and its conditions for ignoring the "*" (STAR) are different.
+   * Extracts the top-level block comment from the JsDoc comment, if any. This method differs from
+   * the extractMultilineTextualBlock in that it terminates under different conditions (it doesn't
+   * have the same prechecks), it does not first read in the remaining of the current line and its
+   * conditions for ignoring the "*" (STAR) are different.
    *
    * @param token The starting token.
-   *
    * @return The extraction information.
    */
   private ExtractionInfo extractBlockComment(JsDocToken token) {
@@ -1753,19 +1833,15 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Extracts text from the stream until the end of the comment, end of the
-   * file, or an annotation token is encountered. If the text is being
-   * extracted for a JSDoc marker, the first line in the stream will always be
-   * included in the extract text.
+   * Extracts text from the stream until the end of the comment, end of the file, or an annotation
+   * token is encountered. If the text is being extracted for a JSDoc marker, the first line in the
+   * stream will always be included in the extract text.
    *
    * @param token The starting token.
    * @param option How to handle whitespace.
-   * @param isMarker Whether the extracted text is for a JSDoc marker or a
-   *     block comment.
-   * @param includeAnnotations Whether the extracted text may include
-   *     annotations. If set to false, text extraction will stop on the first
-   *     encountered annotation token.
-   *
+   * @param isMarker Whether the extracted text is for a JSDoc marker or a block comment.
+   * @param includeAnnotations Whether the extracted text may include annotations. If set to false,
+   *     text extraction will stop on the first encountered annotation token.
    * @return The extraction information.
    */
   private ExtractionInfo extractMultilineComment(
@@ -1799,7 +1875,7 @@ public final class JsDocInfoParser {
 
     do {
       switch (token) {
-        case STAR:
+        case STAR -> {
           if (ignoreStar) {
             // Mark the position after the star as the new start of the line.
             lineStartChar = stream.getCharno() + 1;
@@ -1821,8 +1897,8 @@ public final class JsDocInfoParser {
             token = next();
           }
           continue;
-
-        case EOL:
+        }
+        case EOL -> {
           if (option != WhitespaceOption.SINGLE_LINE) {
             builder.append('\n');
           }
@@ -1831,8 +1907,8 @@ public final class JsDocInfoParser {
           lineStartChar = 0;
           token = next();
           continue;
-
-        default:
+        }
+        default -> {
           ignoreStar = false;
           state = State.SEARCHING_ANNOTATION;
 
@@ -1842,8 +1918,9 @@ public final class JsDocInfoParser {
             lineStartChar = -1;
           }
 
-          if (token == JsDocToken.EOC ||
-              token == JsDocToken.EOF ||
+          if (token == JsDocToken.EOC
+              || token == JsDocToken.EOF
+              ||
               // When we're capturing a license block, annotations
               // in the block are OK.
               (token == JsDocToken.ANNOTATION && !includeAnnotations)) {
@@ -1856,8 +1933,7 @@ public final class JsDocInfoParser {
             if (isMarker && !multilineText.isEmpty()) {
               int endLineno = stream.getLineno();
               int endCharno = stream.getCharno();
-              jsdocBuilder.markText(multilineText, startLineno, startCharno,
-                  endLineno, endCharno);
+              jsdocBuilder.markText(multilineText, startLineno, startCharno, endLineno, endCharno);
             }
 
             return new ExtractionInfo(multilineText, token);
@@ -1873,6 +1949,7 @@ public final class JsDocInfoParser {
 
           builder.append(line);
           token = next();
+        }
       }
     } while (true);
   }
@@ -1891,14 +1968,12 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Trim characters from only the end of a string.
-   * This method will remove all whitespace characters
-   * (defined by TokenUtil.isWhitespace(char), in addition to the characters
-   * provided, from the end of the provided string.
+   * Trim characters from only the end of a string. This method will remove all whitespace
+   * characters (defined by TokenUtil.isWhitespace(char), in addition to the characters provided,
+   * from the end of the provided string.
    *
    * @param s String to be trimmed
-   * @return String with whitespace and characters in extraChars removed
-   *                   from the end.
+   * @return String with whitespace and characters in extraChars removed from the end.
    */
   private static String trimEnd(String s) {
     int trimCount = 0;
@@ -1926,10 +2001,7 @@ public final class JsDocInfoParser {
   // compatibility with previous versions of the spec whenever we can.
   // We should try to gradually withdraw support for these.
 
-  /**
-   * TypeExpressionAnnotation := TypeExpression |
-   *     '{' TopLevelTypeExpression '}'
-   */
+  /** TypeExpressionAnnotation := TypeExpression | '{' TopLevelTypeExpression '}' */
   private Node parseTypeExpressionAnnotation(JsDocToken token) {
     if (token == JsDocToken.LEFT_CURLY) {
       skipEOLs();
@@ -1937,10 +2009,10 @@ public final class JsDocInfoParser {
       if (typeNode != null) {
         skipEOLs();
         if (!match(JsDocToken.RIGHT_CURLY)) {
-          if (typeNode.isString() && "import".equals(typeNode.getString())) {
-            reportTypeSyntaxWarning("msg.jsdoc.import");
+          if (typeNode.isStringLit() && "import".equals(typeNode.getString())) {
+            reportTypeSyntaxWarning(Msg.JSDOC_IMPORT);
           } else {
-            reportTypeSyntaxWarning("msg.jsdoc.missing.rc");
+            reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RC);
           }
         } else {
           next();
@@ -1950,7 +2022,7 @@ public final class JsDocInfoParser {
       return typeNode;
     } else {
       // TODO(tbreisacher): Add a SuggestedFix for this warning.
-      reportTypeSyntaxWarning("msg.jsdoc.missing.braces");
+      reportTypeSyntaxWarning(Msg.JSDOC_MISSING_BRACES);
       return parseTypeExpression(token);
     }
   }
@@ -1995,10 +2067,7 @@ public final class JsDocInfoParser {
     return typeNode;
   }
 
-
-  /**
-   * ParamTypeExpressionAnnotation := '{' ParamTypeExpression '}'
-   */
+  /** ParamTypeExpressionAnnotation := '{' ParamTypeExpression '}' */
   private Node parseParamTypeExpressionAnnotation(JsDocToken token) {
     checkArgument(token == JsDocToken.LEFT_CURLY);
 
@@ -2007,7 +2076,7 @@ public final class JsDocInfoParser {
     Node typeNode = parseParamTypeExpression(next());
     if (typeNode != null) {
       if (!match(JsDocToken.RIGHT_CURLY)) {
-        reportTypeSyntaxWarning("msg.jsdoc.missing.rc");
+        reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RC);
       } else {
         next();
       }
@@ -2016,9 +2085,7 @@ public final class JsDocInfoParser {
     return typeNode;
   }
 
-  /**
-   * TypeNameAnnotation := TypeName | '{' TypeName '}'
-   */
+  /** TypeNameAnnotation := TypeName | '{' TypeName '}' */
   private Node parseTypeNameAnnotation(JsDocToken token) {
     if (token == JsDocToken.LEFT_CURLY) {
       skipEOLs();
@@ -2026,7 +2093,7 @@ public final class JsDocInfoParser {
       if (typeNode != null) {
         skipEOLs();
         if (!match(JsDocToken.RIGHT_CURLY)) {
-          reportTypeSyntaxWarning("msg.jsdoc.missing.rc");
+          reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RC);
         } else {
           next();
         }
@@ -2039,10 +2106,9 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * TopLevelTypeExpression := TypeExpression
-   *     | TypeUnionList
+   * TopLevelTypeExpression := TypeExpression | TypeUnionList
    *
-   * We made this rule up, for the sake of backwards compatibility.
+   * <p>We made this rule up, for the sake of backwards compatibility.
    */
   private Node parseTopLevelTypeExpression(JsDocToken token) {
     Node typeExpr = parseTypeExpression(token);
@@ -2059,10 +2125,9 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * TypeExpressionList := TopLevelTypeExpression
-   *     | TopLevelTypeExpression ',' TypeExpressionList
+   * TypeExpressionList := TopLevelTypeExpression | TopLevelTypeExpression ',' TypeExpressionList
    */
-  private Node parseTypeExpressionList(String typeName, JsDocToken token) {
+  private @Nullable Node parseTypeExpressionList(String typeName, JsDocToken token) {
     Node typeExpr = parseTopLevelTypeExpression(token);
     if (typeExpr == null) {
       return null;
@@ -2088,70 +2153,70 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * TypeExpression := BasicTypeExpression
-   *     | '?' BasicTypeExpression
-   *     | '!' BasicTypeExpression
-   *     | BasicTypeExpression '?'
-   *     | BasicTypeExpression '!'
-   *     | '?'
+   * TypeExpression := BasicTypeExpression | '?' BasicTypeExpression | '!' BasicTypeExpression |
+   * BasicTypeExpression '?' | BasicTypeExpression '!' | '?'
    */
   private Node parseTypeExpression(JsDocToken token) {
     // Save the source position before we consume additional tokens.
     int lineno = stream.getLineno();
     int charno = stream.getCharno();
-    if (token == JsDocToken.QMARK) {
-      // A QMARK could mean that a type is nullable, or that it's unknown.
-      // We use look-ahead 1 to determine whether it's unknown. Otherwise,
-      // we assume it means nullable. There are 8 cases:
-      // {?} - right curly
-      // ? - EOF (possible when the parseTypeString method is given a bare type expression)
-      // {?=} - equals
-      // {function(?, number)} - comma
-      // {function(number, ?)} - right paren
-      // {function(): ?|number} - pipe
-      // {Array.<?>} - greater than
-      // /** ? */ - EOC (inline types)
-      // I'm not a big fan of using look-ahead for this, but it makes
-      // the type language a lot nicer.
-      token = next();
-      if (token == JsDocToken.COMMA
-          || token == JsDocToken.EQUALS
-          || token == JsDocToken.RIGHT_SQUARE
-          || token == JsDocToken.RIGHT_CURLY
-          || token == JsDocToken.RIGHT_PAREN
-          || token == JsDocToken.PIPE
-          || token == JsDocToken.RIGHT_ANGLE
-          || token == JsDocToken.EOC
-          || token == JsDocToken.EOL
-          || token == JsDocToken.EOF) {
-        restoreLookAhead(token);
-        return newNode(Token.QMARK);
-      }
-
-      return wrapNode(Token.QMARK, parseBasicTypeExpression(token), lineno, charno);
-    } else if (token == JsDocToken.BANG) {
-      return wrapNode(Token.BANG, parseBasicTypeExpression(next()), lineno, charno);
-    } else {
-      Node basicTypeExpr = parseBasicTypeExpression(token);
-      lineno = stream.getLineno();
-      charno = stream.getCharno();
-      if (basicTypeExpr != null) {
-        if (match(JsDocToken.QMARK)) {
-          next();
-          return wrapNode(Token.QMARK, basicTypeExpr, lineno, charno);
-        } else if (match(JsDocToken.BANG)) {
-          next();
-          return wrapNode(Token.BANG, basicTypeExpr, lineno, charno);
+    switch (token) {
+      case QMARK -> {
+        // A QMARK could mean that a type is nullable, or that it's unknown.
+        // We use look-ahead 1 to determine whether it's unknown. Otherwise,
+        // we assume it means nullable. There are 8 cases:
+        // {?} - right curly
+        // ? - EOF (possible when the parseTypeString method is given a bare type expression)
+        // {?=} - equals
+        // {function(?, number)} - comma
+        // {function(number, ?)} - right paren
+        // {function(): ?|number} - pipe
+        // {Array.<?>} - greater than
+        // /** ? */ - EOC (inline types)
+        // I'm not a big fan of using look-ahead for this, but it makes
+        // the type language a lot nicer.
+        token = next();
+        if (token == JsDocToken.COMMA
+            || token == JsDocToken.EQUALS
+            || token == JsDocToken.RIGHT_SQUARE
+            || token == JsDocToken.RIGHT_CURLY
+            || token == JsDocToken.RIGHT_PAREN
+            || token == JsDocToken.PIPE
+            || token == JsDocToken.RIGHT_ANGLE
+            || token == JsDocToken.EOC
+            || token == JsDocToken.EOL
+            || token == JsDocToken.EOF) {
+          restoreLookAhead(token);
+          return newNode(Token.QMARK);
         }
-      }
 
-      return basicTypeExpr;
+        return wrapNode(Token.QMARK, parseBasicTypeExpression(token), lineno, charno);
+      }
+      case BANG -> {
+        return wrapNode(Token.BANG, parseBasicTypeExpression(next()), lineno, charno);
+      }
+      default -> {
+        Node basicTypeExpr = parseBasicTypeExpression(token);
+        lineno = stream.getLineno();
+        charno = stream.getCharno();
+        if (basicTypeExpr != null) {
+          if (match(JsDocToken.QMARK)) {
+            next();
+            return wrapNode(Token.QMARK, basicTypeExpr, lineno, charno);
+          } else if (match(JsDocToken.BANG)) {
+            next();
+            return wrapNode(Token.BANG, basicTypeExpr, lineno, charno);
+          }
+        }
+
+        return basicTypeExpr;
+      }
     }
   }
 
   /**
-   * ContextTypeExpression := BasicTypeExpression | '?'
-   * For expressions on the right hand side of a this: or new:
+   * ContextTypeExpression := BasicTypeExpression | '?' For expressions on the right hand side of a
+   * this: or new:
    */
   private Node parseContextTypeExpression(JsDocToken token) {
     if (token == JsDocToken.QMARK) {
@@ -2176,43 +2241,50 @@ public final class JsDocInfoParser {
       return parseUnionType(next());
     } else if (token == JsDocToken.STRING) {
       String string = stream.getString();
-      switch (string) {
-        case "function":
+      return switch (string) {
+        case "function" -> {
           skipEOLs();
-          return parseFunctionType(next());
-        case "null":
-        case "undefined":
-          return newStringNode(string);
-        case "typeof":
+          yield parseFunctionType(next());
+        }
+        case "null", "undefined" -> newStringNode(string);
+        case "typeof" -> {
           skipEOLs();
-          return parseTypeofType(next());
-        default:
-          return parseTypeName(token);
-      }
+          yield parseTypeofType(next());
+        }
+        default -> parseTypeName(token);
+      };
     }
 
     restoreLookAhead(token);
     return reportGenericTypeSyntaxWarning();
   }
 
-  private Node parseNameExpression(JsDocToken token) {
+  private @Nullable Node parseNameExpression(JsDocToken token) {
     if (token != JsDocToken.STRING) {
-      addParserWarning("msg.jsdoc.name.syntax", stream.getLineno(), stream.getCharno());
+      addParserWarning(Msg.JSDOC_NAME_SYNTAX, stream.getLineno(), stream.getCharno());
       return null;
     }
 
-    String typeName = stream.getString();
-    int lineno = stream.getLineno();
-    int charno = stream.getCharno();
-    while (match(JsDocToken.EOL) && typeName.endsWith(".")) {
+    final int startLineno = stream.getLineno();
+    final int startCharno = stream.getCharno();
+    final int startOffset = stream.getCursor() - stream.getString().length();
+
+    StringBuilder typeName = new StringBuilder(stream.getString());
+    int endOffset = stream.getCursor();
+    while (match(JsDocToken.EOL) && typeName.toString().endsWith(".")) {
       skipEOLs();
       if (match(JsDocToken.STRING)) {
         next();
-        typeName += stream.getString();
+        endOffset = stream.getCursor();
+        typeName.append(stream.getString());
       }
     }
 
-    return newStringNode(typeName, lineno, charno);
+    // What we're doing by concatenating these tokens is really hacky. We want that to be obvious.
+    Node str = newStringNode(typeName.toString());
+    str.setLinenoCharno(startLineno, startCharno);
+    str.setLength(endOffset - startOffset);
+    return str;
   }
 
   /**
@@ -2235,7 +2307,7 @@ public final class JsDocInfoParser {
 
         skipEOLs();
         if (!match(JsDocToken.RIGHT_ANGLE)) {
-          return reportTypeSyntaxWarning("msg.jsdoc.missing.gt");
+          return reportTypeSyntaxWarning(Msg.JSDOC_MISSING_GT);
         }
 
         next();
@@ -2245,9 +2317,9 @@ public final class JsDocInfoParser {
   }
 
   /** TypeofType := 'typeof' NameExpression | 'typeof' '(' NameExpression ')' */
-  private Node parseTypeofType(JsDocToken token) {
+  private @Nullable Node parseTypeofType(JsDocToken token) {
     if (token == JsDocToken.LEFT_CURLY) {
-      return reportTypeSyntaxWarning("msg.jsdoc.unnecessary.braces");
+      return reportTypeSyntaxWarning(Msg.JSDOC_UNNECESSARY_BRACES);
     }
 
     Node typeofType = newNode(Token.TYPEOF);
@@ -2276,12 +2348,12 @@ public final class JsDocInfoParser {
    * added as a child. This means that the parameters could be the first or second child, and the
    * return type could be the first, second, or third child.
    */
-  private Node parseFunctionType(JsDocToken token) {
+  private @Nullable Node parseFunctionType(JsDocToken token) {
     // NOTE(nicksantos): We're not implementing generics at the moment, so
     // just throw out TypeParameters.
     if (token != JsDocToken.LEFT_PAREN) {
       restoreLookAhead(token);
-      return reportTypeSyntaxWarning("msg.jsdoc.missing.lp");
+      return reportTypeSyntaxWarning(Msg.JSDOC_MISSING_LP);
     }
 
     Node functionType = newNode(Token.FUNCTION);
@@ -2299,16 +2371,15 @@ public final class JsDocInfoParser {
           if (match(JsDocToken.COLON)) {
             next();
             skipEOLs();
-            Node contextType = wrapNode(
-                isThis ? Token.THIS : Token.NEW,
-                parseContextTypeExpression(next()));
+            Node contextType =
+                wrapNode(isThis ? Token.THIS : Token.NEW, parseContextTypeExpression(next()));
             if (contextType == null) {
               return null;
             }
 
             functionType.addChildToFront(contextType);
           } else {
-            return reportTypeSyntaxWarning("msg.jsdoc.missing.colon");
+            return reportTypeSyntaxWarning(Msg.JSDOC_MISSING_COLON);
           }
 
           if (match(JsDocToken.COMMA)) {
@@ -2335,7 +2406,7 @@ public final class JsDocInfoParser {
 
     skipEOLs();
     if (!match(JsDocToken.RIGHT_PAREN)) {
-      return reportTypeSyntaxWarning("msg.jsdoc.missing.rp");
+      return reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RP);
     }
 
     skipEOLs();
@@ -2375,7 +2446,7 @@ public final class JsDocInfoParser {
   // the same as the order-checking for @param annotations. And the latter
   // has to happen during type resolution. Rather than duplicate the
   // order-checking in two places, we just do all of it in type resolution.
-  private Node parseParametersType(JsDocToken token) {
+  private @Nullable Node parseParametersType(JsDocToken token) {
     Node paramsType = newNode(Token.PARAM_LIST);
     boolean isVarArgs = false;
     Node paramType = null;
@@ -2422,7 +2493,7 @@ public final class JsDocInfoParser {
     }
 
     if (isVarArgs && match(JsDocToken.COMMA)) {
-      return reportTypeSyntaxWarning("msg.jsdoc.function.varargs");
+      return reportTypeSyntaxWarning(Msg.JSDOC_FUNCTION_VARARGS);
     }
 
     // The right paren will be checked by parseFunctionType
@@ -2430,9 +2501,7 @@ public final class JsDocInfoParser {
     return paramsType;
   }
 
-  /**
-   * ResultType := <empty> | ':' void | ':' TypeExpression
-   */
+  /** ResultType := <empty> | ':' void | ':' TypeExpression */
   private Node parseResultType() {
     skipEOLs();
     if (!match(JsDocToken.COLON)) {
@@ -2450,20 +2519,20 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * UnionType := '(' TypeUnionList ')'
-   * TypeUnionList := TypeExpression | TypeExpression '|' TypeUnionList
+   * UnionType := '(' TypeUnionList ')' TypeUnionList := TypeExpression | TypeExpression '|'
+   * TypeUnionList
    *
-   * We've removed the empty union type.
+   * <p>We've removed the empty union type.
    */
   private Node parseUnionType(JsDocToken token) {
     return parseUnionTypeWithAlternate(token, null);
   }
 
   /**
-   * Create a new union type, with an alternate that has already been
-   * parsed. The alternate may be null.
+   * Create a new union type, with an alternate that has already been parsed. The alternate may be
+   * null.
    */
-  private Node parseUnionTypeWithAlternate(JsDocToken token, Node alternate) {
+  private @Nullable Node parseUnionTypeWithAlternate(JsDocToken token, @Nullable Node alternate) {
     Node union = newNode(Token.PIPE);
     if (alternate != null) {
       union.addChildToBack(alternate);
@@ -2490,21 +2559,19 @@ public final class JsDocInfoParser {
     if (alternate == null) {
       skipEOLs();
       if (!match(JsDocToken.RIGHT_PAREN)) {
-        return reportTypeSyntaxWarning("msg.jsdoc.missing.rp");
+        return reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RP);
       }
       next();
     }
     if (union.hasOneChild()) {
       Node firstChild = union.getFirstChild();
-      union.removeChild(firstChild);
+      firstChild.detach();
       return firstChild;
     }
     return union;
   }
 
-  /**
-   * RecordType := '{' FieldTypeList '}'
-   */
+  /** RecordType := '{' FieldTypeList '}' */
   private Node parseRecordType(JsDocToken token) {
     Node recordType = newNode(Token.LC);
     Node fieldTypeList = parseFieldTypeList(token);
@@ -2515,7 +2582,7 @@ public final class JsDocInfoParser {
 
     skipEOLs();
     if (!match(JsDocToken.RIGHT_CURLY)) {
-      return reportTypeSyntaxWarning("msg.jsdoc.missing.rc");
+      return reportTypeSyntaxWarning(Msg.JSDOC_MISSING_RC);
     }
 
     next();
@@ -2524,13 +2591,11 @@ public final class JsDocInfoParser {
     return recordType;
   }
 
-  /**
-   * FieldTypeList := FieldType | FieldType ',' FieldTypeList
-   */
-  private Node parseFieldTypeList(JsDocToken token) {
+  /** FieldTypeList := FieldType | FieldType ',' FieldTypeList */
+  private @Nullable Node parseFieldTypeList(JsDocToken token) {
     Node fieldTypeList = newNode(Token.LB);
 
-    Set<String> names = new HashSet<>();
+    Set<String> names = new LinkedHashSet<>();
 
     do {
       Node fieldType = parseFieldType(token);
@@ -2539,12 +2604,12 @@ public final class JsDocInfoParser {
         return null;
       }
 
-      String name = fieldType.isStringKey() ? fieldType.getString()
-          : fieldType.getFirstChild().getString();
+      String name =
+          fieldType.isStringKey() ? fieldType.getString() : fieldType.getFirstChild().getString();
       if (names.add(name)) {
         fieldTypeList.addChildToBack(fieldType);
       } else {
-        addTypeWarning("msg.jsdoc.type.record.duplicate", name);
+        addTypeWarning(Msg.JSDOC_TYPE_RECORD_DUPLICATE, name);
       }
 
       skipEOLs();
@@ -2569,10 +2634,8 @@ public final class JsDocInfoParser {
     return fieldTypeList;
   }
 
-  /**
-   * FieldType := FieldName | FieldName ':' TypeExpression
-   */
-  private Node parseFieldType(JsDocToken token) {
+  /** FieldType := FieldName | FieldName ':' TypeExpression */
+  private @Nullable Node parseFieldType(JsDocToken token) {
     Node fieldName = parseFieldName(token);
 
     if (fieldName == null) {
@@ -2602,55 +2665,52 @@ public final class JsDocInfoParser {
     return fieldType;
   }
 
-  /**
-   * FieldName := NameExpression | StringLiteral | NumberLiteral |
-   * ReservedIdentifier
-   */
-  private Node parseFieldName(JsDocToken token) {
-    switch (token) {
-      case STRING:
-        String s = stream.getString();
-        Node n = Node.newString(
-            Token.STRING_KEY, s, stream.getLineno(), stream.getCharno())
-            .clonePropsFrom(templateNode);
-        n.setLength(s.length());
-        return n;
-
-      default:
-        return null;
+  /** FieldName := NameExpression | StringLiteral | NumberLiteral | ReservedIdentifier */
+  private @Nullable Node parseFieldName(JsDocToken token) {
+    if (token != JsDocToken.STRING) {
+      return null;
     }
-  }
-
-  private Node wrapNode(Token type, Node n) {
-    return n == null ? null : wrapNode(type, n, n.getLineno(), n.getCharno());
-  }
-
-  private Node wrapNode(Token type, Node n, int lineno, int charno) {
-    return n == null ? null : new Node(type, n, lineno, charno).clonePropsFrom(templateNode);
-  }
-
-  private Node newNode(Token type) {
-    return new Node(type, stream.getLineno(),
-        stream.getCharno()).clonePropsFrom(templateNode);
-  }
-
-  private Node newStringNode(String s) {
-    return newStringNode(s, stream.getLineno(), stream.getCharno());
-  }
-
-  private Node newStringNode(String s, int lineno, int charno) {
-    Node n = Node.newString(s, lineno, charno).clonePropsFrom(templateNode);
+    String s = stream.getString();
+    Node n =
+        Node.newString(Token.STRING_KEY, s)
+            .setLinenoCharno(stream.getLineno(), stream.getCharno())
+            .clonePropsFrom(templateNode);
     n.setLength(s.length());
     return n;
   }
 
-  private Node reportTypeSyntaxWarning(String warning) {
+  private @Nullable Node wrapNode(Token type, Node n) {
+    return n == null ? null : wrapNode(type, n, n.getLineno(), n.getCharno());
+  }
+
+  private @Nullable Node wrapNode(Token type, Node n, int lineno, int charno) {
+    return n == null
+        ? null
+        : new Node(type, n).setLinenoCharno(lineno, charno).clonePropsFrom(templateNode);
+  }
+
+  private Node newNode(Token type) {
+    return new Node(type)
+        .setLinenoCharno(stream.getLineno(), stream.getCharno())
+        .clonePropsFrom(templateNode);
+  }
+
+  private Node newStringNode(String s) {
+    Node n =
+        Node.newString(s)
+            .setLinenoCharno(stream.getLineno(), stream.getCharno())
+            .clonePropsFrom(templateNode);
+    n.setLength(s.length());
+    return n;
+  }
+
+  private @Nullable Node reportTypeSyntaxWarning(Msg warning) {
     addTypeWarning(warning, stream.getLineno(), stream.getCharno());
     return null;
   }
 
   private Node reportGenericTypeSyntaxWarning() {
-    return reportTypeSyntaxWarning("msg.jsdoc.type.syntax");
+    return reportTypeSyntaxWarning(Msg.JSDOC_TYPE_SYNTAX);
   }
 
   private JsDocToken eatUntilEOLIfNotAnnotation() {
@@ -2666,21 +2726,20 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Eats tokens until {@link JsDocToken#EOL} included, and switches back the
-   * state to {@link State#SEARCHING_ANNOTATION}.
+   * Eats tokens until {@link JsDocToken#EOL} included, and switches back the state to {@link
+   * State#SEARCHING_ANNOTATION}.
    */
   private JsDocToken eatTokensUntilEOL() {
     return eatTokensUntilEOL(next());
   }
 
   /**
-   * Eats tokens until {@link JsDocToken#EOL} included, and switches back the
-   * state to {@link State#SEARCHING_ANNOTATION}.
+   * Eats tokens until {@link JsDocToken#EOL} included, and switches back the state to {@link
+   * State#SEARCHING_ANNOTATION}.
    */
   private JsDocToken eatTokensUntilEOL(JsDocToken token) {
     do {
-      if (token == JsDocToken.EOL || token == JsDocToken.EOC ||
-          token == JsDocToken.EOF) {
+      if (token == JsDocToken.EOL || token == JsDocToken.EOC || token == JsDocToken.EOF) {
         state = State.SEARCHING_ANNOTATION;
         return token;
       }
@@ -2688,14 +2747,10 @@ public final class JsDocInfoParser {
     } while (true);
   }
 
-  /**
-   * Specific value indicating that the {@link #unreadToken} contains no token.
-   */
-  private static final JsDocToken NO_UNREAD_TOKEN = null;
+  /** Specific value indicating that the {@link #unreadToken} contains no token. */
+  private static final @Nullable JsDocToken NO_UNREAD_TOKEN = null;
 
-  /**
-   * One token buffer.
-   */
+  /** One token buffer. */
   private JsDocToken unreadToken = NO_UNREAD_TOKEN;
 
   /** Restores the lookahead token to the token stream */
@@ -2703,19 +2758,13 @@ public final class JsDocInfoParser {
     unreadToken = token;
   }
 
-  /**
-   * Tests whether the next symbol of the token stream matches the specific
-   * token.
-   */
+  /** Tests whether the next symbol of the token stream matches the specific token. */
   private boolean match(JsDocToken token) {
     unreadToken = next();
     return unreadToken == token;
   }
 
-  /**
-   * Tests that the next symbol of the token stream matches one of the specified
-   * tokens.
-   */
+  /** Tests that the next symbol of the token stream matches one of the specified tokens. */
   private boolean match(JsDocToken token1, JsDocToken token2) {
     unreadToken = next();
     return unreadToken == token1 || unreadToken == token2;
@@ -2731,8 +2780,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Gets the next token of the token stream or the buffered token if a matching
-   * was previously made.
+   * Gets the next token of the token stream or the buffered token if a matching was previously
+   * made.
    */
   private JsDocToken next() {
     if (unreadToken == NO_UNREAD_TOKEN) {
@@ -2742,9 +2791,7 @@ public final class JsDocInfoParser {
     }
   }
 
-  /**
-   * Gets the current token, invalidating it in the process.
-   */
+  /** Gets the current token, invalidating it in the process. */
   private JsDocToken current() {
     JsDocToken t = unreadToken;
     unreadToken = NO_UNREAD_TOKEN;
@@ -2752,8 +2799,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Skips all EOLs and all empty lines in the JSDoc. Call this method if you
-   * want the JSDoc entry to span multiple lines.
+   * Skips all EOLs and all empty lines in the JSDoc. Call this method if you want the JSDoc entry
+   * to span multiple lines.
    */
   private void skipEOLs() {
     while (match(JsDocToken.EOL)) {
@@ -2764,19 +2811,14 @@ public final class JsDocInfoParser {
     }
   }
 
-  /**
-   * Returns the remainder of the line.
-   */
+  /** Returns the remainder of the line. */
   private String getRemainingJSDocLine() {
     String result = stream.getRemainingJSDocLine();
     unreadToken = NO_UNREAD_TOKEN;
     return result;
   }
 
-  /**
-   * Determines whether the parser has been populated with docinfo with a
-   * fileoverview tag.
-   */
+  /** Determines whether the parser has been populated with docinfo with a fileoverview tag. */
   private boolean hasParsedFileOverviewDocInfo() {
     return jsdocBuilder.isPopulatedWithFileOverview();
   }
@@ -2785,19 +2827,16 @@ public final class JsDocInfoParser {
     return jsdocBuilder.build();
   }
 
-  /**
-   * Gets the fileoverview JSDocInfo, if any.
-   */
+  /** Gets the fileoverview JSDocInfo, if any. */
   JSDocInfo getFileOverviewJSDocInfo() {
     return fileOverviewJSDocInfo;
   }
 
   /**
-   * Look ahead for a type annotation by advancing the character stream.
-   * Does not modify the token stream.
-   * This is kind of a hack, and is only necessary because we use the token
-   * stream to parse types, but need the underlying character stream to get
-   * JsDoc descriptions.
+   * Look ahead for a type annotation by advancing the character stream. Does not modify the token
+   * stream. This is kind of a hack, and is only necessary because we use the token stream to parse
+   * types, but need the underlying character stream to get JsDoc descriptions.
+   *
    * @return Whether we found a type annotation.
    */
   private boolean lookAheadForType() {
@@ -2809,8 +2848,8 @@ public final class JsDocInfoParser {
   }
 
   /**
-   * Look ahead by advancing the character stream.
-   * Does not modify the token stream.
+   * Look ahead by advancing the character stream. Does not modify the token stream.
+   *
    * @return Whether we found the char.
    */
   private boolean lookAheadFor(char expect) {

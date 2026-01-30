@@ -27,8 +27,6 @@ import org.junit.runners.JUnit4;
 /**
  * Tests for the "missing provides" checks in {@link ProcessClosurePrimitives} and {@link
  * ClosureRewriteModule}.
- *
- * @author stalcup@google.com (John Stalcup)
  */
 @RunWith(JUnit4.class)
 public final class MissingProvideTest extends CompilerTestCase {
@@ -75,43 +73,48 @@ public final class MissingProvideTest extends CompilerTestCase {
   @Test
   public void test_Legacy_Require_Module_DeclLeg_Pass() {
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.A');",
-            "goog.module.declareLegacyNamespace();",
-            "/** @constructor */ function A() {}",
-            "exports = A;");
+        """
+        goog.module('normal.goog.module.A');
+        goog.module.declareLegacyNamespace();
+        /** @constructor */ function A() {}
+        exports = A;
+        """;
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.require('normal.goog.module.A');",
-            "new normal.goog.module.A;");
+        """
+        goog.provide('legacy.script.B');
+        goog.require('normal.goog.module.A');
+        new normal.goog.module.A;
+        """;
 
-    testNoWarning(srcs(new String[] {googModule, legacyScript}));
+    testNoWarning(srcs(googModule, legacyScript));
   }
 
   @Test
   public void test_Legacy_Require_Module_Normal_Pass() {
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.A');",
-            "/** @constructor */ function A() {}",
-            "exports = A;");
+        """
+        goog.module('normal.goog.module.A');
+        /** @constructor */ function A() {}
+        exports = A;
+        """;
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.require('normal.goog.module.A');");
+        """
+        goog.provide('legacy.script.B');
+        goog.require('normal.goog.module.A');
+        """;
 
-    testNoWarning(srcs(new String[] {googModule, legacyScript}));
+    testNoWarning(srcs(googModule, legacyScript));
   }
 
   @Test
   public void test_Legacy_Require_Module_Missing_Fail() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.scope(function() {",
-            "  var A = goog.module.get('missing.goog.module.A');",
-            "});");
+        """
+        goog.provide('legacy.script.B');
+        goog.scope(function() {
+          var A = goog.module.get('missing.goog.module.A');
+        });
+        """;
 
     String msg = "Required namespace \"missing.goog.module.A\" never defined.";
     testError(legacyScript, MISSING_MODULE_OR_PROVIDE, msg);
@@ -120,28 +123,31 @@ public final class MissingProvideTest extends CompilerTestCase {
   @Test
   public void test_Legacy_ModuleGet_Module_Normal_Pass() {
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.A');",
-            "/** @constructor */ function A() {}",
-            "exports = A;");
+        """
+        goog.module('normal.goog.module.A');
+        /** @constructor */ function A() {}
+        exports = A;
+        """;
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.scope(function() {",
-            "  var A = goog.module.get('normal.goog.module.A');",
-            "});");
+        """
+        goog.provide('legacy.script.B');
+        goog.scope(function() {
+          var A = goog.module.get('normal.goog.module.A');
+        });
+        """;
 
-    testNoWarning(srcs(new String[] {googModule, legacyScript}));
+    testNoWarning(srcs(googModule, legacyScript));
   }
 
   @Test
   public void test_Legacy_ModuleGet_Module_Missing_Fail() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.scope(function() {",
-            "  var A = goog.module.get('missing.goog.module.A');",
-            "});");
+        """
+        goog.provide('legacy.script.B');
+        goog.scope(function() {
+          var A = goog.module.get('missing.goog.module.A');
+        });
+        """;
 
     String msg = "Required namespace \"missing.goog.module.A\" never defined.";
     testError(legacyScript, MISSING_MODULE_OR_PROVIDE, msg);
@@ -150,19 +156,21 @@ public final class MissingProvideTest extends CompilerTestCase {
   @Test
   public void test_Module_Require_Module_Normal_Pass() {
     String googModule1 =
-        lines(
-            "goog.module('normal.goog.module.A');",
-            "/** @constructor */ function A() {}",
-            "exports = A;");
+        """
+        goog.module('normal.goog.module.A');
+        /** @constructor */ function A() {}
+        exports = A;
+        """;
     String googModule2 =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.require('normal.goog.module.A');",
-            "/** @constructor */ function B() {}",
-            "B.prototype = new A;",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.require('normal.goog.module.A');
+        /** @constructor */ function B() {}
+        B.prototype = new A;
+        exports = B;
+        """;
 
-    testNoWarning(srcs(new String[] {googModule1, googModule2}));
+    testNoWarning(srcs(googModule1, googModule2));
   }
 
   @Test
@@ -170,12 +178,13 @@ public final class MissingProvideTest extends CompilerTestCase {
     // When something is goog.require()'d in a module and the referenced thing is missing it's not
     // really possible to know if the missing thing is a module or script.
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.require('missing.goog.module.A');",
-            "/** @constructor */ function B() {}",
-            "B.prototype = new A;",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.require('missing.goog.module.A');
+        /** @constructor */ function B() {}
+        B.prototype = new A;
+        exports = B;
+        """;
 
     String warning = "Required namespace \"missing.goog.module.A\" never defined.";
     testError(googModule, MISSING_MODULE_OR_PROVIDE, warning);
@@ -184,39 +193,43 @@ public final class MissingProvideTest extends CompilerTestCase {
   @Test
   public void test_Module_ModuleGet_Module_Normal_Pass() {
     String googModule1 =
-        lines(
-            "goog.module('normal.goog.module.A');",
-            "/** @constructor */ function A() {}",
-            "exports = A;");
+        """
+        goog.module('normal.goog.module.A');
+        /** @constructor */ function A() {}
+        exports = A;
+        """;
     String googModule2 =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.forwardDeclare('normal.goog.module.A');",
-            "/** @constructor */ function B() {}",
-            "B.prototype.createA = function() {",
-            "  A = goog.module.get('normal.goog.module.A');",
-            "  new A;",
-            "}",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.forwardDeclare('normal.goog.module.A');
+        /** @constructor */ function B() {}
+        B.prototype.createA = function() {
+          A = goog.module.get('normal.goog.module.A');
+          new A;
+        }
+        exports = B;
+        """;
 
-    testNoWarning(srcs(new String[] {googModule1, googModule2}));
+    testNoWarning(srcs(googModule1, googModule2));
   }
 
   @Test
   public void test_Module_Require_Legacy_Normal_Pass() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.A');",
-            "/** @constructor */ legacy.script.A = function () {}");
+        """
+        goog.provide('legacy.script.A');
+        /** @constructor */ legacy.script.A = function () {}
+        """;
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.require('legacy.script.A');",
-            "/** @constructor */ function B() {}",
-            "B.prototype = new A;",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.require('legacy.script.A');
+        /** @constructor */ function B() {}
+        B.prototype = new A;
+        exports = B;
+        """;
 
-    testNoWarning(srcs(new String[] {legacyScript, googModule}));
+    testNoWarning(srcs(legacyScript, googModule));
   }
 
   @Test
@@ -224,12 +237,13 @@ public final class MissingProvideTest extends CompilerTestCase {
     // When something is goog.require()'d in a module and the referenced thing is missing it's not
     // really possible to know if the missing thing is a module or script.
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.require('legacy.script.A');",
-            "/** @constructor */ function B() {}",
-            "B.prototype = new A;",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.require('legacy.script.A');
+        /** @constructor */ function B() {}
+        B.prototype = new A;
+        exports = B;
+        """;
 
     String msg = "Required namespace \"legacy.script.A\" never defined.";
     testError(googModule, MISSING_MODULE_OR_PROVIDE, msg);
@@ -240,33 +254,36 @@ public final class MissingProvideTest extends CompilerTestCase {
     // goog.module.get inside of a goog.module() can reference legacy files, to be consistent with
     // goog.require() behavior in the same context.
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.A');",
-            "/** @constructor */ legacy.script.A = function () {}");
+        """
+        goog.provide('legacy.script.A');
+        /** @constructor */ legacy.script.A = function () {}
+        """;
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.forwardDeclare('legacy.script.A');",
-            "/** @constructor */ function B() {}",
-            "B.prototype.createA = function() {",
-            "  A = goog.module.get('legacy.script.A');",
-            "  new A;",
-            "}",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.forwardDeclare('legacy.script.A');
+        /** @constructor */ function B() {}
+        B.prototype.createA = function() {
+          A = goog.module.get('legacy.script.A');
+          new A;
+        }
+        exports = B;
+        """;
 
-    testNoWarning(srcs(new String[] {legacyScript, googModule}));
+    testNoWarning(srcs(legacyScript, googModule));
   }
 
   @Test
   public void test_Module_ModuleGet_Missing_Fail() {
     // goog.module.get inside of a goog.module() cannot reference files that do not exist.
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "function f() {",
-            "  return goog.module.get('missing.legacy.script.A');",
-            "}",
-            "exports = f;");
+        """
+        goog.module('normal.goog.module.B');
+        function f() {
+          return goog.module.get('missing.legacy.script.A');
+        }
+        exports = f;
+        """;
 
     String msg = "Required namespace \"missing.legacy.script.A\" never defined.";
     testError(googModule, MISSING_MODULE_OR_PROVIDE, msg);
@@ -276,11 +293,12 @@ public final class MissingProvideTest extends CompilerTestCase {
   public void test_Module_ForwardDeclare_Missing_Fail() {
     // Short goog.forwardDeclare inside a goog.module() cannot reference files that do not exist.
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "var A = goog.forwardDeclare('missing.legacy.script.A');",
-            "/** @constructor */ function B() {}",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        var A = goog.forwardDeclare('missing.legacy.script.A');
+        /** @constructor */ function B() {}
+        exports = B;
+        """;
 
     String msg = "Required namespace \"missing.legacy.script.A\" never defined.";
     testError(googModule, MISSING_MODULE_OR_PROVIDE_FOR_FORWARD_DECLARE, msg);
@@ -290,37 +308,41 @@ public final class MissingProvideTest extends CompilerTestCase {
   public void test_Legacy_ForwardDeclare_Missing_Pass() {
     // Legacy goog.forwardDeclare inside a goog.module() works the same as outside a module.
     String googModule =
-        lines(
-            "goog.module('normal.goog.module.B');",
-            "goog.forwardDeclare('missing.legacy.script.A');",
-            "/** @constructor */ function B() {}",
-            "exports = B;");
+        """
+        goog.module('normal.goog.module.B');
+        goog.forwardDeclare('missing.legacy.script.A');
+        /** @constructor */ function B() {}
+        exports = B;
+        """;
 
-    testNoWarning(srcs(new String[] { googModule }));
+    testNoWarning(srcs(googModule));
   }
 
   @Test
   public void test_Legacy_Require_Legacy_Normal_Pass() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.A');",
-            "/** @constructor */ legacy.script.A = function () {}");
+        """
+        goog.provide('legacy.script.A');
+        /** @constructor */ legacy.script.A = function () {}
+        """;
     String legacyScript2 =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.require('legacy.script.A');",
-            "new legacy.script.A;");
+        """
+        goog.provide('legacy.script.B');
+        goog.require('legacy.script.A');
+        new legacy.script.A;
+        """;
 
-    testNoWarning(srcs(new String[] {legacyScript, legacyScript2}));
+    testNoWarning(srcs(legacyScript, legacyScript2));
   }
 
   @Test
   public void test_Legacy_Require_Legacy_Missing_Fail() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "goog.require('legacy.script.A');",
-            "new legacy.script.A;");
+        """
+        goog.provide('legacy.script.B');
+        goog.require('legacy.script.A');
+        new legacy.script.A;
+        """;
 
     String msg = "Required namespace \"legacy.script.A\" never defined.";
     test(srcs(legacyScript), error(MISSING_MODULE_OR_PROVIDE).withMessage(msg));
@@ -329,31 +351,34 @@ public final class MissingProvideTest extends CompilerTestCase {
   @Test
   public void test_Legacy_ModuleGet_Legacy_Normal_Pass() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.A');",
-            "/** @constructor */ legacy.script.A = function () {}");
+        """
+        goog.provide('legacy.script.A');
+        /** @constructor */ legacy.script.A = function () {}
+        """;
     String legacyScript2 =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "/** @constructor */ legacy.script.B = function () {}",
-            "B.prototype.createA = function() {",
-            "  var A = goog.module.get('legacy.script.A');",
-            "  new A;",
-            "}");
+        """
+        goog.provide('legacy.script.B');
+        /** @constructor */ legacy.script.B = function () {}
+        B.prototype.createA = function() {
+          var A = goog.module.get('legacy.script.A');
+          new A;
+        }
+        """;
 
-    testNoWarning(srcs(new String[] {legacyScript, legacyScript2}));
+    testNoWarning(srcs(legacyScript, legacyScript2));
   }
 
   @Test
   public void test_Legacy_ModuleGet_Legacy_Missing_Fail() {
     String legacyScript =
-        lines(
-            "goog.provide('legacy.script.B');",
-            "/** @constructor */ legacy.script.B = function () {}",
-            "B.prototype.createA = function() {",
-            "  var A = goog.module.get('legacy.script.A');",
-            "  new A;",
-            "}");
+        """
+        goog.provide('legacy.script.B');
+        /** @constructor */ legacy.script.B = function () {}
+        B.prototype.createA = function() {
+          var A = goog.module.get('legacy.script.A');
+          new A;
+        }
+        """;
 
     String msg = "Required namespace \"legacy.script.A\" never defined.";
     testError(legacyScript, MISSING_MODULE_OR_PROVIDE, msg);

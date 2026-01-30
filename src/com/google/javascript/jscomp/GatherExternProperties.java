@@ -19,36 +19,53 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.collect.ImmutableSet;
-import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.LinkedHashSet;
-import java.util.Set;
 
 /**
  * Gathers property names defined in externs.
  *
- * The collection of these property names could easily happen during
- * type checking. However, when exporting local property definitions,
- * the externs may be modified after type checking, and we want to
- * collect the new names as well.
+ * <p>The collection of these property names could easily happen during type checking. However, when
+ * exporting local property definitions, the externs may be modified after type checking, and we
+ * want to collect the new names as well.
  *
- * NOTE(dimvar): with NTI, we collect the relevant property names
- * during type checking, and we run this pass just to collect new
- * names that come from local exports. The type-visitor part is not
- * executed because getJSType returns null.
+ * <p>Mode.CHECK is set when checksOnly=true and only collects the externs in the type expressions
+ * in JSDoc. Mode.OPTIMIZE is set when checksOnly=false and only collects the externs in AST
+ * properties.
+ *
+ * <p>To optimize build time, we collect only type expression externs in getChecks() and only AST
+ * property externs in getOptimizations() instead of collecting all in both.
  */
-class GatherExternProperties extends AbstractPostOrderCallback
-    implements CompilerPass {
-  private final Set<String> externProperties;
+final class GatherExternProperties implements NodeTraversal.Callback, CompilerPass {
   private final AbstractCompiler compiler;
 
-  public GatherExternProperties(AbstractCompiler compiler) {
+  private final LinkedHashSet<String> externProperties = new LinkedHashSet<>();
+
+  enum Mode {
+    CHECK(true, false),
+    OPTIMIZE(false, true),
+    CHECK_AND_OPTIMIZE(true, true);
+
+    private final boolean check;
+    private final boolean optimize;
+
+    Mode(boolean check, boolean optimize) {
+      this.check = check;
+      this.optimize = optimize;
+    }
+  }
+
+  private final Mode mode;
+
+  GatherExternProperties(AbstractCompiler compiler, Mode mode) {
     this.compiler = compiler;
-    this.externProperties = compiler.getExternProperties() == null
-        ? new LinkedHashSet<String>()
-        : new LinkedHashSet<String>(compiler.getExternProperties());
+    this.mode = mode;
+
+    if (compiler.getExternProperties() != null) {
+      this.externProperties.addAll(compiler.getExternProperties());
+    }
   }
 
   @Override
@@ -58,29 +75,29 @@ class GatherExternProperties extends AbstractPostOrderCallback
   }
 
   @Override
+  public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
+    return !n.isScript() || !NodeUtil.isFromTypeSummary(n);
+  }
+
+  @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
-    switch (n.getToken()) {
-      case GETPROP:
-        // Gathers "name" from (someObject.name).
-        Node dest = n.getSecondChild();
-        if (dest.isString()) {
-          externProperties.add(dest.getString());
+    if (this.mode.optimize) {
+      switch (n.getToken()) {
+        case GETPROP ->
+            // Gathers "name" from (someObject.name).
+            externProperties.add(n.getString());
+        case STRING_KEY -> {
+          if (parent.isObjectLit()) {
+            externProperties.add(n.getString());
+          }
         }
-        break;
-      case STRING_KEY:
-        if (parent.isObjectLit()) {
-          externProperties.add(n.getString());
-        }
-        break;
-      case MEMBER_FUNCTION_DEF:
-        externProperties.add(n.getString());
-        break;
-      default:
-        break;
+        case MEMBER_FUNCTION_DEF -> externProperties.add(n.getString());
+        default -> {}
+      }
     }
 
     JSDocInfo jsDocInfo = n.getJSDocInfo();
-    if (jsDocInfo != null) {
+    if (jsDocInfo != null && this.mode.check) {
       gatherPropertiesFromJSDocInfo(jsDocInfo);
     }
   }
@@ -93,15 +110,14 @@ class GatherExternProperties extends AbstractPostOrderCallback
 
   private void gatherPropertiesFromJsTypeExpressionNode(Node jsTypeExpressionNode) {
     switch (jsTypeExpressionNode.getToken()) {
-      case LB:
-        gatherPropertiesFromJsDocRecordType(jsTypeExpressionNode);
-        break;
-      default:
+      case LB -> gatherPropertiesFromJsDocRecordType(jsTypeExpressionNode);
+      default -> {
         for (Node child = jsTypeExpressionNode.getFirstChild();
             child != null;
             child = child.getNext()) {
           gatherPropertiesFromJsTypeExpressionNode(child);
         }
+      }
     }
   }
 

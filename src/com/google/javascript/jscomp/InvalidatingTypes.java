@@ -15,38 +15,29 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkState;
-
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Multimap;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSetMultimap;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.jstype.ObjectType;
-import java.util.LinkedHashSet;
-import javax.annotation.Nullable;
 
 /**
- * Keeps track of "invalidating types" that force type-based optimizations to back off, specifically
- * for {@link InlineProperties}, {@link AmbiguateProperties}, and {@link DisambiguateProperties}.
- * Note that disambiguation has slightly different behavior from the other two, as pointed out in
- * implementation comments.
+ * Keeps track of "invalidating types" that force type-based optimizations to back off.
+ *
+ * <p>Specifically for {@link InlineProperties}, {@link
+ * com.google.javascript.jscomp.disambiguate.AmbiguateProperties}, and {@link
+ * com.google.javascript.jscomp.disambiguate.DisambiguateProperties}.
  */
 public final class InvalidatingTypes {
-  private final ImmutableSet<JSType> types;
-  /** Whether to allow disambiguating enum properties */
-  private final boolean allowEnums;
-  /** Whether to allow types like 'str'.toString() */
-  private final boolean allowScalars;
+  private final ImmutableSetMultimap<JSType, Node> typeToLocation;
 
-  private final boolean allowObjectLiteralTypes;
-
-  private InvalidatingTypes(Builder builder, ImmutableSet<JSType> types) {
-    this.types = types;
-    this.allowEnums = builder.allowEnums;
-    this.allowScalars = builder.allowScalars;
-    this.allowObjectLiteralTypes = builder.allowObjectLiteralTypes;
+  private InvalidatingTypes(ImmutableSetMultimap<JSType, Node> typeToLocation) {
+    this.typeToLocation = typeToLocation;
   }
 
   public boolean isInvalidating(JSType type) {
@@ -70,111 +61,80 @@ public final class InvalidatingTypes {
     ObjectType objType = type.toMaybeObjectType();
 
     if (objType == null) {
-      return !allowScalars;
-    }
-
-    return types.contains(objType)
-        // Don't disambiguate properties on object literals, e.g. var obj = {a: 'a', b: 'b'};
-        || this.isInvalidatingDueToAmbiguity(objType)
-        || (!allowEnums && objType.isEnumType())
-        || (!allowScalars && objType.isBoxableScalar());
-  }
-
-  private boolean isInvalidatingDueToAmbiguity(ObjectType type) {
-    if (this.allowObjectLiteralTypes && type.isLiteralObject()) {
+      // TODO(b/174534994): why can't scalars be invalidating?
       return false;
     }
 
-    return type.isAmbiguousObject();
+    if (objType.isTemplatizedType()) {
+      objType = objType.toMaybeTemplatizedType().getReferencedType();
+    }
+
+    return this.typeToLocation.containsKey(objType)
+        // Don't disambiguate properties on object types that are structurally compared or that
+        // don't come from a literal class or function definition
+        || isAmbiguousOrStructuralType(objType);
+  }
+
+  public ImmutableSetMultimap<JSType, Node> getMismatchLocations() {
+    return this.typeToLocation;
+  }
+
+  // Returns true if any of the following hold:
+  //  - this type obeys structural subtyping rules, as opposed to nominal subtyping
+  //  - this type is some JSDoc-only or anonymous type like a mixin, as opposed to a class or
+  //    function literal
+  private static boolean isAmbiguousOrStructuralType(ObjectType type) {
+    if (type.isEnumType()) {
+      // enum types are created via object literals, which are normally structural, but Closure
+      // special-cases them to behave as if nominal.
+      return false;
+    } else if (type.isEnumElementType()) {
+      ObjectType primitive = type.toMaybeEnumElementType().getPrimitiveType().toMaybeObjectType();
+      // Treat an Enum<Foo> identically to a Foo
+      return primitive == null || isAmbiguousOrStructuralType(primitive);
+    } else if (type.isFunctionType()) {
+      return !type.isNominalConstructorOrInterface()
+          || type.toMaybeFunctionType().isAmbiguousConstructor();
+    } else if (type.isFunctionPrototypeType()) {
+      FunctionType ownerFunction = type.getOwnerFunction();
+      return ownerFunction == null
+          || !ownerFunction.isNominalConstructorOrInterface()
+          || ownerFunction.isAmbiguousConstructor()
+          || ownerFunction.isStructuralInterface();
+    } else if (type.isInstanceType()) {
+      FunctionType ctor = type.getConstructor();
+      return ctor == null || ctor.isAmbiguousConstructor() || ctor.isStructuralInterface();
+    }
+
+    return true;
   }
 
   /** Builder */
   public static final class Builder {
     private final JSTypeRegistry registry;
 
-    @Nullable private Multimap<JSType, Node> invalidationMap;
-    private final LinkedHashSet<TypeMismatch> mismatches = new LinkedHashSet<>();
-    private boolean allowEnums = false;
-    private boolean allowScalars = false;
-    private boolean allowGlobalThis = true;
-    private boolean allowTypesInvalidForRenaming = true;
-    private boolean allowObjectLiteralTypes = false;
-
-    private boolean alsoInvalidateRelatedTypes = true;
-
-    private ImmutableSet.Builder<JSType> types;
+    private final ImmutableSetMultimap.Builder<JSType, Node> typeToLocation =
+        ImmutableSetMultimap.builder();
 
     public Builder(JSTypeRegistry registry) {
       this.registry = registry;
     }
 
     public InvalidatingTypes build() {
-      checkState(this.types == null);
-      this.types = ImmutableSet.builder();
-
-      if (!this.allowGlobalThis) {
-        types.add(registry.getNativeType(JSTypeNative.GLOBAL_THIS));
-      }
-      if (!this.allowTypesInvalidForRenaming) {
-        types.add(
-            registry.getNativeType(JSTypeNative.FUNCTION_FUNCTION_TYPE),
-            registry.getNativeType(JSTypeNative.FUNCTION_TYPE),
-            registry.getNativeType(JSTypeNative.FUNCTION_PROTOTYPE),
-            registry.getNativeType(JSTypeNative.OBJECT_TYPE),
-            registry.getNativeType(JSTypeNative.OBJECT_PROTOTYPE),
-            registry.getNativeType(JSTypeNative.OBJECT_FUNCTION_TYPE));
+      for (JSTypeNative t : ALWAYS_INVALIDATING_TYPES) {
+        this.typeToLocation.put(registry.getNativeType(t), ALWAYS_INVALIDATING_LOCATION);
       }
 
-      for (TypeMismatch mismatch : this.mismatches) {
-        this.addTypeWithReason(mismatch.getFound(), mismatch.getLocation());
-        this.addTypeWithReason(mismatch.getRequired(), mismatch.getLocation());
-      }
-
-      ImmutableSet<JSType> types = this.types.build();
-      this.types = null;
-      return new InvalidatingTypes(this, types);
+      return new InvalidatingTypes(this.typeToLocation.build());
     }
 
-    // TODO(sdh): Investigate whether this can be consolidated between all three passes.
-    // In particular, mutation testing suggests allowEnums=true should work everywhere.
-    // We should revisit what breaks when we disallow scalars everywhere.
-    public Builder writeInvalidationsInto(@Nullable Multimap<JSType, Node> invalidationMap) {
-      this.invalidationMap = invalidationMap;
-      return this;
-    }
-
-    public Builder allowEnumsAndScalars() {
-      // Ambiguate and Inline do not allow enums or scalars.
-      this.allowEnums = this.allowScalars = true;
-      return this;
-    }
-
-    public Builder disallowGlobalThis() {
-      /**
-       * Disambiguate does not invalidate global this because it sets skipping explicitly for extern
-       * properties only on the extern types.
-       */
-      this.allowGlobalThis = false;
-      return this;
-    }
-
+    @CanIgnoreReturnValue
     public Builder addAllTypeMismatches(Iterable<TypeMismatch> mismatches) {
-      mismatches.forEach(this.mismatches::add);
-      return this;
-    }
+      for (TypeMismatch mismatch : mismatches) {
+        this.addTypeWithReason(mismatch.found(), mismatch.location());
+        this.addTypeWithReason(mismatch.required(), mismatch.location());
+      }
 
-    public Builder addTypesInvalidForPropertyRenaming() {
-      this.allowTypesInvalidForRenaming = false;
-      return this;
-    }
-
-    public Builder setAlsoInvalidateRelatedTypes(boolean x) {
-      this.alsoInvalidateRelatedTypes = x;
-      return this;
-    }
-
-    public Builder setAllowObjectLiteralTypes(boolean x) {
-      this.allowObjectLiteralTypes = x;
       return this;
     }
 
@@ -188,44 +148,61 @@ public final class InvalidatingTypes {
         }
         return;
       }
-      checkState(!type.isUnionType(), type);
 
-      if (!this.alsoInvalidateRelatedTypes) {
-        this.recordTypeWithReason(type, location);
-      } else if (type.isEnumElementType()) {
-        // Only in disambigation.
-        this.recordTypeWithReason(type.getEnumeratedTypeOfEnumElement(), location);
+      if (type.isEnumElementType()) {
+        this.addTypeWithReason(type.getEnumeratedTypeOfEnumElement(), location);
         return;
-      } else {
-        // Ambiguation and InlineProperties both do this.
-        this.recordTypeWithReason(type, location);
+      }
 
-        ObjectType objType = type.toMaybeObjectType();
-        if (objType == null) {
-          return;
-        }
+      ObjectType objType = type.toMaybeObjectType();
+      if (objType == null) {
+        return;
+      }
 
-        this.recordTypeWithReason(objType.getImplicitPrototype(), location);
+      this.recordTypeWithReason(objType, location);
+      this.recordTypeWithReason(objType.getImplicitPrototype(), location);
 
-        if (objType.isConstructor()) {
-          // TODO(b/142431852): This should never be null but it is possible.
-          // Case: `function(new:T)`, `T = number`.
-          this.recordTypeWithReason(objType.toMaybeFunctionType().getInstanceType(), location);
-        } else if (objType.isInstanceType()) {
-          this.recordTypeWithReason(objType.getConstructor(), location);
-        }
+      if (objType.isConstructor()) {
+        // TODO(b/142431852): This should never be null but it is possible.
+        // Case: `function(new:T)`, `T = number`.
+        ObjectType instanceType = objType.toMaybeFunctionType().getInstanceType();
+        this.recordTypeWithReason(instanceType, location);
+      } else if (objType.isInstanceType()) {
+        this.recordTypeWithReason(objType.getConstructor(), location);
       }
     }
 
-    private void recordTypeWithReason(JSType type, Node location) {
-      if (type == null || !type.isObjectType()) {
+    private void recordTypeWithReason(ObjectType type, Node location) {
+      if (type == null) {
+        return;
+      }
+      if (type.isTemplatizedType()) {
+        type = type.toMaybeTemplatizedType().getReferencedType();
+      }
+      if (isAmbiguousOrStructuralType(type)) {
+        // This type is inherently invalidating. Putting it in the map wastes memory.
+        // This also fixes a performance regression: previously we saw ~4k structural types
+        // hash to the same bucket in the "typeToLocation" map, causing >100 seconds spent in
+        // hash map lookups for some builds.
         return;
       }
 
-      this.types.add(type);
-      if (invalidationMap != null) {
-        this.invalidationMap.put(type, location);
-      }
+      this.typeToLocation.put(type, location);
     }
   }
+
+  private static final ImmutableList<JSTypeNative> ALWAYS_INVALIDATING_TYPES =
+      ImmutableList.of(
+          JSTypeNative.FUNCTION_FUNCTION_TYPE,
+          JSTypeNative.FUNCTION_TYPE,
+          JSTypeNative.FUNCTION_PROTOTYPE,
+          JSTypeNative.FUNCTION_INSTANCE_PROTOTYPE,
+          JSTypeNative.OBJECT_TYPE,
+          JSTypeNative.OBJECT_PROTOTYPE,
+          JSTypeNative.OBJECT_FUNCTION_TYPE);
+
+  private static final Node ALWAYS_INVALIDATING_LOCATION =
+      IR.name("alwaysInvalidatingLocation")
+          .setStaticSourceFile(
+              SourceFile.fromCode("InvalidatingTypes_alwaysInvalidatingLocation", ""));
 }

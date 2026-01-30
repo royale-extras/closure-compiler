@@ -19,9 +19,9 @@ import static com.google.common.truth.Truth.assertAbout;
 
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.Subject;
+import com.google.errorprone.annotations.CheckReturnValue;
 import com.google.javascript.jscomp.TypedVar;
 import com.google.javascript.rhino.testing.TypeSubject;
-import javax.annotation.CheckReturnValue;
 
 /**
  * A Truth Subject for the {@link TypedVar} class. Usage:
@@ -38,7 +38,7 @@ public final class TypedVarSubject extends Subject {
   public static TypedVarSubject assertThat(TypedVar var) {
     // NB: Eclipse's Java compiler bails on just passing TypedVarSubject::new below, so wrap it in a
     // Closure.
-    return assertAbout((FailureMetadata fm, TypedVar v) -> new TypedVarSubject(fm, v)).that(var);
+    return assertAbout(TypedVarSubject::new).that(var);
   }
 
   private final TypedVar actual;

@@ -17,6 +17,7 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Predicate;
@@ -26,32 +27,31 @@ import com.google.javascript.jscomp.ControlFlowGraph.Branch;
 import com.google.javascript.jscomp.MustBeReachingVariableDef.Definition;
 import com.google.javascript.jscomp.NodeTraversal.AbstractShallowCallback;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
+import com.google.javascript.jscomp.NodeUtil.AllVarsDeclaredInFunction;
+import com.google.javascript.jscomp.graph.CheckPathsBetweenNodes;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphEdge;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import java.util.Collection;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Inline variables when possible. Using the information from
- * {@link MaybeReachingVariableUse} and {@link MustBeReachingVariableDef},
- * this pass attempts to inline a variable by placing the value at the
- * definition where the variable is used. The basic requirements for inlining
- * are the following:
+ * Inline variables when possible. Using the information from {@link MaybeReachingVariableUse} and
+ * {@link MustBeReachingVariableDef}, this pass attempts to inline a variable by placing the value
+ * at the definition where the variable is used. The basic requirements for inlining are the
+ * following:
  *
  * <ul>
- * <li> There is exactly one reaching definition at the use of that variable
- * </li>
- * <li> There is exactly one use for that definition of the variable
- * </li>
+ *   <li>There is exactly one reaching definition at the use of that variable
+ *   <li>There is exactly one use for that definition of the variable
  * </ul>
  *
- * <p>Other requirements can be found in {@link Candidate#canInline}. Currently
- * this pass does not operate on the global scope due to compilation time.
+ * <p>Other requirements can be found in {@link Candidate#canInline}. Currently this pass does not
+ * operate on the global scope due to compilation time.
  */
 class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
 
@@ -82,7 +82,7 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
   private class SideEffectPredicate implements Predicate<Node> {
     // Check if there are side effects affecting the value of any of these names
     // (but not properties defined on that name)
-    private final Set<String> namesToCheck;
+    private final @Nullable Set<String> namesToCheck;
 
     public SideEffectPredicate() {
       namesToCheck = null;
@@ -177,25 +177,36 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
     SyntacticScopeCreator scopeCreator = (SyntacticScopeCreator) t.getScopeCreator();
 
     // Compute the forward reaching definition.
-    ControlFlowAnalysis cfa = new ControlFlowAnalysis(compiler, false, true);
+    cfg =
+        ControlFlowAnalysis.builder()
+            .setCompiler(compiler)
+            .setCfgRoot(functionScopeRoot)
+            .setIncludeEdgeAnnotations(true)
+            .computeCfg();
 
-    // Process the body of the function.
-    cfa.process(null, functionScopeRoot);
-    cfg = cfa.getCfg();
+    LinkedHashSet<Var> escaped = new LinkedHashSet<>();
+    Scope scope = t.getScope();
+    AllVarsDeclaredInFunction allVarsDeclaredInFunction =
+        NodeUtil.getAllVarsDeclaredInFunction(compiler, scopeCreator, scope.getParent());
+    Map<String, Var> allVarsInFn = allVarsDeclaredInFunction.getAllVariables();
+    DataFlowAnalysis.computeEscaped(
+        scope.getParent(), escaped, compiler, scopeCreator, allVarsInFn);
 
-    reachingDef = new MustBeReachingVariableDef(cfg, t.getScope(), compiler, scopeCreator);
+    reachingDef = new MustBeReachingVariableDef(cfg, compiler, escaped, allVarsInFn);
     reachingDef.analyze();
     candidates = new LinkedHashSet<>();
 
     // Using the forward reaching definition search to find all the inline
     // candidates
     NodeTraversal.traverse(compiler, t.getScopeRoot(), new GatherCandidates());
-    // Compute the backward reaching use. The CFG can be reused.
-    reachingUses = new MaybeReachingVariableUse(cfg, t.getScope(), compiler, scopeCreator);
+
+    // Compute the backward reaching use. The CFG and per-function variable info can be reused.
+    reachingUses = new MaybeReachingVariableUse(cfg, escaped, allVarsInFn);
     reachingUses.analyze();
     while (!candidates.isEmpty()) {
       Candidate c = candidates.iterator().next();
-      if (c.canInline(t.getScope())) {
+      Var candidateVar = checkNotNull(allVarsInFn.get(c.varName));
+      if (c.canInline(candidateVar.getScope())) {
         c.inlineVariable();
         candidates.remove(c);
 
@@ -259,7 +270,9 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
 
   @Override
   public void process(Node externs, Node root) {
-    (new NodeTraversal(compiler, this, new SyntacticScopeCreator(compiler)))
+    NodeTraversal.builder()
+        .setCompiler(compiler)
+        .setCallback(this)
         .traverseRoots(externs, root);
   }
 
@@ -273,7 +286,7 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
   }
 
   private class GatherCandidatesCfgNodeCallback extends AbstractCfgNodeTraversalCallback {
-    Node cfgNode = null;
+    @Nullable Node cfgNode = null;
 
     public void setCfgNode(Node cfgNode) {
       this.cfgNode = cfgNode;
@@ -301,7 +314,8 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
         }
 
         String name = n.getString();
-        if (compiler.getCodingConvention().isExported(name)) {
+        // This pass only runs on local scopes.
+        if (compiler.getCodingConvention().isExported(name, /* local= */ true)) {
           return;
         }
 
@@ -316,10 +330,9 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
   }
 
   /**
-   * Gathers a list of possible candidates for inlining based only on
-   * information from {@link MustBeReachingVariableDef}. The list will be stored
-   * in {@code candidates} and the validity of each inlining Candidate should
-   * be later verified with {@link Candidate#canInline(Scope)} when
+   * Gathers a list of possible candidates for inlining based only on information from {@link
+   * MustBeReachingVariableDef}. The list will be stored in {@code candidates} and the validity of
+   * each inlining Candidate should be later verified with {@link Candidate#canInline(Scope)} when
    * {@link MaybeReachingVariableUse} has been performed.
    */
   private class GatherCandidates extends AbstractShallowCallback {
@@ -391,7 +404,7 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
         return false;
       }
 
-      Set<String> namesToCheck = new HashSet<>();
+      Set<String> namesToCheck = new LinkedHashSet<>();
       if (defMetadata.depends != null) {
         for (Var var : defMetadata.depends) {
           namesToCheck.add(var.getName());
@@ -435,9 +448,7 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
         return false;
       }
 
-      Collection<Node> uses = reachingUses.getUses(varName, getDefCfgNode());
-
-      if (uses.size() != 1) {
+      if (!hasExactlyOne(reachingUses.getUses(varName, getDefCfgNode()))) {
         return false;
       }
 
@@ -468,6 +479,17 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
       return true;
     }
 
+    boolean hasExactlyOne(Iterable<Node> iterable) {
+      Iterator<Node> iterator = iterable.iterator();
+      if (iterator.hasNext()) {
+        iterator.next();
+        if (!iterator.hasNext()) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     /**
      * Actual transformation.
      */
@@ -484,16 +506,16 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
         }
         compiler.reportChangeToEnclosingScope(defParent);
         defParent.detach();
-        useParent.replaceChild(use, rhs);
+        use.replaceWith(rhs);
       } else if (NodeUtil.isNameDeclaration(defParent)) {
         Node rhs = def.getLastChild();
         if (defParent.isConst()) {
           // If it is a const var we don't want to remove the rhs of the variable
-          def.replaceChild(rhs, Node.newString(Token.NAME, "undefined"));
-          useParent.replaceChild(use, rhs);
+          rhs.replaceWith(Node.newString(Token.NAME, "undefined"));
+          use.replaceWith(rhs);
         } else {
-          def.removeChild(rhs);
-          useParent.replaceChild(use, rhs);
+          rhs.detach();
+          use.replaceWith(rhs);
         }
       } else {
         throw new IllegalStateException("No other definitions can be inlined.");
@@ -513,20 +535,20 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
             @Override
             public void visit(NodeTraversal t, Node n, Node parent) {
               switch (n.getToken()) {
-                case NAME:
+                case NAME -> {
                   if (n.getString().equals(varName) && n.hasChildren()) {
                     def = n;
                   }
                   return;
-
-                case ASSIGN:
+                }
+                case ASSIGN -> {
                   Node lhs = n.getFirstChild();
                   if (lhs.isName() && lhs.getString().equals(varName)) {
                     def = n;
                   }
                   return;
-                default:
-                  break;
+                }
+                default -> {}
               }
             }
           };
@@ -582,37 +604,35 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
      */
     private boolean isRhsSafeToInline(final Scope usageScope) {
       // Don't inline definitions with an R-Value that has:
-      // 1) GETPROP, GETELEM,
+      // 1) GETELEM, OPTCHAIN_GETELEM (e.g: foo?.['bar']), GETPROP, OPTCHAIN_GETPROP (e.g:
+      // foo?.bar), CLASS, ARRAYLIT,
+      // OBJECTLIT, REGEXP
       // 2) anything that creates a new object.
       // Example:
       // var x = a.b.c; j.c = 1; print(x);
       // Inlining print(a.b.c) is not safe - consider if j were an alias to a.b.
       if (NodeUtil.has(
           def.getLastChild(),
-          new Predicate<Node>() {
-            @Override
-            public boolean apply(Node input) {
-              switch (input.getToken()) {
-                case GETELEM:
-                case GETPROP:
-                case ARRAYLIT:
-                case OBJECTLIT:
-                case REGEXP:
-                case NEW:
-                  return true; // unsafe to inline.
-                default:
-                  break;
+          (Node input) -> {
+            switch (input.getToken()) {
+              case GETELEM,
+                  GETPROP,
+                  OPTCHAIN_GETPROP,
+                  OPTCHAIN_GETELEM,
+                  CLASS,
+                  ARRAYLIT,
+                  OBJECTLIT,
+                  REGEXP,
+                  NEW -> {
+                return true;
+                // unsafe to inline.
               }
-              return false;
+              default -> {}
             }
+            return false;
           },
-          new Predicate<Node>() {
-            @Override
-            public boolean apply(Node input) {
-              // Recurse if the node is not a function.
-              return !input.isFunction();
-            }
-          })) {
+          // Recurse if the node is not a function.
+          (Node input) -> !input.isFunction())) {
         return false;
       }
 
@@ -627,17 +647,14 @@ class FlowSensitiveInlineVariables implements CompilerPass, ScopedCallback {
       // return b;   // "a" is not declared in this scope so we can't inline this to "return a;"
       if (NodeUtil.has(
           def.getLastChild(),
-          new Predicate<Node>() {
-            @Override
-            public boolean apply(Node input) {
-              if (input.isName()) {
-                String name = input.getString();
-                if (!name.isEmpty() && !usageScope.hasSlot(name)) {
-                  return true; // unsafe to inline.
-                }
+          (Node input) -> {
+            if (input.isName()) {
+              String name = input.getString();
+              if (!name.isEmpty() && !usageScope.hasSlot(name)) {
+                return true; // unsafe to inline.
               }
-              return false;
             }
+            return false;
           },
           Predicates.alwaysTrue())) {
         return false;

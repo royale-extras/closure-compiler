@@ -16,9 +16,12 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
@@ -29,10 +32,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for PeepholeOptimizationsPass.
- *
- */
+/** Unit tests for PeepholeOptimizationsPass. */
 @RunWith(JUnit4.class)
 public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
 
@@ -42,12 +42,6 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
   protected CompilerPass getProcessor(final Compiler compiler) {
     return new PeepholeOptimizationsPass(
         compiler, getName(), currentPeepholePasses.toArray(new AbstractPeepholeOptimization[0]));
-  }
-
-  @Override
-  protected int getNumRepetitions() {
-    // Our tests do not require multiple passes to reach a fixed-point.
-    return 1;
   }
 
   /**
@@ -84,30 +78,29 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
 
     AbstractPeepholeOptimization note1Applied =
         new AbstractPeepholeOptimization() {
-      @Override
-      public Node optimizeSubtree(Node node) {
-        if (node.isName()) {
-          visitationLog.add(node.getString() + "1");
-        }
+          @Override
+          public Node optimizeSubtree(Node node) {
+            if (node.isName()) {
+              visitationLog.add(node.getString() + "1");
+            }
 
-        return node;
-      }
-    };
+            return node;
+          }
+        };
 
     AbstractPeepholeOptimization note2Applied =
         new AbstractPeepholeOptimization() {
-      @Override
-      public Node optimizeSubtree(Node node) {
-        if (node.isName()) {
-          visitationLog.add(node.getString() + "2");
-        }
+          @Override
+          public Node optimizeSubtree(Node node) {
+            if (node.isName()) {
+              visitationLog.add(node.getString() + "2");
+            }
 
-        return node;
-      }
-    };
+            return node;
+          }
+        };
 
-    currentPeepholePasses =
-      ImmutableList.of(note1Applied, note2Applied);
+    currentPeepholePasses = ImmutableList.of(note1Applied, note2Applied);
 
     testSame("var x; var y");
 
@@ -116,22 +109,20 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
      * visited by optimization2 "y" visited by optimization1 "y" visited by
      * optimization2
      */
-    assertThat(visitationLog)
-        .containsExactly("x1", "x2", "y1", "y2").inOrder();
+    assertThat(visitationLog).containsExactly("x1", "x2", "y1", "y2").inOrder();
   }
 
   /**
-   * A peephole optimization that, given a subtree consisting of a VAR node,
-   * removes children of that node named "x".
+   * A peephole optimization that, given a subtree consisting of a VAR node, removes children of
+   * that node named "x".
    */
-  private static class RemoveNodesNamedXUnderVarOptimization
-      extends AbstractPeepholeOptimization {
+  private static class RemoveNodesNamedXUnderVarOptimization extends AbstractPeepholeOptimization {
     @Override
     public Node optimizeSubtree(Node node) {
       if (node.isVar()) {
         Set<Node> nodesToRemove = new HashSet<>();
 
-        for (Node child : node.children()) {
+        for (Node child = node.getFirstChild(); child != null; child = child.getNext()) {
           if ("x".equals(child.getString())) {
             nodesToRemove.add(child);
           }
@@ -139,7 +130,7 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
 
         for (Node childToRemove : nodesToRemove) {
           reportChangeToEnclosingScope(node);
-          node.removeChild(childToRemove);
+          childToRemove.detach();
         }
       }
 
@@ -148,11 +139,10 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
   }
 
   /**
-   * A peephole optimization that, given a subtree consisting of a name node
-   * named "x" removes that node.
+   * A peephole optimization that, given a subtree consisting of a name node named "x" removes that
+   * node.
    */
-  private static class RemoveNodesNamedXOptimization
-      extends AbstractPeepholeOptimization {
+  private static class RemoveNodesNamedXOptimization extends AbstractPeepholeOptimization {
     @Override
     public Node optimizeSubtree(Node node) {
       if (node.isName() && "x".equals(node.getString())) {
@@ -167,11 +157,10 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
   }
 
   /**
-   * A peephole optimization that, given a subtree consisting of a name node
-   * named "x" whose parent is a VAR node, removes the parent VAR node.
+   * A peephole optimization that, given a subtree consisting of a name node named "x" whose parent
+   * is a VAR node, removes the parent VAR node.
    */
-  private static class RemoveParentVarsForNodesNamedX
-      extends AbstractPeepholeOptimization {
+  private static class RemoveParentVarsForNodesNamedX extends AbstractPeepholeOptimization {
     @Override
     public Node optimizeSubtree(Node node) {
       if (node.isName() && "x".equals(node.getString())) {
@@ -187,8 +176,8 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
   }
 
   /**
-   * A peephole optimization that, given a subtree consisting of a name node
-   * named "y", replaces it with a name node named "x";
+   * A peephole optimization that, given a subtree consisting of a name node named "y", replaces it
+   * with a name node named "x";
    */
   private static class RenameYToX extends AbstractPeepholeOptimization {
     @Override
@@ -207,8 +196,8 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
 
   @Test
   public void testOptimizationRemovingSubtreeChild() {
-    currentPeepholePasses = ImmutableList.<AbstractPeepholeOptimization>of(new
-          RemoveNodesNamedXUnderVarOptimization());
+    currentPeepholePasses =
+        ImmutableList.<AbstractPeepholeOptimization>of(new RemoveNodesNamedXUnderVarOptimization());
 
     test("var x,y;", "var y;");
     test("var y,x;", "var y;");
@@ -217,8 +206,8 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
 
   @Test
   public void testOptimizationRemovingSubtree() {
-    currentPeepholePasses = ImmutableList.<AbstractPeepholeOptimization>of(new
-          RemoveNodesNamedXOptimization());
+    currentPeepholePasses =
+        ImmutableList.<AbstractPeepholeOptimization>of(new RemoveNodesNamedXOptimization());
 
     test("var x,y;", "var y;");
     test("var y,x;", "var y;");
@@ -227,8 +216,8 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
 
   @Test
   public void testOptimizationRemovingSubtreeParent() {
-    currentPeepholePasses = ImmutableList.<AbstractPeepholeOptimization>of(new
-          RemoveParentVarsForNodesNamedX());
+    currentPeepholePasses =
+        ImmutableList.<AbstractPeepholeOptimization>of(new RemoveParentVarsForNodesNamedX());
 
     test("var x; var y", "var y");
   }
@@ -239,19 +228,50 @@ public final class PeepholeOptimizationsPassTest extends CompilerTestCase {
    */
   @Test
   public void testOptimizationsRemoveParentAfterRemoveChild() {
-    currentPeepholePasses = ImmutableList.of(
-        new RemoveNodesNamedXOptimization(),
-        new RemoveParentVarsForNodesNamedX());
+    currentPeepholePasses =
+        ImmutableList.of(new RemoveNodesNamedXOptimization(), new RemoveParentVarsForNodesNamedX());
 
     test("var x,y; var z;", "var y; var z;");
   }
 
   @Test
   public void testOptimizationReplacingNode() {
-    currentPeepholePasses = ImmutableList.of(
-        new RenameYToX(),
-        new RemoveParentVarsForNodesNamedX());
+    currentPeepholePasses =
+        ImmutableList.of(new RenameYToX(), new RemoveParentVarsForNodesNamedX());
 
     test("var y; var z;", "var z;");
+  }
+
+  @Test
+  public void testAddFeatureToEnclosingScript() {
+    currentPeepholePasses =
+        ImmutableList.of(
+            new AbstractPeepholeOptimization() {
+              @Override
+              public Node optimizeSubtree(Node node) {
+                if (node.isAdd()) {
+                  this.addFeatureToEnclosingScript(Feature.LET_DECLARATIONS);
+                  this.addFeatureToEnclosingScript(Feature.LET_DECLARATIONS);
+                  this.addFeatureToEnclosingScript(Feature.CLASSES);
+                }
+                return node;
+              }
+            },
+            new AbstractPeepholeOptimization() {
+              @Override
+              public Node optimizeSubtree(Node node) {
+                if (node.isSub()) {
+                  this.addFeatureToEnclosingScript(Feature.CONST_DECLARATIONS);
+                }
+                return node;
+              }
+            });
+    testSame("(3 + 4); function sub() { return 3 - 4; }");
+    Compiler compiler = getLastCompiler();
+    Node script = checkNotNull(compiler.getScriptNode("testcode"));
+    assertThat(script.getProp(Node.FEATURE_SET))
+        .isEqualTo(
+            FeatureSet.BARE_MINIMUM.with(
+                Feature.LET_DECLARATIONS, Feature.CLASSES, Feature.CONST_DECLARATIONS));
   }
 }

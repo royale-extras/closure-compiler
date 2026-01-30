@@ -16,16 +16,25 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.google.common.annotations.VisibleForTesting;
-import com.google.javascript.jscomp.PolyfillFindingCallback.Polyfill;
-import com.google.javascript.jscomp.PolyfillFindingCallback.PolyfillUsage;
-import com.google.javascript.jscomp.PolyfillFindingCallback.Polyfills;
+import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.PolyfillUsageFinder.Polyfill;
+import com.google.javascript.jscomp.PolyfillUsageFinder.PolyfillUsage;
+import com.google.javascript.jscomp.PolyfillUsageFinder.Polyfills;
+import com.google.javascript.jscomp.js.RuntimeJsLibManager;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.resources.ResourceLoader;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Injects polyfill libraries to ensure that ES6+ library functions are available.
@@ -36,17 +45,22 @@ import java.util.Set;
  * <p>TODO(b/120486392): consider merging this pass with {@link InjectRuntimeLibraries} and {@link
  * InjectTranspilationRuntimeLibraries}.
  */
-public class RewritePolyfills implements HotSwapCompilerPass {
+public class RewritePolyfills implements CompilerPass {
 
-  static final DiagnosticType INSUFFICIENT_OUTPUT_VERSION_ERROR = DiagnosticType.disabled(
-      "JSC_INSUFFICIENT_OUTPUT_VERSION",
-      "Built-in ''{0}'' not supported in output version {1}");
+  static final DiagnosticType INSUFFICIENT_OUTPUT_VERSION_ERROR =
+      DiagnosticType.disabled(
+          "JSC_INSUFFICIENT_OUTPUT_VERSION",
+          "Built-in ''{0}'' not supported in output version {1}");
+
+  private static final QualifiedName JSCOMP_POLYFILL = QualifiedName.of("$jscomp.polyfill");
 
   private final AbstractCompiler compiler;
+  private final RuntimeJsLibManager runtimeJsLibManager;
   private final Polyfills polyfills;
   private final boolean injectPolyfills;
   private final boolean isolatePolyfills;
   private Set<String> libraries;
+  private final LanguageMode injectPolyfillsNewerThan;
 
   /**
    * @param injectPolyfills if true, injects $jscomp.polyfill initializations into the first input.
@@ -55,58 +69,90 @@ public class RewritePolyfills implements HotSwapCompilerPass {
    *     IsolatePolyfills} to prevent their deletion.
    */
   public RewritePolyfills(
-      AbstractCompiler compiler, boolean injectPolyfills, boolean isolatePolyfills) {
+      AbstractCompiler compiler,
+      boolean injectPolyfills,
+      boolean isolatePolyfills,
+      LanguageMode injectPolyfillsNewerThan) {
     this(
         compiler,
+        compiler.getRuntimeJsLibManager(),
         Polyfills.fromTable(
             ResourceLoader.loadTextResource(RewritePolyfills.class, "js/polyfills.txt")),
         injectPolyfills,
-        isolatePolyfills);
+        isolatePolyfills,
+        injectPolyfillsNewerThan);
   }
 
+  /**
+   * For unit testing, allows instantiating RewritePolyfills with a different RuntimeJsLibManager
+   * than {@link AbstractCompiler#getRuntimeJsLibManager}
+   */
   @VisibleForTesting
   RewritePolyfills(
       AbstractCompiler compiler,
+      RuntimeJsLibManager runtimeJsLibManager,
       Polyfills polyfills,
       boolean injectPolyfills,
-      boolean isolatePolyfills) {
+      boolean isolatePolyfills,
+      LanguageMode injectPolyfillsNewerThan) {
     this.compiler = compiler;
+    this.runtimeJsLibManager = runtimeJsLibManager;
     this.polyfills = polyfills;
     this.injectPolyfills = injectPolyfills;
     this.isolatePolyfills = isolatePolyfills;
+    this.injectPolyfillsNewerThan = injectPolyfillsNewerThan;
   }
 
   @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
+  public void process(Node externs, Node root) {
     if (this.isolatePolyfills) {
       // Polyfill isolation requires a pass to run near the end of optimizations. That pass may call
       // into a library method injected in this pass. Adding an externs declaration of that library
       // method prevents it from being dead-code-elimiated before polyfill isolation runs.
       Node jscompLookupMethodDecl = IR.var(IR.name("$jscomp$lookupPolyfilledValue"));
-      compiler
-          .getSynthesizedExternsInputAtEnd()
-          .getAstRoot(compiler)
-          .addChildToBack(jscompLookupMethodDecl);
+      final Node synthesizedExternsAstRoot =
+          compiler.getSynthesizedExternsInput().getAstRoot(compiler);
+      jscompLookupMethodDecl.srcrefTree(synthesizedExternsAstRoot);
+      synthesizedExternsAstRoot.addChildToBack(jscompLookupMethodDecl);
       compiler.reportChangeToEnclosingScope(jscompLookupMethodDecl);
     }
 
-    if (!this.injectPolyfills) {
+    if (!this.injectPolyfills && this.injectPolyfillsNewerThan == null) {
       // Nothing left to do. Probably this pass only needed to run because --isolate_polyfills is
       // enabled but not --rewrite_polyfills.
       return;
     }
-
-    this.libraries = new LinkedHashSet<>();
-    new PolyfillFindingCallback(compiler, polyfills)
-        .traverseExcludingGuarded(scriptRoot, this::inject);
-
-    if (libraries.isEmpty()) {
-      return;
+    if (this.injectPolyfills) {
+      this.libraries = new LinkedHashSet<>();
+      new PolyfillUsageFinder(compiler, polyfills).traverseExcludingGuarded(root, this::inject);
     }
 
+    final ImmutableList<String> librariesToInject;
+    if (this.injectPolyfillsNewerThan != null) {
+      ImmutableList<Polyfill> polyfillsToInject =
+          polyfills.getPolyfillsNewerThan(this.injectPolyfillsNewerThan);
+      librariesToInject =
+          polyfillsToInject.stream()
+              // Skip polyfills that have no associated library. This is true for language
+              // features like `Proxy` and `String.raw` that have no associated polyfill, hence
+              // there's
+              // nothing to inject here.
+              .filter(p -> !p.library.isEmpty())
+              .map(p -> p.library)
+              .collect(toImmutableList());
+    } else {
+      librariesToInject = ImmutableList.copyOf(this.libraries);
+    }
+
+    this.injectAll(librariesToInject, /* forceInjection= */ this.injectPolyfillsNewerThan != null);
+  }
+
+  private void injectAll(Iterable<String> librariesToInject, boolean forceInjection) {
     Node lastNode = null;
-    for (String library : libraries) {
-      lastNode = compiler.ensureLibraryInjected(library, false);
+    for (String library : librariesToInject) {
+      checkNotNull(library);
+      checkState(!library.isEmpty(), "unexpected empty library");
+      lastNode = runtimeJsLibManager.ensureLibraryInjected(library, forceInjection);
     }
     if (lastNode != null) {
       Node parent = lastNode.getParent();
@@ -119,48 +165,64 @@ public class RewritePolyfills implements HotSwapCompilerPass {
   // that already contains the library) is the same or lower than languageOut.
   private void removeUnneededPolyfills(Node parent, Node runtimeEnd) {
     Node node = parent.getFirstChild();
+    // The target environment is assumed to support the features in this set.
+    final FeatureSet outputFeatureSet = compiler.getOptions().getOutputFeatureSet();
     while (node != null && node != runtimeEnd) {
+      // look up the next node now, because we may be removing this one.
       Node next = node.getNext();
-      if (NodeUtil.isExprCall(node)) {
-        Node call = node.getFirstChild();
-        Node name = call.getFirstChild();
-        if (name.matchesQualifiedName("$jscomp.polyfill")) {
-          FeatureSet nativeVersion =
-              FeatureSet.valueOf(name.getNext().getNext().getNext().getString());
-          if (languageOutIsAtLeast(nativeVersion)) {
-            NodeUtil.removeChild(parent, node);
-            NodeUtil.markFunctionsDeleted(node, compiler);
-          }
-        }
+      FeatureSet polyfillSupportedFeatureSet = getPolyfillSupportedFeatureSet(node);
+      if (polyfillSupportedFeatureSet != null
+          && outputFeatureSet.contains(polyfillSupportedFeatureSet)) {
+        NodeUtil.removeChild(parent, node);
+        NodeUtil.markFunctionsDeleted(node, compiler);
       }
       node = next;
     }
   }
 
-  @Override
-  public void process(Node externs, Node root) {
-    hotSwapScript(root, null);
+  /**
+   * If the given `Node` is a polyfill definition, return the `FeatureSet` which should be
+   * considered to already include that polyfill (making it unnecessary).
+   *
+   * <p>Otherwise, return `null`.
+   */
+  private @Nullable FeatureSet getPolyfillSupportedFeatureSet(Node maybePolyfill) {
+    FeatureSet polyfillSupportFeatureSet = null;
+    if (NodeUtil.isExprCall(maybePolyfill)) {
+      Node call = maybePolyfill.getFirstChild();
+      Node name = call.getFirstChild();
+      if (JSCOMP_POLYFILL.matches(name)) {
+        final String nativeVersionStr = name.getNext().getNext().getNext().getString();
+        polyfillSupportFeatureSet = FeatureSet.valueOf(nativeVersionStr);
+        polyfillSupportFeatureSet =
+            PolyfillUsageFinder.getPolyfillSupportedFeatureSet(nativeVersionStr);
+      }
+    }
+    return polyfillSupportFeatureSet;
   }
 
   private void inject(PolyfillUsage polyfillUsage) {
     Polyfill polyfill = polyfillUsage.polyfill();
+    final FeatureSet outputFeatureSet = compiler.getOptions().getOutputFeatureSet();
+    final FeatureSet featuresRequiredByPolyfill = FeatureSet.valueOf(polyfill.polyfillVersion);
     if (polyfill.kind.equals(Polyfill.Kind.STATIC)
-        && !languageOutIsAtLeast(polyfill.polyfillVersion)) {
+        && !outputFeatureSet.contains(featuresRequiredByPolyfill)) {
       compiler.report(
           JSError.make(
               polyfillUsage.node(),
               INSUFFICIENT_OUTPUT_VERSION_ERROR,
               polyfillUsage.name(),
-              compiler.getOptions().getOutputFeatureSet().version()));
+              outputFeatureSet.version()));
     }
 
-    if (!languageOutIsAtLeast(polyfill.nativeVersion) && !polyfill.library.isEmpty()) {
+    // The question we want to ask here is:
+    // "Does the target platform already have the symbol this polyfill provides?"
+    // We approximate it by asking instead:
+    // "Does the target platform support all of the features that existed in the language
+    // version that introduced this symbol?"
+    if (!outputFeatureSet.contains(FeatureSet.valueOf(polyfill.nativeVersion))
+        && !polyfill.library.isEmpty()) {
       libraries.add(polyfill.library);
     }
-  }
-
-  private boolean languageOutIsAtLeast(FeatureSet featureSet) {
-    return PolyfillFindingCallback.languageOutIsAtLeast(
-        featureSet, compiler.getOptions().getOutputFeatureSet());
   }
 }

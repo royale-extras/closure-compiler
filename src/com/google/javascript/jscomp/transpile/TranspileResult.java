@@ -17,8 +17,10 @@
 package com.google.javascript.jscomp.transpile;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.escape.Escaper;
+import com.google.common.io.BaseEncoding;
 import com.google.common.net.PercentEscaper;
 import java.net.URI;
 import java.util.Objects;
@@ -69,7 +71,7 @@ public final class TranspileResult {
   }
 
   // sourcemaps must escape :, and cannot escape space as +, so we need a custom escaper.
-  private static final Escaper ESCAPER = new PercentEscaper("-_.*", false /* plusForSpace */);
+  private static final Escaper ESCAPER = new PercentEscaper("-_.*", /* plusForSpace= */ false);
 
   public TranspileResult embedSourcemap() {
     if (sourceMap.isEmpty()) {
@@ -77,6 +79,18 @@ public final class TranspileResult {
     }
     String embedded =
         transpiled + "\n//# sourceMappingURL=data:," + ESCAPER.escape(sourceMap) + "\n";
+    return new TranspileResult(path, original, embedded, "");
+  }
+
+  public TranspileResult embedSourcemapBase64() {
+    if (sourceMap.isEmpty()) {
+      return this;
+    }
+    String embedded =
+        transpiled
+            + "\n//# sourceMappingURL=data:application/json;base64,"
+            + BaseEncoding.base64().encode(sourceMap.getBytes(UTF_8))
+            + "\n";
     return new TranspileResult(path, original, embedded, "");
   }
 
@@ -90,11 +104,11 @@ public final class TranspileResult {
 
   @Override
   public boolean equals(Object other) {
-    return other instanceof TranspileResult
-        && ((TranspileResult) other).path.equals(path)
-        && ((TranspileResult) other).original.equals(original)
-        && ((TranspileResult) other).transpiled.equals(transpiled)
-        && ((TranspileResult) other).sourceMap.equals(sourceMap);
+    return other instanceof TranspileResult transpileResult
+        && transpileResult.path.equals(path)
+        && transpileResult.original.equals(original)
+        && transpileResult.transpiled.equals(transpiled)
+        && transpileResult.sourceMap.equals(sourceMap);
   }
 
   @Override

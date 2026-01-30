@@ -16,24 +16,29 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.javascript.rhino.jstype.JSTypeNative.UNKNOWN_TYPE;
+import static java.util.Comparator.comparingInt;
 
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Multiset;
 import com.google.javascript.jscomp.CodingConvention.AssertionFunctionLookup;
+import com.google.javascript.jscomp.DataFlowAnalysis.LinearFlowState;
 import com.google.javascript.jscomp.NodeTraversal.AbstractScopedCallback;
+import com.google.javascript.jscomp.diagnostic.LogFile;
+import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
 import com.google.javascript.jscomp.type.ReverseAbstractInterpreter;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.jstype.JSTypeResolver;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import org.jspecify.annotations.Nullable;
 
 /** A compiler pass to run the type inference analysis. */
 class TypeInferencePass {
-
-  static final DiagnosticType DATAFLOW_ERROR = DiagnosticType.error(
-      "JSC_INTERNAL_ERROR_DATAFLOW",
-      "non-monotonic data-flow analysis");
 
   private final AbstractCompiler compiler;
   private final JSTypeRegistry registry;
@@ -41,6 +46,9 @@ class TypeInferencePass {
   private TypedScope topScope;
   private final TypedScopeCreator scopeCreator;
   private final AssertionFunctionLookup assertionFunctionLookup;
+
+  // (stepCount, Token) -> populationCount
+  private final @Nullable LinkedHashMap<Integer, HashMultiset<Token>> stepCountHistogram;
 
   TypeInferencePass(
       AbstractCompiler compiler,
@@ -52,13 +60,7 @@ class TypeInferencePass {
     this.scopeCreator = scopeCreator;
     this.assertionFunctionLookup =
         AssertionFunctionLookup.of(compiler.getCodingConvention().getAssertionFunctions());
-  }
-
-  TypeInferencePass reuseTopScope(TypedScope topScope) {
-    checkNotNull(topScope);
-    checkState(this.topScope == null);
-    this.topScope = topScope;
-    return this;
+    this.stepCountHistogram = compiler.isDebugLoggingEnabled() ? new LinkedHashMap<>() : null;
   }
 
   /**
@@ -91,22 +93,24 @@ class TypeInferencePass {
     // In this code, we need to build the symbol table for the inner scope in
     // order to propagate the type of ns.method in the outer scope.
     try (JSTypeResolver.Closer closer = this.registry.getResolver().openForDefinition()) {
-      if (this.topScope == null) {
-        checkState(inferenceRoot.isRoot());
-        checkState(inferenceRoot.getParent() == null);
-        this.topScope = scopeCreator.createScope(inferenceRoot, null);
-      } else {
-        checkState(inferenceRoot.isScript());
-        scopeCreator.patchGlobalScope(this.topScope, inferenceRoot);
-      }
+      checkState(inferenceRoot.isRoot());
+      checkState(inferenceRoot.getParent() == null);
+      checkState(this.topScope == null);
+      this.topScope = scopeCreator.createScope(inferenceRoot, null);
 
-      new NodeTraversal(compiler, new FirstScopeBuildingCallback(), scopeCreator)
+      NodeTraversal.builder()
+          .setCompiler(compiler)
+          .setCallback(new FirstScopeBuildingCallback())
+          .setScopeCreator(scopeCreator)
           .traverseWithScope(inferenceRoot, this.topScope);
       scopeCreator.resolveWeakImportsPreResolution();
     }
-    scopeCreator.undoTypeAliasChains();
+    scopeCreator.finishAndFreeze();
 
-    new NodeTraversal(compiler, new SecondScopeBuildingCallback(), scopeCreator)
+    NodeTraversal.builder()
+        .setCompiler(compiler)
+        .setCallback(new SecondScopeBuildingCallback())
+        .setScopeCreator(scopeCreator)
         .traverseWithScope(inferenceRoot, this.topScope);
 
     // Normalize TypedVars to have the '?' type instead of null after inference is complete. This
@@ -120,22 +124,49 @@ class TypeInferencePass {
       }
     }
 
+    if (this.stepCountHistogram != null) {
+      try (LogFile histogram =
+          this.compiler.createOrReopenLog(this.getClass(), "step_histogram.log")) {
+        histogram.log("step_count token population");
+
+        int[] totals = new int[] {0, 0};
+        this.stepCountHistogram.keySet().stream()
+            .sorted(Comparator.<Integer>naturalOrder().reversed())
+            .forEach(
+                (stepCount) ->
+                    this.stepCountHistogram.get(stepCount).entrySet().stream()
+                        .sorted(comparingInt(Multiset.Entry::getCount))
+                        .forEach(
+                            (e) -> {
+                              totals[0] += stepCount * e.getCount();
+                              totals[1] += e.getCount();
+                              histogram.log("%s %s %s", stepCount, e.getElement(), e.getCount());
+                            }));
+        histogram.log("%s TOTAL %s", totals[0], totals[1]);
+      }
+    }
+
     return this.topScope;
   }
 
   private void inferScope(Node n, TypedScope scope) {
+    ControlFlowGraph<Node> cfg = computeCfg(n);
     TypeInference typeInference =
         new TypeInference(
-            compiler,
-            computeCfg(n),
-            reverseInterpreter,
-            scope,
-            scopeCreator,
-            assertionFunctionLookup);
-    try {
-      typeInference.analyze();
-    } catch (DataFlowAnalysis.MaxIterationsExceededException e) {
-      compiler.report(JSError.make(n, DATAFLOW_ERROR));
+            compiler, cfg, reverseInterpreter, scope, scopeCreator, assertionFunctionLookup);
+    typeInference.analyze();
+
+    if (this.stepCountHistogram != null) {
+      for (DiGraphNode<Node, ?> node : cfg.getNodes()) {
+        if (node == cfg.getImplicitReturn()) {
+          continue;
+        }
+
+        LinearFlowState<?> state = node.getAnnotation();
+        this.stepCountHistogram
+            .computeIfAbsent(state.getStepCount(), (k) -> HashMultiset.create())
+            .add(node.getValue().getToken());
+      }
     }
   }
 
@@ -158,7 +189,7 @@ class TypeInferencePass {
       // This ensures that incremental compilation only touches the root
       // that's been swapped out.
       TypedScope scope = t.getTypedScope();
-      if (!scope.isBlockScope() && !scope.isModuleScope()) {
+      if (scope.isCfgRootScope() && !scope.isModuleScope()) {
         // ignore scopes that don't have their own CFGs and module scopes, which are visited
         // as if they were a regular script.
         inferScope(t.getCurrentNode(), scope);
@@ -172,8 +203,10 @@ class TypeInferencePass {
   }
 
   private ControlFlowGraph<Node> computeCfg(Node n) {
-    ControlFlowAnalysis cfa = new ControlFlowAnalysis(compiler, false, false);
-    cfa.process(null, n);
-    return cfa.getCfg();
+    return ControlFlowAnalysis.builder()
+        .setCompiler(compiler)
+        .setCfgRoot(n)
+        .setIncludeEdgeAnnotations(true)
+        .computeCfg();
   }
 }

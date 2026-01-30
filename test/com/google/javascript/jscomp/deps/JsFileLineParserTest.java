@@ -25,62 +25,108 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link JsFileLineParser}.
- *
- * @author nicksantos@google.com (Nick Santos)
- */
+/** Tests for {@link JsFileLineParser}. */
 @RunWith(JUnit4.class)
 public final class JsFileLineParserTest {
 
   @Test
   public void testSingleLine1() {
-    assertStrip("2", "// 1\n2");
+    assertStrip(
+        "2",
+        """
+        // 1
+        2
+        """);
   }
 
   @Test
   public void testSingleLine2() {
-    assertStrip("2 ", "// 1\n2 // 3 // 4 \n");
+    assertStrip(
+        "2 ",
+        """
+        // 1
+        2 // 3 // 4
+        """);
   }
 
   @Test
   public void testMultiLine1() {
-    assertStrip("1", "/* hi */\n1");
+    assertStrip(
+        "1",
+        """
+        /* hi */
+        1
+        """);
   }
 
   @Test
   public void testMultiLine2() {
-    assertStrip("123", "1/* hi */2\n3");
+    assertStrip(
+        "123",
+        """
+        1/* hi */2
+        3
+        """);
   }
 
   @Test
   public void testMultiLine3() {
-    assertStrip("14", "1/* hi 2\n3*/4");
+    assertStrip(
+        "14",
+        """
+        1/* hi 2
+        3*/4
+        """);
   }
 
   @Test
   public void testMultiLine4() {
-    assertStrip("15", "1/* hi x\ny\nz*/5");
+    assertStrip(
+        "15",
+        """
+        1/* hi x
+        y
+        z*/5
+        """);
   }
 
   @Test
   public void testMultiLine5() {
-    assertStrip("1234", "1/* hi */2/**/3/*\n/** bye */4");
+    assertStrip(
+        "1234",
+        """
+        1/* hi */2/**/3/*
+        /** bye */4
+        """);
   }
 
   @Test
   public void testMultiLine6() {
-    assertStrip("12", "1/*** hi *** 3 **/2");
+    assertStrip(
+        "12",
+        """
+        1/*** hi *** 3 **/2
+        """);
   }
 
   @Test
   public void testMixedLine1() {
-    assertStrip("14", "1// /** 2 **/ 3\n4");
+    assertStrip(
+        "14",
+        """
+        1// /** 2 **/ 3
+        4
+        """);
   }
 
   @Test
   public void testMixedLine2() {
-    assertStrip("1 34", "1/** // 2 **/ 3\n4");
+    assertStrip(
+        "1 34",
+        """
+        1/** // 2 **/ 3
+        4
+        """);
   }
 
   @Test
@@ -137,7 +183,14 @@ public final class JsFileLineParserTest {
 
   @Test
   public void testMultipleBlockComments() {
-    assertBlocks("/** first *//** * second */", "/** first */\n/**\n * second\n */");
+    assertBlocks(
+        "/** first *//** * second */",
+        """
+        /** first */
+        /**
+         * second
+         */
+        """);
   }
 
   private void assertStrip(String expected, String input) {
@@ -155,8 +208,8 @@ public final class JsFileLineParserTest {
   }
 
   private static class TestParser extends JsFileLineParser {
-    StringBuilder sb = new StringBuilder();
-    StringBuilder comments = new StringBuilder();
+    final StringBuilder sb = new StringBuilder();
+    final StringBuilder comments = new StringBuilder();
 
     TestParser(ErrorManager errorManager) {
       super(errorManager);

@@ -39,11 +39,10 @@
 package com.google.javascript.rhino.jstype;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.javascript.rhino.testing.Asserts.assertThrows;
 import static com.google.javascript.rhino.testing.MapBasedScope.emptyScope;
 import static com.google.javascript.rhino.testing.TypeSubject.assertType;
+import static org.junit.Assert.assertThrows;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.testing.EqualsTester;
 import com.google.javascript.rhino.ErrorReporter;
@@ -55,7 +54,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** @author nicksantos@google.com (Nick Santos) */
 @RunWith(JUnit4.class)
 public class NamedTypeTest extends BaseJSTypeTestCase {
 
@@ -68,32 +66,6 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
       this.fooCtorType = FunctionType.builder(registry).forConstructor().withName("Foo").build();
       this.fooType = fooCtorType.getInstanceType();
     }
-  }
-
-  @Test
-  public void testResolutionPropagatesImplementingClassesToResolvedType() {
-    final FunctionType originalInterface;
-    final FunctionType implementerType;
-
-    try (JSTypeResolver.Closer ignored = registry.getResolver().openForDefinition()) {
-      // Set up InterfaceAlias to resolve to OriginalInterface
-      originalInterface =
-          FunctionType.builder(registry).forInterface().withName("OriginalInterface").build();
-      StaticTypedScope aliasToOriginalScope =
-          new MapBasedScope(ImmutableMap.of("InterfaceAlias", originalInterface));
-      NamedType interfaceAlias =
-          namedTypeBuilder("InterfaceAlias").setScope(aliasToOriginalScope).build();
-
-      // class Impl declares that it implements InterfaceAlias
-      implementerType = FunctionType.builder(registry).forConstructor().withName("Impl").build();
-      implementerType.setImplementedInterfaces(ImmutableList.of(interfaceAlias));
-      assertThat(registry.getDirectImplementors(interfaceAlias)).containsExactly(implementerType);
-
-      // Before type resolution is done, nothing declares that it implements OriginalInterface
-      assertThat(registry.getDirectImplementors(originalInterface)).isEmpty();
-    }
-    // After type resolution the registry knows that class Impl implements OriginalInterface
-    assertThat(registry.getDirectImplementors(originalInterface)).containsExactly(implementerType);
   }
 
   @Test
@@ -116,9 +88,11 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
 
   @Test
   public void testStateOfForwardDeclaredType_Unresolved() {
+    resetRegistryWithForwardDeclaredName("forwardDeclared");
+
     try (JSTypeResolver.Closer closer = this.registry.getResolver().openForDefinition()) {
       // Given
-      NamedType type = namedTypeBuilder(FORWARD_DECLARED_TYPE_NAME).build();
+      NamedType type = namedTypeBuilder("forwardDeclared").build();
 
       // Then
       assertThat(type.isResolved()).isFalse();
@@ -130,8 +104,10 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
 
   @Test
   public void testStateOfForwardDeclaredType_UnsuccesfullyResolved() {
+    resetRegistryWithForwardDeclaredName("forwardDeclared");
+
     // Given
-    NamedType type = namedTypeBuilder(FORWARD_DECLARED_TYPE_NAME).build();
+    NamedType type = namedTypeBuilder("forwardDeclared").build();
 
     // Then
     assertThat(type.isUnsuccessfullyResolved()).isTrue();
@@ -163,14 +139,14 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
 
     NamedType.Builder namedFooBuilder = namedTypeBuilder("Foo");
     NamedType namedFooUnsuccessfullyResolved =
-        forceResolutionWith(NO_RESOLVED_TYPE, namedFooBuilder);
+        forceResolutionWith(new NoResolvedType(registry, "Foo", null), namedFooBuilder);
     NamedType namedFooResolvedToFoo = forceResolutionWith(fooType, namedFooBuilder);
     NamedType namedFooResolvedToAnon = forceResolutionWith(anonType, namedFooBuilder);
     NamedType namedFooResolvedToBar = forceResolutionWith(barType, namedFooBuilder);
 
     NamedType.Builder namedBarBuilder = namedTypeBuilder("Bar");
     NamedType namedBarUnsuccessfullyResolved =
-        forceResolutionWith(NO_RESOLVED_TYPE, namedBarBuilder);
+        forceResolutionWith(new NoResolvedType(registry, "Bar", null), namedBarBuilder);
     NamedType namedBarResolvedToFoo = forceResolutionWith(fooType, namedBarBuilder);
     NamedType namedBarResolvedToAnon = forceResolutionWith(anonType, namedBarBuilder);
     NamedType namedBarResolvedToBar = forceResolutionWith(barType, namedBarBuilder);
@@ -202,7 +178,7 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
 
     NamedType.Builder namedFooBuilder = NamedType.builder(registry, "Foo");
     NamedType namedFooUnsuccessfullyResolved =
-        forceResolutionWith(NO_RESOLVED_TYPE, namedFooBuilder);
+        forceResolutionWith(new NoResolvedType(registry, "Foo", null), namedFooBuilder);
     NamedType namedFooResolvedToFoo = forceResolutionWith(fooType, namedFooBuilder);
     NamedType namedFooResolvedToAnon = forceResolutionWith(anonType, namedFooBuilder);
     NamedType namedFooResolvedToBarA = forceResolutionWith(barTypeA, namedFooBuilder);
@@ -212,7 +188,7 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
 
     NamedType.Builder namedBarBuilder = NamedType.builder(registry, "Bar");
     NamedType namedBarUnsuccessfullyResolved =
-        forceResolutionWith(NO_RESOLVED_TYPE, namedBarBuilder);
+        forceResolutionWith(new NoResolvedType(registry, "Bar", null), namedBarBuilder);
     NamedType namedBarResolvedToFoo = forceResolutionWith(fooType, namedBarBuilder);
     NamedType namedBarResolvedToAnon = forceResolutionWith(anonType, namedBarBuilder);
     NamedType namedBarResolvedToBarA = forceResolutionWith(barTypeA, namedBarBuilder);
@@ -264,7 +240,7 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
 
   @Test
   public void testResolveToGoogModule() {
-    registry.registerClosureModule("mod.Foo", null, fooCtorType);
+    registry.registerNonLegacyClosureNamespace("mod.Foo", null, fooCtorType);
     NamedType modDotFoo = namedTypeBuilder("mod.Foo").build();
 
     modDotFoo.resolve(ErrorReporter.NULL_INSTANCE);
@@ -274,7 +250,7 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
   @Test
   public void testResolveToPropertyOnGoogModule() {
     JSType exportsType = registry.createRecordType(ImmutableMap.of("Foo", fooCtorType));
-    registry.registerClosureModule("mod.Bar", null, exportsType);
+    registry.registerNonLegacyClosureNamespace("mod.Bar", null, exportsType);
     NamedType modBarFoo = namedTypeBuilder("mod.Bar.Foo").build();
 
     modBarFoo.resolve(ErrorReporter.NULL_INSTANCE);
@@ -287,9 +263,9 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
     NamedType modDotFoo;
     try (JSTypeResolver.Closer closer = this.registry.getResolver().openForDefinition()) {
       JSType exportsType = registry.createRecordType(ImmutableMap.of("Foo", fooCtorType));
-      registry.registerClosureModule("mod.Bar", null, exportsType);
+      registry.registerNonLegacyClosureNamespace("mod.Bar", null, exportsType);
       modDotFoo = namedTypeBuilder("mod.Bar.Foo").build();
-      registry.registerLegacyClosureModule("mod.Bar.Foo");
+      registry.registerLegacyClosureNamespace("mod.Bar.Foo");
     }
 
     assertType(modDotFoo.getReferencedType()).isUnknown();
@@ -298,9 +274,9 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
   @Test
   public void testResolveToGoogModule_usesLongestModulePrefix() {
     ObjectType barType = createNominalType("Bar"/* resolve= */ );
-    registry.registerClosureModule(
+    registry.registerNonLegacyClosureNamespace(
         "mod.Foo", null, registry.createRecordType(ImmutableMap.of("Bar", fooCtorType)));
-    registry.registerClosureModule("mod.Foo.Bar", null, barType.getConstructor());
+    registry.registerNonLegacyClosureNamespace("mod.Foo.Bar", null, barType.getConstructor());
     MapBasedScope scope = new MapBasedScope(ImmutableMap.of());
     NamedType modDotFoo = namedTypeBuilder("mod.Foo.Bar").setScope(scope).build();
 
@@ -312,7 +288,7 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
   public void testReferenceGoogModuleByType_resolvesToModuleRatherThanRegistryType() {
     // Note: this logic was put in place to mimic the semantics of type resolution when
     // modules are rewritten before typechecking.
-    registry.registerClosureModule("mod.Foo", null, fooCtorType);
+    registry.registerNonLegacyClosureNamespace("mod.Foo", null, fooCtorType);
     MapBasedScope scope = new MapBasedScope(ImmutableMap.of());
     NamedType modDotFoo = namedTypeBuilder("mod.Foo").setScope(scope).build();
     registry.declareType(scope, "mod.Foo", createNominalType("other.mod.Foo"));
@@ -356,6 +332,18 @@ public class NamedTypeTest extends BaseJSTypeTestCase {
     assertType(typeofFooBuilder.build()).isUnknown();
     errorReporter.expectAllWarnings(
         "Missing type for `typeof` value. The value must be declared and const.");
+  }
+
+  @Test
+  public void testBuilderForTypeof_yieldsNoResolvedTypeWithForwardDeclaredName() {
+    resetRegistryWithForwardDeclaredName("Foo");
+
+    NamedType.Builder typeofFooBuilder = NamedType
+        .builder(registry, "typeof Foo")
+        .setScope(emptyScope())
+        .setResolutionKind(ResolutionKind.TYPEOF);
+
+    assertType(typeofFooBuilder.build()).isNoResolvedType("typeof Foo");
   }
 
   @Test

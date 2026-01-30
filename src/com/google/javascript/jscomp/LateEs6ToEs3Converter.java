@@ -16,32 +16,33 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.javascript.jscomp.Es6ToEs3Util.createType;
-import static com.google.javascript.jscomp.Es6ToEs3Util.withType;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.AstFactory.type;
 
 import com.google.common.collect.Lists;
+import com.google.javascript.jscomp.colors.StandardColors;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.JSTypeNative;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Converts ES6 code to valid ES5 code. This class does most of the transpilation, and
  * https://github.com/google/closure-compiler/wiki/ECMAScript6 lists which ES6 features are
  * supported. Other classes that start with "Es6" do other parts of the transpilation.
  *
- * <p>In most cases, the output is valid as ES3 (hence the class name) but in some cases, if
- * the output language is set to ES5, we rely on ES5 features such as getters, setters,
- * and Object.defineProperties.
+ * <p>In most cases, the output is valid as ES3 (hence the class name) but in some cases, if the
+ * output language is set to ES5, we rely on ES5 features such as getters, setters, and
+ * Object.defineProperties.
  */
 // TODO(tbreisacher): This class does too many things. Break it into smaller passes.
-public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, HotSwapCompilerPass {
+public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, CompilerPass {
   private final AbstractCompiler compiler;
   private final AstFactory astFactory;
   private final Es6TemplateLiterals templateLiteralConverter;
@@ -50,10 +51,13 @@ public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, HotS
           Feature.COMPUTED_PROPERTIES,
           Feature.MEMBER_DECLARATIONS,
           Feature.TEMPLATE_LITERALS);
-  // addTypes indicates whether we should add type information when transpiling.
-  private final boolean addTypes;
-  private final JSTypeRegistry registry;
-  private final JSType stringType;
+
+  // We want to insert the call to `var tagFnFirstArg = $jscomp.createTemplateTagFirstArg...` just
+  // before this node. For the first script, this node is right after the runtime injected function
+  // definition as injecting to the top of the script causes runtime errors
+  // https://github.com/google/closure-compiler/issues/3589. For the subsequent script(s), the call
+  // is injected to the top of that script.
+  private @Nullable Node templateLitInsertionPoint = null;
 
   private static final String FRESH_COMP_PROP_VAR = "$jscomp$compprop";
 
@@ -61,87 +65,85 @@ public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, HotS
     this.compiler = compiler;
     this.astFactory = compiler.createAstFactory();
     this.templateLiteralConverter = new Es6TemplateLiterals(compiler);
-    // Only add type information if typechecking has been run.
-    this.addTypes = compiler.hasTypeCheckingRun();
-    this.registry = compiler.getTypeRegistry();
-    this.stringType = createType(addTypes, registry, JSTypeNative.STRING_TYPE);
   }
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, externs, transpiledFeatures, this);
     TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, transpiledFeatures, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
+    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, root, transpiledFeatures);
   }
 
   @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
-    switch (n.getToken()) {
-      case GETTER_DEF:
-      case SETTER_DEF:
-        if (FeatureSet.ES3.contains(compiler.getOptions().getOutputFeatureSet())) {
-          Es6ToEs3Util.cannotConvert(
-              compiler, n, "ES5 getters/setters (consider using --language_out=ES5)");
-          return false;
-        }
-        break;
-      case FUNCTION:
-        if (n.isAsyncFunction()) {
-          throw new IllegalStateException("async functions should have already been converted");
-        }
-        break;
-      default:
-        break;
+    if (n.isScript()) {
+      templateLitInsertionPoint = findTemplateLitInsertionPoint(n);
     }
     return true;
+  }
+
+  private static Node findTemplateLitInsertionPoint(Node script) {
+    if (script.getIsInClosureUnawareSubtree()) {
+      // For all closure-unaware scripts, initialize the injection point within the closure
+      // aware function.
+      Node closureUnawareBlock = NodeUtil.findClosureUnawareScriptRoot(script);
+      return NodeUtil.getInsertionPointAfterAllInnerFunctionDeclarations(closureUnawareBlock);
+    }
+    // For all other scripts, initialize the injection point to be top of the script. The spec
+    // requires a single unique array per template literal, so for a template literal in a function
+    // e.g. it would be incorrect to initialize a new array per every function call.
+    return script.getFirstChild();
   }
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
-      case OBJECTLIT:
-        visitObject(n);
-        break;
-      case MEMBER_FUNCTION_DEF:
-        if (parent.isObjectLit()) {
-          visitMemberFunctionDefInObjectLit(n, parent);
+      case ASSIGN -> {
+        // Find whether this script contains the `$jscomp.createTemplateTagFirstArgWithRaw =
+        // function(..) {..}` node. If yes, update the templateLitInsertionPoint.
+        Node lhs = n.getFirstChild();
+        Node rhs = n.getSecondChild();
+        if (lhs.isGetProp() && rhs.isFunction() && lhs.getFirstChild().isName()) {
+          QualifiedName qName = QualifiedName.of("$jscomp.createTemplateTagFirstArgWithRaw");
+          if (qName.matches(lhs)) {
+            checkNotNull(n.getParent(), n);
+            checkState(n.getParent().isExprResult(), n);
+            templateLitInsertionPoint = n.getParent().getNext();
+          }
         }
-        break;
-      case TAGGED_TEMPLATELIT:
-        templateLiteralConverter.visitTaggedTemplateLiteral(t, n, addTypes);
-        break;
-      case TEMPLATELIT:
+      }
+      case OBJECTLIT -> visitObject(n);
+      case MEMBER_FUNCTION_DEF -> {
+        if (parent.isObjectLit()) {
+          visitMemberFunctionDefInObjectLit(n);
+        }
+      }
+      case TAGGED_TEMPLATELIT ->
+          templateLiteralConverter.visitTaggedTemplateLiteral(t, n, templateLitInsertionPoint);
+      case TEMPLATELIT -> {
         if (!parent.isTaggedTemplateLit()) {
           templateLiteralConverter.visitTemplateLiteral(t, n);
         }
-        break;
-      default:
-        break;
+      }
+      default -> {}
     }
   }
 
   /**
-   * Converts a member definition in an object literal to an ES3 key/value pair.
-   * Member definitions in classes are handled in {@link Es6RewriteClass}.
+   * Converts a member definition in an object literal to an ES3 key/value pair. Member definitions
+   * in classes are handled in {@link Es6RewriteClass}.
    */
-  private void visitMemberFunctionDefInObjectLit(Node n, Node parent) {
+  private void visitMemberFunctionDefInObjectLit(Node n) {
     String name = n.getString();
     Node nameNode = n.getFirstFirstChild();
     Node stringKey = astFactory.createStringKey(name, n.removeFirstChild());
     stringKey.setJSDocInfo(n.getJSDocInfo());
-    parent.replaceChild(n, stringKey);
-    stringKey.useSourceInfoFrom(nameNode);
+    n.replaceWith(stringKey);
+    stringKey.srcref(nameNode);
     compiler.reportChangeToEnclosingScope(stringKey);
   }
 
   private void visitObject(Node obj) {
-    for (Node child : obj.children()) {
+    for (Node child = obj.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isComputedProp()) {
         visitObjectWithComputedProperty(obj);
         return;
@@ -167,19 +169,24 @@ public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, HotS
     checkArgument(obj.isObjectLit());
     List<Node> props = new ArrayList<>();
     Node currElement = obj.getFirstChild();
-    JSType objectType = obj.getJSType();
+    AstFactory.Type objectType = type(obj);
 
     while (currElement != null) {
       if (currElement.getBooleanProp(Node.COMPUTED_PROP_GETTER)
           || currElement.getBooleanProp(Node.COMPUTED_PROP_SETTER)) {
-        Es6ToEs3Util.cannotConvertYet(
-            compiler, currElement, "computed getter/setter in an object literal");
+        compiler.report(
+            JSError.make(
+                currElement,
+                ReportUntranspilableFeatures.UNTRANSPILABLE_FEATURE_PRESENT,
+                "computed getter/setter in an object literal",
+                "ES2015",
+                ""));
         return;
       } else if (currElement.isGetterDef() || currElement.isSetterDef()) {
         currElement = currElement.getNext();
       } else {
         Node nextNode = currElement.getNext();
-        obj.removeChild(currElement);
+        currElement.detach();
         props.add(currElement);
         currElement = nextNode;
       }
@@ -202,17 +209,17 @@ public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, HotS
                 result);
       } else {
         Node val = propdef.removeFirstChild();
-        boolean isQuotedAccess = propdef.isQuotedString();
+        boolean isQuotedAccess = propdef.isQuotedStringKey();
 
-        propdef.setToken(Token.STRING);
-        propdef.setJSType(stringType);
+        propdef.setToken(Token.STRINGLIT);
+        propdef.setColor(StandardColors.STRING);
         propdef.putBooleanProp(Node.QUOTED_PROP, false);
 
         Node objNameNode = astFactory.createName(objName, objectType);
         Node access =
             isQuotedAccess
                 ? astFactory.createGetElem(objNameNode, propdef)
-                : astFactory.createGetProp(objNameNode, propdef.getString());
+                : astFactory.createGetProp(objNameNode, propdef.getString(), type(propdef));
         result = astFactory.createComma(astFactory.createAssign(access, val), result);
       }
     }
@@ -222,13 +229,12 @@ public final class LateEs6ToEs3Converter implements NodeTraversal.Callback, HotS
       statement = statement.getParent();
     }
 
-    result.useSourceInfoIfMissingFromForTree(obj);
+    result.srcrefTreeIfMissing(obj);
     obj.replaceWith(result);
 
-    JSType simpleObjectType = null;
-    Node var = IR.var(astFactory.createName(objName, objectType), withType(obj, simpleObjectType));
-    var.useSourceInfoIfMissingFromForTree(statement);
-    statement.getParent().addChildBefore(var, statement);
+    Node var = IR.var(astFactory.createName(objName, objectType), obj);
+    var.srcrefTreeIfMissing(statement);
+    var.insertBefore(statement);
     compiler.reportChangeToEnclosingScope(var);
   }
 }

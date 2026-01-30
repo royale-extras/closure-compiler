@@ -15,18 +15,17 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Supplier;
+import static com.google.javascript.jscomp.AstFactory.type;
+
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
+import java.util.function.Supplier;
 
 /** Replaces the ES2020 `??` operator with conditional (?:). */
-public final class RewriteNullishCoalesceOperator
-    implements NodeTraversal.Callback, HotSwapCompilerPass {
+public final class RewriteNullishCoalesceOperator implements NodeTraversal.Callback, CompilerPass {
 
   private static final String TEMP_VAR_NAME_PREFIX = "$jscomp$nullish$tmp";
-  private static final FeatureSet TRANSPILED_FEATURES =
-      FeatureSet.BARE_MINIMUM.with(Feature.NULL_COALESCE_OP);
 
   private final AbstractCompiler compiler;
   private final AstFactory astFactory;
@@ -40,19 +39,16 @@ public final class RewriteNullishCoalesceOperator
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, externs, TRANSPILED_FEATURES, this);
-    TranspilationPasses.processTranspile(compiler, root, TRANSPILED_FEATURES, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, TRANSPILED_FEATURES);
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, TRANSPILED_FEATURES, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, TRANSPILED_FEATURES);
+    NodeTraversal.traverse(compiler, root, this);
+    TranspilationPasses.maybeMarkFeatureAsTranspiledAway(compiler, root, Feature.NULL_COALESCE_OP);
   }
 
   @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
+    if (n.isScript()) {
+      FeatureSet scriptFeatures = NodeUtil.getFeatureSetOfScript(n);
+      return scriptFeatures == null || scriptFeatures.contains(Feature.NULL_COALESCE_OP);
+    }
     return true;
   }
 
@@ -67,28 +63,27 @@ public final class RewriteNullishCoalesceOperator
   private void visitNullishCoalesce(NodeTraversal t, Node n) {
     // a() ?? b()
     // let temp;
-    // (temp = a) != null) : temp ? b()
+    // ((temp = a()) != null) ? temp : b()
     String tempVarName = TEMP_VAR_NAME_PREFIX + uniqueNameIdSuppier.get();
     Node enclosingStatement = NodeUtil.getEnclosingStatement(n);
-    Node body = enclosingStatement.getParent();
 
     Node left = n.removeFirstChild();
     Node right = n.getLastChild().detach();
 
-    Node let = astFactory.declareSingleLet(tempVarName, left.getJSType());
-    Node assignName = astFactory.createName(tempVarName, left.getJSType());
+    Node let = astFactory.createSingleLetNameDeclaration(tempVarName);
+    Node assignName = astFactory.createName(tempVarName, type(left));
     Node assign = astFactory.createAssign(assignName, left);
     Node ne = astFactory.createNe(assign, astFactory.createNull());
-    Node hookName = astFactory.createName(tempVarName, left.getJSType());
+    Node hookName = astFactory.createName(tempVarName, type(left));
     Node hook = astFactory.createHook(ne, hookName, right);
 
-    let.useSourceInfoIfMissingFromForTree(left);
-    assignName.useSourceInfoIfMissingFromForTree(left);
-    assign.useSourceInfoIfMissingFromForTree(left);
-    ne.useSourceInfoIfMissingFromForTree(left);
-    hookName.useSourceInfoIfMissingFromForTree(left);
+    let.srcrefTreeIfMissing(left);
+    assignName.srcrefTreeIfMissing(left);
+    assign.srcrefTreeIfMissing(left);
+    ne.srcrefTreeIfMissing(left);
+    hookName.srcrefTreeIfMissing(left);
 
-    body.addChildBefore(let, enclosingStatement);
+    let.insertBefore(enclosingStatement);
     n.replaceWith(hook);
 
     NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.LET_DECLARATIONS, compiler);

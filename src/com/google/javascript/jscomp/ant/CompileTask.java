@@ -16,8 +16,10 @@
 
 package com.google.javascript.jscomp.ant;
 
+import static java.lang.Math.max;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.base.Ascii;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Files;
@@ -39,11 +41,10 @@ import com.google.javascript.jscomp.SourceMap.PrefixLocationMapping;
 import com.google.javascript.jscomp.WarningLevel;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.Charset;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -70,7 +71,7 @@ import org.apache.tools.ant.types.resources.FileResource;
  */
 public final class CompileTask
     extends Task {
-  private CompilerOptions.LanguageMode languageIn;
+  private final CompilerOptions.LanguageMode languageIn;
   private CompilerOptions.LanguageMode languageOut;
   private WarningLevel warningLevel;
   private boolean debugOptions;
@@ -103,8 +104,8 @@ public final class CompileTask
   private boolean strictModeInput;
 
   public CompileTask() {
-    this.languageIn = CompilerOptions.LanguageMode.ECMASCRIPT_2015;
-    this.languageOut = CompilerOptions.LanguageMode.ECMASCRIPT3;
+    this.languageIn = CompilerOptions.LanguageMode.STABLE_IN;
+    this.languageOut = CompilerOptions.LanguageMode.STABLE_OUT;
     this.warningLevel = WarningLevel.DEFAULT;
     this.debugOptions = false;
     this.compilationLevel = CompilationLevel.SIMPLE_OPTIMIZATIONS;
@@ -137,15 +138,6 @@ public final class CompileTask
   }
 
   /**
-   * Set the language to which input sources conform.
-   * @param value The name of the language.
-   *     (ECMASCRIPT3, ECMASCRIPT5, ECMASCRIPT5_STRICT).
-   */
-  public void setLanguageIn(String value) {
-    this.languageIn = parseLanguageMode(value);
-  }
-
-  /**
    * Set the language to which output sources conform.
    * @param value The name of the language.
    *     (ECMASCRIPT3, ECMASCRIPT5, ECMASCRIPT5_STRICT).
@@ -159,11 +151,11 @@ public final class CompileTask
    * @param value The warning level by string name. (default, quiet, verbose).
    */
   public void setWarning(String value) {
-    if ("default".equalsIgnoreCase(value)) {
+    if (Ascii.equalsIgnoreCase("default", value)) {
       this.warningLevel = WarningLevel.DEFAULT;
-    } else if ("quiet".equalsIgnoreCase(value)) {
+    } else if (Ascii.equalsIgnoreCase("quiet", value)) {
       this.warningLevel = WarningLevel.QUIET;
-    } else if ("verbose".equalsIgnoreCase(value)) {
+    } else if (Ascii.equalsIgnoreCase("verbose", value)) {
       this.warningLevel = WarningLevel.VERBOSE;
     } else {
       throw new BuildException(
@@ -177,17 +169,13 @@ public final class CompileTask
    *     (BROWSER, CUSTOM).
    */
   public void setEnvironment(String value) {
-    switch (value) {
-      case "BROWSER":
-        this.environment = CompilerOptions.Environment.BROWSER;
-        break;
-      case "CUSTOM":
-        this.environment = CompilerOptions.Environment.CUSTOM;
-        break;
-      default:
-        throw new BuildException(
-            "Unrecognized 'environment' option value (" + value + ")");
-    }
+    this.environment =
+        switch (value) {
+          case "BROWSER" -> CompilerOptions.Environment.BROWSER;
+          case "CUSTOM" -> CompilerOptions.Environment.CUSTOM;
+          default ->
+              throw new BuildException("Unrecognized 'environment' option value (" + value + ")");
+        };
   }
 
   /**
@@ -204,11 +192,11 @@ public final class CompileTask
    *     (whitespace, simple, advanced).
    */
   public void setCompilationLevel(String value) {
-    if ("simple".equalsIgnoreCase(value)) {
+    if (Ascii.equalsIgnoreCase("simple", value)) {
       this.compilationLevel = CompilationLevel.SIMPLE_OPTIMIZATIONS;
-    } else if ("advanced".equalsIgnoreCase(value)) {
+    } else if (Ascii.equalsIgnoreCase("advanced", value)) {
       this.compilationLevel = CompilationLevel.ADVANCED_OPTIMIZATIONS;
-    } else if ("whitespace".equalsIgnoreCase(value)) {
+    } else if (Ascii.equalsIgnoreCase("whitespace", value)) {
       this.compilationLevel = CompilationLevel.WHITESPACE_ONLY;
     } else {
       throw new BuildException(
@@ -383,7 +371,7 @@ public final class CompileTask
           try {
             this.outputWrapper = Files.asCharSource(this.outputWrapperFile, UTF_8).read();
           } catch (Exception e) {
-            throw new BuildException("Invalid output_wrapper_file specified.");
+            throw new BuildException("Invalid output_wrapper_file specified.", e);
           }
         }
 
@@ -416,7 +404,7 @@ public final class CompileTask
   }
 
   private void flushSourceMap(SourceMap sourceMap) {
-    try (FileWriter out = new FileWriter(sourceMapOutputFile)) {
+    try (Writer out = Files.newWriter(sourceMapOutputFile, UTF_8)) {
       sourceMap.appendTo(out, outputFile.getName());
     } catch (IOException e) {
       throw new BuildException("Cannot write sourcemap to file.", e);
@@ -543,13 +531,10 @@ public final class CompileTask
   }
 
   /**
-   * Converts project properties beginning with the replacement prefix
-   * into Compiler {@code @define} replacements.
-   *
-   * @param options
+   * Converts project properties beginning with the replacement prefix into Compiler {@code @define}
+   * replacements.
    */
   private void convertPropertiesMap(CompilerOptions options) {
-    @SuppressWarnings("unchecked")
     Map<String, Object> props = getProject().getProperties();
     for (Map.Entry<String, Object> entry : props.entrySet()) {
       String key = entry.getKey();
@@ -576,7 +561,7 @@ public final class CompileTask
       String key, Object value) {
     boolean success = false;
 
-    if (value instanceof String) {
+    if (value instanceof String string) {
       final boolean isTrue = "true".equals(value);
       final boolean isFalse = "false".equals(value);
 
@@ -584,23 +569,23 @@ public final class CompileTask
         options.setDefineToBooleanLiteral(key, isTrue);
       } else {
         try {
-          double dblTemp = Double.parseDouble((String) value);
+          double dblTemp = Double.parseDouble(string);
           options.setDefineToDoubleLiteral(key, dblTemp);
         } catch (NumberFormatException nfe) {
           // Not a number, assume string
-          options.setDefineToStringLiteral(key, (String) value);
+          options.setDefineToStringLiteral(key, string);
         }
       }
 
       success = true;
-    } else if (value instanceof Boolean) {
-      options.setDefineToBooleanLiteral(key, (Boolean) value);
+    } else if (value instanceof Boolean b) {
+      options.setDefineToBooleanLiteral(key, b);
       success = true;
-    } else if (value instanceof Integer) {
-      options.setDefineToNumberLiteral(key, (Integer) value);
+    } else if (value instanceof Integer i) {
+      options.setDefineToNumberLiteral(key, i);
       success = true;
-    } else if (value instanceof Double) {
-      options.setDefineToDoubleLiteral(key, (Double) value);
+    } else if (value instanceof Double d) {
+      options.setDefineToDoubleLiteral(key, d);
       success = true;
     }
 
@@ -651,7 +636,8 @@ public final class CompileTask
     while (iter.hasNext()) {
       FileResource fr = (FileResource) iter.next();
       // Construct path to file, relative to current working directory.
-      java.nio.file.Path path = Paths.get("").toAbsolutePath().relativize(fr.getFile().toPath());
+      java.nio.file.Path path =
+          java.nio.file.Path.of("").toAbsolutePath().relativize(fr.getFile().toPath());
       files.add(SourceFile.fromPath(path, Charset.forName(encoding)));
     }
     return files;
@@ -695,9 +681,8 @@ public final class CompileTask
    */
   private boolean isStale() {
     long lastRun = outputFile.lastModified();
-    long sourcesLastModified = Math.max(
-        getLastModifiedTime(this.sourceFileLists),
-        getLastModifiedTime(this.sourcePaths));
+    long sourcesLastModified =
+        max(getLastModifiedTime(this.sourceFileLists), getLastModifiedTime(this.sourcePaths));
     long externsLastModified = getLastModifiedTime(this.externFileLists);
 
     return lastRun <= sourcesLastModified || lastRun <= externsLastModified;
@@ -716,19 +701,17 @@ public final class CompileTask
     long lastModified = 0;
 
     for (Object entry : fileLists) {
-      if (entry instanceof FileList) {
-        FileList list = (FileList) entry;
+      if (entry instanceof FileList list) {
 
         for (String fileName : list.getFiles(this.getProject())) {
           File path = list.getDir(this.getProject());
           File file = new File(path, fileName);
-          lastModified = Math.max(getLastModifiedTime(file), lastModified);
+          lastModified = max(getLastModifiedTime(file), lastModified);
         }
-      } else if (entry instanceof Path) {
-        Path path = (Path) entry;
+      } else if (entry instanceof Path path) {
         for (String src : path.list()) {
           File file = new File(src);
-          lastModified = Math.max(getLastModifiedTime(file), lastModified);
+          lastModified = max(getLastModifiedTime(file), lastModified);
         }
       }
     }

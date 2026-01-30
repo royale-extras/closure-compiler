@@ -23,11 +23,11 @@ import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Multiset;
 import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Sets;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An AST traverser that keeps track of whether access to a generic resource are "guarded" or not. A
@@ -99,7 +99,7 @@ import java.util.Deque;
  * current node's context is guarded, either intrinsically or conditionally. If it is intrinsically
  * guarded, then it may be recorded as a condition for the purpose of guarding future contexts.
  */
-abstract class GuardedCallback<T> implements Callback {
+abstract class GuardedCallback<T> implements NodeTraversal.Callback {
   // Compiler is needed for coding convention (isPropertyTestFunction).
   private final AbstractCompiler compiler;
   // Map from short-circuiting conditional nodes (AND, OR, COALESCE, IF, and HOOK) to
@@ -279,7 +279,7 @@ abstract class GuardedCallback<T> implements Callback {
     // A very naive linked list for storing additional conditional nodes.
     final Context linked;
 
-    Context(Node conditional, boolean safe, Context linked) {
+    Context(@Nullable Node conditional, boolean safe, @Nullable Context linked) {
       this.conditional = conditional;
       this.safe = safe;
       this.linked = linked;
@@ -304,56 +304,72 @@ abstract class GuardedCallback<T> implements Callback {
     Context descend(AbstractCompiler compiler, Node parent, Node child) {
       boolean first = child == parent.getFirstChild();
       switch (parent.getToken()) {
-        case CAST:
+        case CAST -> {
           // Casts are irrelevant.
           return this;
-        case COMMA:
+        }
+        case COMMA -> {
           // `Promise, whatever` is safe.
           // `whatever, Promise` is same as outer context.
           return child == parent.getLastChild() ? this : propagate(true);
-        case AND:
+        }
+        case AND -> {
           // `Promise && whatever` never returns Promise itself, so it is safe.
           // `whatever && Promise` may return Promise, so return outer context.
           return first ? link(parent, true) : this;
-        case OR:
-        case COALESCE:
-          // throw new RuntimeException("beeeeep");
+        }
+        case OR, COALESCE -> {
           // `Promise || whatever` and `Promise ?? whatever`
           // may return Promise (unsafe), but is itself a conditional.
           // `whatever || Promise` and `whatever ?? Promise`
           // is same as outer context.
           return first ? link(parent, false) : this;
-        case HOOK:
+        }
+        case HOOK -> {
           // `Promise ? whatever : whatever` is a safe conditional.
           // `whatever ? Promise : whatever` (etc) is same as outer context.
           return first ? link(parent, true) : this;
-        case IF:
+        }
+        case IF -> {
           // `if (Promise) whatever` is a safe conditional.
           // `if (whatever) { ... }` is nothing.
           // TODO(sdh): Handle do/while/for/for-of/for-in?
           return first ? link(parent, true) : EMPTY;
-        case INSTANCEOF:
-        case ASSIGN:
+        }
+        case INSTANCEOF, ASSIGN -> {
           // `Promise instanceof whatever` is safe, `whatever instanceof Promise` is not.
           // `Promise = whatever` is a bad idea, but it's safe w.r.t. polyfills.
           return propagate(first);
-        case TYPEOF:
-        case NOT:
-        case EQ:
-        case NE:
-        case SHEQ:
-        case SHNE:
+        }
+        case TYPEOF, NOT, EQ, NE, SHEQ, SHNE -> {
           // `typeof Promise` is always safe, as is `Promise == whatever`, etc.
           return propagate(true);
-        case CALL:
+        }
+        case CALL -> {
           // `String(Promise)` is safe, `Promise(whatever)` or `whatever(Promise)` is not.
           return propagate(!first && isPropertyTestFunction(compiler, parent));
-        case ROOT:
+        }
+        case ROOT -> {
           // This case causes problems for isStatement() so handle it separately.
           return EMPTY;
-        default:
+        }
+        case OPTCHAIN_CALL, OPTCHAIN_GETELEM, OPTCHAIN_GETPROP -> {
+          if (first) {
+            // thisNode?.rest.of.chain
+            // OR firstChild?.thisNode.rest.of.chain
+            // For the first case `thisNode` should be considered intrinsically guarded.
+            return link(parent, parent.isOptionalChainStart());
+          } else {
+            // `first?.(thisNode)`
+            // or `first?.[thisNode]`
+            // or `first?.thisNode`
+            return propagate(false);
+          }
+        }
+        default -> {
           // Expressions propagate linked conditionals; statements do not.
           return NodeUtil.isStatement(parent) ? EMPTY : propagate(false);
+        }
       }
     }
   }
@@ -369,16 +385,25 @@ abstract class GuardedCallback<T> implements Callback {
       return true;
     }
     Node target = n.getFirstChild();
-    return target.isName() && PROPERTY_TEST_FUNCTIONS.contains(target.getString());
+    if (target.isName()) {
+      String name = target.getString();
+      return name.equals("String") || name.equals("Boolean");
+    }
+    return false;
   }
-
-  // NOTE: we currently assume these are simple (unqualified) names.
-  private static final ImmutableSet<String> PROPERTY_TEST_FUNCTIONS =
-      ImmutableSet.of("String", "Boolean");
 
   // Tokens that are allowed to have guards on them (no point doing a hash lookup on
   // any other type of node).
   private static final ImmutableSet<Token> CAN_HAVE_GUARDS =
       Sets.immutableEnumSet(
-          Token.AND, Token.OR, Token.COALESCE, Token.HOOK, Token.IF, Token.BLOCK, Token.SCRIPT);
+          Token.AND,
+          Token.OR,
+          Token.COALESCE,
+          Token.HOOK,
+          Token.IF,
+          Token.BLOCK,
+          Token.SCRIPT,
+          Token.OPTCHAIN_CALL,
+          Token.OPTCHAIN_GETELEM,
+          Token.OPTCHAIN_GETPROP);
 }

@@ -37,12 +37,14 @@ public final class ClosureCodingConventionTest {
 
   @Test
   public void testVarAndOptionalParams() {
-    Node args = new Node(Token.PARAM_LIST,
-        Node.newString(Token.NAME, "a"),
-        Node.newString(Token.NAME, "b"));
-    Node optArgs = new Node(Token.PARAM_LIST,
-        Node.newString(Token.NAME, "opt_a"),
-        Node.newString(Token.NAME, "opt_b"));
+    Node args =
+        new Node(
+            Token.PARAM_LIST, Node.newString(Token.NAME, "a"), Node.newString(Token.NAME, "b"));
+    Node optArgs =
+        new Node(
+            Token.PARAM_LIST,
+            Node.newString(Token.NAME, "opt_a"),
+            Node.newString(Token.NAME, "opt_b"));
 
     assertThat(conv.isVarArgsParameter(args.getFirstChild())).isFalse();
     assertThat(conv.isVarArgsParameter(args.getLastChild())).isFalse();
@@ -83,13 +85,6 @@ public final class ClosureCodingConventionTest {
     assertThat(conv.isExported("$super", false)).isFalse();
     assertThat(conv.isExported("$super", true)).isTrue();
     assertThat(conv.isExported("$super")).isTrue();
-  }
-
-  @Test
-  public void testPrivateName() {
-    assertThat(conv.isPrivate("a_")).isFalse();
-    assertThat(conv.isPrivate("a")).isFalse();
-    assertThat(conv.isPrivate("_a_")).isFalse();
   }
 
   @Test
@@ -140,7 +135,7 @@ public final class ClosureCodingConventionTest {
 
   @Test
   public void testInheritanceDetection8() {
-    assertNotClassDefining("goog.inherits(A, B, C);");
+    assertDefinesClasses("goog.inherits(A, B, C);", "A", "B");
   }
 
   @Test
@@ -149,29 +144,8 @@ public final class ClosureCodingConventionTest {
   }
 
   @Test
-  public void testInheritanceDetection10() {
-    assertDefinesClasses("goog.mixin(A.prototype, B.prototype);",
-        "A", "B");
-  }
-
-  @Test
   public void testInheritanceDetection11() {
     assertNotClassDefining("A.mixin(B)");
-  }
-
-  @Test
-  public void testInheritanceDetection12() {
-    assertNotClassDefining("goog.mixin(A.prototype, B)");
-  }
-
-  @Test
-  public void testInheritanceDetection13() {
-    assertNotClassDefining("goog.mixin(A, B)");
-  }
-
-  @Test
-  public void testInheritanceDetection14() {
-    assertNotClassDefining("goog$mixin((function(){}).prototype)");
   }
 
   @Test
@@ -182,6 +156,17 @@ public final class ClosureCodingConventionTest {
   @Test
   public void testInheritanceDetection16() {
     assertDefinesClasses("$jscomp$inherits(A, B)", "A", "B");
+  }
+
+  @Test
+  public void testInheritanceDetection17() {
+    assertDefinesClasses(
+        "ValueType.mixin(A, B, 5, goog.reflect.objectProperty('foo', A))", "A", "B");
+  }
+
+  @Test
+  public void testInheritanceDetection18() {
+    assertNotClassDefining("ValueType.mixin(A, 5, goog.reflect.objectProperty('foo', A))");
   }
 
   @Test
@@ -205,22 +190,22 @@ public final class ClosureCodingConventionTest {
 
   @Test
   public void testFunctionBind() {
-    assertNotFunctionBind("goog.bind()");  // invalid bind
+    assertNotFunctionBind("goog.bind()"); // invalid bind
     assertFunctionBind("goog.bind(f)");
     assertFunctionBind("goog.bind(f, obj)");
     assertFunctionBind("goog.bind(f, obj, p1)");
 
-    assertNotFunctionBind("goog$bind()");  // invalid bind
+    assertNotFunctionBind("goog$bind()"); // invalid bind
     assertFunctionBind("goog$bind(f)");
     assertFunctionBind("goog$bind(f, obj)");
     assertFunctionBind("goog$bind(f, obj, p1)");
 
-    assertNotFunctionBind("goog.partial()");  // invalid bind
+    assertNotFunctionBind("goog.partial()"); // invalid bind
     assertFunctionBind("goog.partial(f)");
     assertFunctionBind("goog.partial(f, obj)");
     assertFunctionBind("goog.partial(f, obj, p1)");
 
-    assertNotFunctionBind("goog$partial()");  // invalid bind
+    assertNotFunctionBind("goog$partial()"); // invalid bind
     assertFunctionBind("goog$partial(f)");
     assertFunctionBind("goog$partial(f, obj)");
     assertFunctionBind("goog$partial(f, obj, p1)");
@@ -284,12 +269,12 @@ public final class ClosureCodingConventionTest {
 
   private void assertFunctionBind(String code) {
     Node n = parseTestCode(code);
-    assertThat(conv.describeFunctionBind(n.getFirstChild())).isNotNull();
+    assertThat(conv.describeFunctionBind(n.getFirstChild(), false)).isNotNull();
   }
 
   private void assertNotFunctionBind(String code) {
     Node n = parseTestCode(code);
-    assertThat(conv.describeFunctionBind(n.getFirstChild())).isNull();
+    assertThat(conv.describeFunctionBind(n.getFirstChild(), false)).isNull();
   }
 
   private void assertRequire(String code) {
@@ -317,11 +302,9 @@ public final class ClosureCodingConventionTest {
     assertThat(conv.getClassesDefinedByCall(n.getFirstChild())).isNull();
   }
 
-  private void assertDefinesClasses(String code, String subclassName,
-      String superclassName) {
+  private void assertDefinesClasses(String code, String subclassName, String superclassName) {
     Node n = parseTestCode(code);
-    SubclassRelationship classes =
-        conv.getClassesDefinedByCall(n.getFirstChild());
+    SubclassRelationship classes = conv.getClassesDefinedByCall(n.getFirstChild());
     assertThat(classes).isNotNull();
     assertThat(classes.subclassName).isEqualTo(subclassName);
     assertThat(classes.superclassName).isEqualTo(superclassName);

@@ -18,11 +18,12 @@ package com.google.javascript.jscomp;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.errorprone.annotations.Immutable;
+import java.io.Serializable;
 import java.util.Map;
 
 /** A strongly typed view of information about getters and setters collected from the AST. */
 @Immutable
-final class AccessorSummary {
+final class AccessorSummary implements Serializable {
 
   /** Indicates whether a property has a getter or a setter, or both. */
   public enum PropertyAccessKind {
@@ -54,20 +55,17 @@ final class AccessorSummary {
     // used to combine information from externs and from sources
     PropertyAccessKind unionWith(PropertyAccessKind other) {
       int combinedFlags = this.flags | other.flags;
-      switch (combinedFlags) {
-        case 0:
-          return NORMAL;
-        case 1:
-          return GETTER_ONLY;
-        case 2:
-          return SETTER_ONLY;
-        case 3:
-          return GETTER_AND_SETTER;
-        default:
-          throw new IllegalStateException("unexpected value: " + combinedFlags);
-      }
+      return switch (combinedFlags) {
+        case 0 -> NORMAL;
+        case 1 -> GETTER_ONLY;
+        case 2 -> SETTER_ONLY;
+        case 3 -> GETTER_AND_SETTER;
+        default -> throw new IllegalStateException("unexpected value: " + combinedFlags);
+      };
     }
   }
+
+  private final boolean assumeAlwaysGetterAndSetter;
 
   static AccessorSummary create(Map<String, PropertyAccessKind> accessors) {
     // TODO(nickreid): Efficiently verify that no entry in `accessor` is `NORMAL`.
@@ -78,6 +76,12 @@ final class AccessorSummary {
 
   private AccessorSummary(ImmutableMap<String, PropertyAccessKind> accessors) {
     this.accessors = accessors;
+    this.assumeAlwaysGetterAndSetter = false;
+  }
+
+  private AccessorSummary(boolean assumeAlwaysGetterAndSetter) {
+    this.accessors = ImmutableMap.of();
+    this.assumeAlwaysGetterAndSetter = assumeAlwaysGetterAndSetter;
   }
 
   public ImmutableMap<String, PropertyAccessKind> getAccessors() {
@@ -85,6 +89,14 @@ final class AccessorSummary {
   }
 
   public PropertyAccessKind getKind(String name) {
+    if (assumeAlwaysGetterAndSetter) {
+      return PropertyAccessKind.GETTER_AND_SETTER;
+    }
     return accessors.getOrDefault(name, PropertyAccessKind.NORMAL);
+  }
+
+  /** Returns an accessor summary that assumes every access is a potential getter or setter. */
+  public static AccessorSummary createAssumingAlwaysGetterAndSetter() {
+    return new AccessorSummary(true);
   }
 }

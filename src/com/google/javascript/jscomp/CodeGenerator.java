@@ -25,37 +25,38 @@ import com.google.debugging.sourcemap.Util;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.jscomp.parsing.parser.util.SourcePosition;
+import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.NonJSDocComment;
+import com.google.javascript.rhino.QualifiedName;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.TokenStream;
-import java.util.HashMap;
-import java.util.Map;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
-/**
- * CodeGenerator generates codes from a parse tree, sending it to the specified
- * CodeConsumer.
- */
+/** CodeGenerator generates codes from a parse tree, sending it to the specified CodeConsumer. */
 public class CodeGenerator {
   private static final String LT_ESCAPED = "\\x3c";
   private static final String GT_ESCAPED = "\\x3e";
 
-  // A memoizer for formatting strings as JS strings.
-  private final Map<String, String> escapedJsStrings = new HashMap<>();
-
   private final CodeConsumer cc;
 
-  private final OutputCharsetEncoder outputCharsetEncoder;
+  private final @Nullable OutputCharsetEncoder outputCharsetEncoder;
 
   private final boolean preferSingleQuotes;
   private final boolean preserveTypeAnnotations;
   private final boolean printNonJSDocComments;
+
+  /**
+   * To distinguish between gents and non-gents mode so that we can turn off checking the sanity of
+   * the source location of comments, and also provide a different mode for comment printing between
+   * those two.
+   */
+  private final boolean gentsMode;
+
   private final boolean trustedStrings;
   private final boolean quoteKeywordProperties;
   private final boolean useOriginalName;
-  private final boolean prettyPrint;
   private final FeatureSet outputFeatureSet;
   private final JSDocInfoPrinter jsDocInfoPrinter;
 
@@ -66,9 +67,9 @@ public class CodeGenerator {
     trustedStrings = true;
     preserveTypeAnnotations = false;
     printNonJSDocComments = false;
+    gentsMode = false;
     quoteKeywordProperties = false;
     useOriginalName = false;
-    prettyPrint = false;
     this.outputFeatureSet = FeatureSet.BARE_MINIMUM;
     this.jsDocInfoPrinter = new JSDocInfoPrinter(false);
   }
@@ -77,14 +78,14 @@ public class CodeGenerator {
     cc = consumer;
 
     this.outputCharsetEncoder = new OutputCharsetEncoder(options.getOutputCharset());
-    this.preferSingleQuotes = options.preferSingleQuotes;
-    this.trustedStrings = options.trustedStrings;
-    this.preserveTypeAnnotations = options.preserveTypeAnnotations;
+    this.preferSingleQuotes = options.shouldPreferSingleQuotes();
+    this.trustedStrings = options.assumeTrustedStrings();
+    this.preserveTypeAnnotations = options.shouldPreserveTypeAnnotations();
     this.printNonJSDocComments = options.getPreserveNonJSDocComments();
+    this.gentsMode = options.getGentsMode();
     this.quoteKeywordProperties = options.shouldQuoteKeywordProperties();
     this.useOriginalName = options.getUseOriginalNamesInOutput();
     this.outputFeatureSet = options.getOutputFeatureSet();
-    this.prettyPrint = options.isPrettyPrint();
     this.jsDocInfoPrinter = new JSDocInfoPrinter(useOriginalName);
   }
 
@@ -97,12 +98,89 @@ public class CodeGenerator {
     add("/** @fileoverview @typeSummary */\n");
   }
 
-  /**
-   * Insert a ECMASCRIPT 5 strict annotation.
-   */
+  /** Insert a ECMASCRIPT 5 strict annotation. */
   public void tagAsStrict() {
     add("'use strict';");
     cc.endLine();
+  }
+
+  private void printJSDocComment(Node node, JSDocInfo jsDocInfo) {
+    String jsdocAsString;
+    // In gents mode, we print NonJSDocInfo without special handling, as we already have
+    // pre-filtered the comments properly.
+    if (gentsMode) {
+      jsdocAsString = jsDocInfo.getOriginalCommentString();
+    } else {
+      jsdocAsString = jsDocInfoPrinter.print(jsDocInfo);
+    }
+    // Don't print an empty jsdoc
+    if (jsdocAsString != null && !jsdocAsString.equals("/** */ ")) {
+      add(jsdocAsString);
+      if (!node.isCast()) {
+        cc.endLine();
+      }
+    }
+  }
+
+  private void printNonJSDocComment(Node node, NonJSDocComment nonJSDocComment) {
+    String nonJSDocCommentString = nonJSDocComment.getCommentString();
+    if (!nonJSDocCommentString.isEmpty()) {
+      addNonJsDoc_nonTrailing(node, nonJSDocComment);
+    }
+  }
+
+  /**
+   * Print Leading JSDocComments or NonJSDocComments for the given node in order, depending on their
+   * source location.
+   */
+  protected void printLeadingCommentsInOrder(Node node) {
+    JSDocInfo jsDocInfo = node.getJSDocInfo();
+    NonJSDocComment nonJSDocComment = node.getNonJSDocComment();
+
+    boolean printJSDoc = preserveTypeAnnotations && jsDocInfo != null;
+    boolean printNonJSDoc = printNonJSDocComments && nonJSDocComment != null;
+    if (printJSDoc && printNonJSDoc) {
+      if (jsDocInfo.getOriginalCommentPosition() < nonJSDocComment.getStartPosition().getOffset()) {
+        printJSDocComment(node, jsDocInfo);
+        printNonJSDocComment(node, nonJSDocComment);
+      } else {
+        printNonJSDocComment(node, nonJSDocComment);
+        printJSDocComment(node, jsDocInfo);
+      }
+      return;
+    }
+
+    if (printJSDoc) {
+      printJSDocComment(node, jsDocInfo);
+      return;
+    }
+
+    if (printNonJSDoc) {
+      printNonJSDocComment(node, nonJSDocComment);
+      return;
+    }
+  }
+
+  /** Returns true when a node has a trailing comment. */
+  private boolean hasTrailingCommentOnSameLine(Node node) {
+    if (!printNonJSDocComments) {
+      return false;
+    }
+    return !node.getTrailingNonJSDocCommentString().isEmpty();
+  }
+
+  protected void printTrailingComment(Node node) {
+    // print any trailing nonJSDoc comment attached to this node
+    if (!printNonJSDocComments) {
+      return;
+    }
+    NonJSDocComment nonJSDocComment = node.getTrailingNonJSDocComment();
+    if (nonJSDocComment != null) {
+      String nonJSDocCommentString = node.getTrailingNonJSDocCommentString();
+      if (!nonJSDocCommentString.isEmpty()) {
+        addNonJsDoctrailing(nonJSDocComment, hasTrailingCommentOnSameLine(node));
+      }
+    }
   }
 
   protected void add(String str) {
@@ -113,29 +191,30 @@ public class CodeGenerator {
     add(n, Context.OTHER);
   }
 
+  private static final QualifiedName JSCOMP_SCOPE = QualifiedName.of("$jscomp.scope");
+
   protected void add(Node node, Context context) {
+    add(node, context, true);
+  }
+
+  /** Generate the current node */
+  protected void add(Node node, Context context, boolean printComments) {
     if (!cc.continueProcessing()) {
       return;
     }
-
-    if (preserveTypeAnnotations && node.getJSDocInfo() != null) {
-      String jsdocAsString = jsDocInfoPrinter.print(node.getJSDocInfo());
-      // Don't print an empty jsdoc
-      if (!jsdocAsString.equals("/** */ ")) {
-        add(jsdocAsString);
-      }
+    // If this node is actually a shadow host node, then print the shadow content instead.
+    Node shadow = node.getClosureUnawareShadow();
+    if (shadow != null) {
+      Node script = shadow.getOnlyChild();
+      Node sinkCall = script.getOnlyChild().getOnlyChild();
+      checkState(sinkCall.isCall(), sinkCall);
+      add(sinkCall.getLastChild(), context, printComments);
+      return;
     }
-
-    // print any non-trailing non-JSDoc comment attached to this node
-    if (printNonJSDocComments) {
-      NonJSDocComment nonJSDocComment = node.getNonJSDocComment();
-      if (nonJSDocComment != null && !nonJSDocComment.isTrailing()) {
-        String nonJSDocCommentString = node.getNonJSDocCommentString();
-        if (!nonJSDocCommentString.isEmpty()) {
-          addNonJsDoc_nonTrailing(node, nonJSDocComment);
-        }
-      }
+    if (printComments) {
+      printLeadingCommentsInOrder(node);
     }
+    cc.trackLicenses(node);
 
     Token type = node.getToken();
     String opstr = NodeUtil.opToStr(type);
@@ -181,30 +260,27 @@ public class CodeGenerator {
     cc.startSourceMapping(node);
 
     switch (type) {
-      case TRY:
-        {
-          checkState(first.getNext().isBlock() && !first.getNext().hasMoreThanOneChild());
-          checkState(childCount >= 2 && childCount <= 3);
+      case TRY -> {
+        checkState(first.getNext().isBlock() && !first.getNext().hasMoreThanOneChild());
+        checkState(childCount >= 2 && childCount <= 3);
 
-          add("try");
-          add(first);
+        add("try");
+        add(first);
 
-          // second child contains the catch block, or nothing if there
-          // isn't a catch block
-          Node catchblock = first.getNext().getFirstChild();
-          if (catchblock != null) {
-            add(catchblock);
-          }
-
-          if (childCount == 3) {
-            cc.maybeInsertSpace();
-            add("finally");
-            add(last);
-          }
-          break;
+        // second child contains the catch block, or nothing if there
+        // isn't a catch block
+        Node catchblock = first.getNext().getFirstChild();
+        if (catchblock != null) {
+          add(catchblock);
         }
 
-      case CATCH:
+        if (childCount == 3) {
+          cc.maybeInsertSpace();
+          add("finally");
+          add(last);
+        }
+      }
+      case CATCH -> {
         Preconditions.checkState(childCount == 2, node);
         cc.maybeInsertSpace();
         add("catch");
@@ -218,9 +294,8 @@ public class CodeGenerator {
         }
 
         add(last);
-        break;
-
-      case THROW:
+      }
+      case THROW -> {
         Preconditions.checkState(childCount == 1, node);
         add("throw");
         cc.maybeInsertSpace();
@@ -228,10 +303,9 @@ public class CodeGenerator {
 
         // Must have a ';' after a throw statement, otherwise safari can't
         // parse this.
-        cc.endStatement(true);
-        break;
-
-      case RETURN:
+        cc.endStatement(/* needSemiColon= */ true, hasTrailingCommentOnSameLine(node));
+      }
+      case RETURN -> {
         add("return");
         if (childCount == 1) {
           cc.maybeInsertSpace();
@@ -245,48 +319,42 @@ public class CodeGenerator {
         } else {
           checkState(childCount == 0, node);
         }
-        cc.endStatement();
-        break;
-
-      case VAR:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case VAR -> {
         add("var ");
         addList(first, false, getContextForNoInOperator(context), ",");
         if (node.getParent() == null || NodeUtil.isStatement(node)) {
-          cc.endStatement();
+          cc.endStatement(hasTrailingCommentOnSameLine(node));
         }
-        break;
-
-      case CONST:
+      }
+      case CONST -> {
         add("const ");
         addList(first, false, getContextForNoInOperator(context), ",");
         if (node.getParent() == null || NodeUtil.isStatement(node)) {
-          cc.endStatement();
+          cc.endStatement(hasTrailingCommentOnSameLine(node));
         }
-        break;
-
-      case LET:
+      }
+      case LET -> {
         add("let ");
         addList(first, false, getContextForNoInOperator(context), ",");
         if (node.getParent() == null || NodeUtil.isStatement(node)) {
-          cc.endStatement();
+          cc.endStatement(hasTrailingCommentOnSameLine(node));
         }
-        break;
-
-      case LABEL_NAME:
+      }
+      case LABEL_NAME -> {
         Preconditions.checkState(!node.getString().isEmpty(), node);
         addIdentifier(node.getString());
-        break;
-
-      case DESTRUCTURING_LHS:
+      }
+      case DESTRUCTURING_LHS -> {
         add(first);
         if (first != last) {
           checkState(childCount == 2, node);
           cc.addOp("=", true);
-          add(last);
+          addExpr(last, NodeUtil.precedence(Token.ASSIGN), getContextForNoInOperator(context));
         }
-        break;
-
-      case NAME:
+      }
+      case NAME -> {
         if (useOriginalName && node.getOriginalName() != null) {
           addIdentifier(node.getOriginalName());
         } else {
@@ -298,110 +366,70 @@ public class CodeGenerator {
         if (first != null && !first.isEmpty()) {
           checkState(childCount == 1, node);
           cc.addOp("=", true);
-          if (first.isComma() || (first.isCast() && first.getFirstChild().isComma())) {
-            addExpr(first, NodeUtil.precedence(Token.ASSIGN), Context.OTHER);
-          } else {
-            // Add expression, consider nearby code at lowest level of
-            // precedence.
-            addExpr(first, 0, getContextForNoInOperator(context));
-          }
+          addExpr(first, NodeUtil.precedence(Token.ASSIGN), getContextForNoInOperator(context));
         }
-        break;
-
-      case ARRAYLIT:
+      }
+      case ARRAYLIT -> {
         add("[");
         addArrayList(first);
         add("]");
-        break;
-
-      case ARRAY_PATTERN:
+      }
+      case ARRAY_PATTERN -> {
         add("[");
         addArrayList(first);
         add("]");
         maybeAddTypeDecl(node);
-        break;
-
-      case PARAM_LIST:
+      }
+      case PARAM_LIST -> {
         // If this is the list for a non-TypeScript arrow function with one simple name param.
         if (node.getParent().isArrowFunction()
             && node.hasOneChild()
             && first.isName()
-            && !outputFeatureSet.has(Feature.TYPE_ANNOTATION)) {
+            && !gentsMode) {
           add(first);
         } else {
           add("(");
           addList(first);
           add(")");
         }
-        break;
-
-      case DEFAULT_VALUE:
+      }
+      case DEFAULT_VALUE -> {
         add(first);
         maybeAddTypeDecl(node);
         cc.addOp("=", true);
         addExpr(first.getNext(), 1, Context.OTHER);
-        break;
-
-      case COMMA:
+      }
+      case COMMA -> {
         Preconditions.checkState(childCount == 2, node);
         unrollBinaryOperator(
             node, Token.COMMA, ",", context, getContextForNoInOperator(context), 0, 0);
-        break;
-
-      case NUMBER:
+      }
+      case NUMBER -> {
         Preconditions.checkState(childCount == 0, node);
         cc.addNumber(node.getDouble(), node);
-        break;
-
-      case BIGINT:
+      }
+      case BIGINT -> {
         Preconditions.checkState(childCount == 0, node);
-        cc.add(node.getBigInt() + "n");
-        break;
-
-      case TYPEOF:
-      case VOID:
-      case NOT:
-      case BITNOT:
-      case POS:
-        {
-          // All of these unary operators are right-associative
-          checkState(childCount == 1, node);
-          cc.addOp(NodeUtil.opToStrNoFail(type), false);
-          addExpr(first, NodeUtil.precedence(type), Context.OTHER);
-          break;
-        }
-
-      case NEG:
-        {
-          checkState(childCount == 1, node);
-
-          // It's important to our validity checker that the code we print produces the same AST as
-          // the code we parse back. NEG is a weird case because Rhino parses "- -2" as "2".
-          if (node.getFirstChild().isNumber()) {
-            cc.addNumber(-node.getFirstChild().getDouble(), node.getFirstChild());
-          } else {
-            cc.addOp(NodeUtil.opToStrNoFail(type), false);
-            addExpr(first, NodeUtil.precedence(type), Context.OTHER);
-          }
-
-          break;
-        }
-
-      case HOOK:
-        {
-          checkState(childCount == 3, node);
-          int p = NodeUtil.precedence(type);
-          Context rhsContext = getContextForNoInOperator(context);
-          addExpr(first, p + 1, context);
-          cc.addOp("?", true);
-          addExpr(first.getNext(), 1, rhsContext);
-          cc.addOp(":", true);
-          addExpr(last, 1, rhsContext);
-          break;
-        }
-
-      case REGEXP:
-        if (!first.isString() || !last.isString()) {
+        cc.addBigInt(node.getBigInt());
+      }
+      case TYPEOF, VOID, NOT, BITNOT, POS, NEG -> {
+        // All of these unary operators are right-associative
+        checkState(childCount == 1, node);
+        cc.addOp(NodeUtil.opToStrNoFail(type), false);
+        addExpr(first, NodeUtil.precedence(type), Context.OTHER);
+      }
+      case HOOK -> {
+        checkState(childCount == 3, "%s wrong number of children: %s", node, childCount);
+        int p = NodeUtil.precedence(type);
+        Context rhsContext = getContextForNoInOperator(context);
+        addExpr(first, p + 1, context);
+        cc.addOp("?", true);
+        addExpr(first.getNext(), 1, rhsContext);
+        cc.addOp(":", true);
+        addExpr(last, 1, rhsContext);
+      }
+      case REGEXP -> {
+        if (!first.isStringLit() || !last.isStringLit()) {
           throw new Error("Expected children to be strings");
         }
 
@@ -414,35 +442,28 @@ public class CodeGenerator {
           checkState(childCount == 1, node);
           add(regexp);
         }
-        break;
-
-      case FUNCTION:
-        {
-          if (node.getClass() != Node.class) {
-            throw new Error("Unexpected Node subclass.");
-          }
-          checkState(childCount == 3, node);
-          if (node.isArrowFunction()) {
-            addArrowFunction(node, first, last, context);
-          } else {
-            addFunction(node, first, last, context);
-          }
-          break;
+      }
+      case FUNCTION -> {
+        if (node.getClass() != Node.class) {
+          throw new Error("Unexpected Node subclass.");
         }
-      case ITER_REST:
-      case OBJECT_REST:
+        checkState(childCount == 3, node);
+        if (node.isArrowFunction()) {
+          addArrowFunction(node, first, last, context);
+        } else {
+          addFunction(node, first, last, context);
+        }
+      }
+      case ITER_REST, OBJECT_REST -> {
         add("...");
         add(first);
         maybeAddTypeDecl(node);
-        break;
-
-      case ITER_SPREAD:
-      case OBJECT_SPREAD:
+      }
+      case ITER_SPREAD, OBJECT_SPREAD -> {
         add("...");
-        add(node.getFirstChild());
-        break;
-
-      case EXPORT:
+        addExpr(first, NodeUtil.precedence(type), Context.OTHER);
+      }
+      case EXPORT -> {
         add("export");
         if (node.getBooleanProp(Node.EXPORT_DEFAULT)) {
           add("default");
@@ -458,9 +479,8 @@ public class CodeGenerator {
           add(last);
         }
         processEnd(first, context);
-        break;
-
-      case IMPORT:
+      }
+      case IMPORT -> {
         add("import");
 
         Node second = first.getNext();
@@ -477,11 +497,9 @@ public class CodeGenerator {
           add("from");
         }
         add(last);
-        cc.endStatement();
-        break;
-
-      case EXPORT_SPECS:
-      case IMPORT_SPECS:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case EXPORT_SPECS, IMPORT_SPECS -> {
         add("{");
         for (Node c = first; c != null; c = c.getNext()) {
           if (c != first) {
@@ -490,36 +508,28 @@ public class CodeGenerator {
           add(c);
         }
         add("}");
-        break;
-
-      case EXPORT_SPEC:
-      case IMPORT_SPEC:
+      }
+      case EXPORT_SPEC, IMPORT_SPEC -> {
         add(first);
         if (node.isShorthandProperty() && first.getString().equals(last.getString())) {
           break;
         }
         add("as");
         add(last);
-        break;
-
-      case IMPORT_STAR:
+      }
+      case IMPORT_STAR -> {
         add("*");
         add("as");
         add(node.getString());
-        break;
-
-      case DYNAMIC_IMPORT:
+      }
+      case DYNAMIC_IMPORT -> {
         add("import(");
         addExpr(first, NodeUtil.precedence(type), context);
         add(")");
-        break;
-
-      case IMPORT_META:
-        add("import.meta");
-        break;
-
-        // CLASS -> NAME,EXPR|EMPTY,BLOCK
-      case CLASS:
+      }
+      case IMPORT_META -> add("import.meta");
+      // CLASS -> NAME,EXPR|EMPTY,BLOCK
+      case CLASS -> {
         {
           checkState(childCount == 3, node);
           boolean classNeedsParens = (context == Context.START_OF_EXPR);
@@ -540,7 +550,9 @@ public class CodeGenerator {
 
           if (!superClass.isEmpty()) {
             add("extends");
-            add(superClass);
+
+            // Parentheses are required for a comma expression or an assignment expression.
+            addExpr(superClass, 1, Context.OTHER);
           }
 
           Node interfaces = (Node) node.getProp(Node.IMPLEMENTS);
@@ -561,11 +573,8 @@ public class CodeGenerator {
             add(")");
           }
         }
-        break;
-
-      case CLASS_MEMBERS:
-      case INTERFACE_MEMBERS:
-      case NAMESPACE_ELEMENTS:
+      }
+      case CLASS_MEMBERS, INTERFACE_MEMBERS, NAMESPACE_ELEMENTS -> {
         cc.beginBlock();
         for (Node c = first; c != null; c = c.getNext()) {
           add(c);
@@ -573,8 +582,8 @@ public class CodeGenerator {
           cc.endLine();
         }
         cc.endBlock(false);
-        break;
-      case ENUM_MEMBERS:
+      }
+      case ENUM_MEMBERS -> {
         cc.beginBlock();
         for (Node c = first; c != null; c = c.getNext()) {
           add(c);
@@ -584,131 +593,156 @@ public class CodeGenerator {
           cc.endLine();
         }
         cc.endBlock(false);
-        break;
-      case GETTER_DEF:
-      case SETTER_DEF:
-      case MEMBER_FUNCTION_DEF:
-      case MEMBER_VARIABLE_DEF:
-        {
-          checkState(
-              node.getParent().isObjectLit()
-                  || node.getParent().isClassMembers()
-                  || node.getParent().isInterfaceMembers()
-                  || node.getParent().isRecordType()
-                  || node.getParent().isIndexSignature());
+      }
+      case GETTER_DEF, SETTER_DEF, MEMBER_FUNCTION_DEF, MEMBER_VARIABLE_DEF -> {
+        checkState(
+            node.getParent().isObjectLit()
+                || node.getParent().isClassMembers()
+                || node.getParent().isInterfaceMembers()
+                || node.getParent().isRecordType()
+                || node.getParent().isIndexSignature());
 
-          maybeAddAccessibilityModifier(node);
-          if (node.isStaticMember()) {
-            add("static ");
-          }
+        maybeAddAccessibilityModifier(node);
+        if (node.isStaticMember()) {
+          add("static ");
+        }
 
-          if (node.isMemberFunctionDef() && node.getFirstChild().isAsyncFunction()) {
-            add("async ");
-          }
+        if (node.isMemberFunctionDef() && node.getFirstChild().isAsyncFunction()) {
+          add("async ");
+        }
 
-          if (!node.isMemberVariableDef() && node.getFirstChild().isGeneratorFunction()) {
-            checkState(type == Token.MEMBER_FUNCTION_DEF, node);
-            add("*");
-          }
+        if (!node.isMemberVariableDef() && node.getFirstChild().isGeneratorFunction()) {
+          checkState(type == Token.MEMBER_FUNCTION_DEF, node);
+          add("*");
+        }
 
-          switch (type) {
-            case GETTER_DEF:
-              // Get methods have no parameters.
-              Preconditions.checkState(!first.getSecondChild().hasChildren(), node);
-              add("get ");
-              break;
-            case SETTER_DEF:
-              // Set methods have one parameter.
-              Preconditions.checkState(first.getSecondChild().hasOneChild(), node);
-              add("set ");
-              break;
-            case MEMBER_FUNCTION_DEF:
-            case MEMBER_VARIABLE_DEF:
-              // nothing to do.
-              break;
-            default:
-              break;
-          }
+        switch (type) {
+          case GETTER_DEF:
+            // Get methods have no parameters.
+            Preconditions.checkState(!first.getSecondChild().hasChildren(), node);
+            add("get ");
+            break;
+          case SETTER_DEF:
+            // Set methods have one parameter.
+            Preconditions.checkState(first.getSecondChild().hasOneChild(), node);
+            add("set ");
+            break;
+          case MEMBER_FUNCTION_DEF:
+          case MEMBER_VARIABLE_DEF:
+            // nothing to do.
+            break;
+          default:
+            break;
+        }
 
-          // The name is on the GET or SET node.
-          String name = node.getString();
-          if (node.isMemberVariableDef()) {
-            add(node.getString());
-            maybeAddOptional(node);
-            maybeAddTypeDecl(node);
+        // The name is on the GET or SET node.
+        String name = node.getString();
+        if (node.isMemberVariableDef()) {
+          add(node.getString());
+          maybeAddOptional(node);
+          maybeAddTypeDecl(node);
+        } else {
+          checkState(childCount == 1, node);
+          checkState(first.isFunction(), first);
+
+          // The function referenced by the definition should always be unnamed.
+          checkState(first.getFirstChild().getString().isEmpty(), first);
+
+          Node fn = first;
+          Node parameters = fn.getSecondChild();
+          Node body = fn.getLastChild();
+
+          // Add the property name.
+          if (!node.isQuotedStringKey()
+              && (TokenStream.isJSIdentifier(name) || node.isPrivateIdentifier())
+              &&
+              // do not encode literally any non-literal characters that were
+              // Unicode escaped.
+              NodeUtil.isLatin(name)) {
+            add(name);
+            maybeAddGenericTypes(fn.getFirstChild());
           } else {
-            checkState(childCount == 1, node);
-            checkState(first.isFunction(), first);
-
-            // The function referenced by the definition should always be unnamed.
-            checkState(first.getFirstChild().getString().isEmpty(), first);
-
-            Node fn = first;
-            Node parameters = fn.getSecondChild();
-            Node body = fn.getLastChild();
-
-            // Add the property name.
-            if (!node.isQuotedString()
-                && TokenStream.isJSIdentifier(name)
-                &&
-                // do not encode literally any non-literal characters that were
-                // Unicode escaped.
-                NodeUtil.isLatin(name)) {
-              add(name);
-              maybeAddGenericTypes(fn.getFirstChild());
+            // Determine if the string is a simple number.
+            double d = getSimpleNumber(name);
+            if (!Double.isNaN(d)) {
+              cc.addNumber(d, node);
             } else {
-              // Determine if the string is a simple number.
-              double d = getSimpleNumber(name);
-              if (!Double.isNaN(d)) {
-                cc.addNumber(d, node);
-              } else {
-                addJsString(node);
-              }
+              addJsString(node);
             }
-            maybeAddOptional(fn);
-            add(parameters);
-            maybeAddTypeDecl(fn);
-            add(body);
           }
-          break;
+          maybeAddOptional(fn);
+          add(parameters);
+          maybeAddTypeDecl(fn);
+          add(body);
+        }
+      }
+      case MEMBER_FIELD_DEF, COMPUTED_FIELD_DEF -> {
+        checkState(node.getParent().isClassMembers());
+        if (node.getBooleanProp(Node.STATIC_MEMBER)) {
+          add("static ");
+        }
+        Node init = null;
+        switch (type) {
+          case MEMBER_FIELD_DEF:
+            String propertyName = node.getString();
+            add(propertyName);
+            init = first;
+            break;
+          case COMPUTED_FIELD_DEF:
+            add("[");
+            // Must use addExpr() with a priority of 1, because comma expressions aren't allowed.
+            // https://www.ecma-international.org/ecma-262/9.0/index.html#prod-ComputedPropertyName
+            addExpr(first, 1, Context.OTHER);
+            add("]");
+            init = node.getSecondChild();
+            break;
+          default:
+            break;
+        }
+        if (init != null) {
+          cc.addOp("=", true);
+          addExpr(init, 1, Context.OTHER);
+        }
+        add(";");
+      }
+      case SCRIPT, MODULE_BODY, BLOCK, ROOT -> {
+        if (node.getClass() != Node.class) {
+          throw new Error("Unexpected Node subclass.");
+        }
+        if (node.hasParent()) {
+          boolean staticBlock = node.isBlock() && node.getParent().isClassMembers();
+          if (staticBlock) {
+            add("static");
+          }
+        }
+        // A BLOCK marked as synthetic is not a real JS block with {} around it in the JS code.
+        // It just represents a span of statements that need to be kept together.
+        boolean preserveBlock = node.isBlock() && !node.isSyntheticBlock();
+        if (preserveBlock) {
+          cc.beginBlock();
         }
 
-      case SCRIPT:
-      case MODULE_BODY:
-      case BLOCK:
-      case ROOT:
-        {
-          if (node.getClass() != Node.class) {
-            throw new Error("Unexpected Node subclass.");
-          }
-          boolean preserveBlock = node.isBlock() && !node.isSyntheticBlock();
-          if (preserveBlock) {
-            cc.beginBlock();
+        boolean preferLineBreaks =
+            type == Token.SCRIPT
+                || (type == Token.BLOCK && !preserveBlock && node.getParent().isScript());
+        for (Node c = first; c != null; c = c.getNext()) {
+          add(c, Context.STATEMENT);
+
+          if (c.isFunction() || c.isClass()) {
+            cc.maybeLineBreak();
           }
 
-          boolean preferLineBreaks =
-              type == Token.SCRIPT
-                  || (type == Token.BLOCK && !preserveBlock && node.getParent().isScript());
-          for (Node c = first; c != null; c = c.getNext()) {
-            add(c, Context.STATEMENT);
-
-            if (c.isFunction() || c.isClass()) {
-              cc.maybeLineBreak();
-            }
-
-            // Prefer to break lines in between top-level statements
-            // because top-level statements are more homogeneous.
-            if (preferLineBreaks) {
-              cc.notePreferredLineBreak();
-            }
+          // Prefer to break lines in between top-level statements
+          // because top-level statements are more homogeneous.
+          if (preferLineBreaks) {
+            cc.notePreferredLineBreak();
           }
-          if (preserveBlock) {
-            cc.endBlock(cc.breakAfterBlockFor(node, context == Context.STATEMENT));
-          }
-          break;
         }
-
-      case FOR:
+        if (preserveBlock) {
+          cc.endBlock(cc.breakAfterBlockFor(node, context == Context.STATEMENT));
+        }
+      }
+      case FOR -> {
         Preconditions.checkState(childCount == 4, node);
         add("for");
         cc.maybeInsertSpace();
@@ -730,9 +764,8 @@ public class CodeGenerator {
         add(first.getNext().getNext());
         add(")");
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), false);
-        break;
-
-      case FOR_IN:
+      }
+      case FOR_IN -> {
         Preconditions.checkState(childCount == 3, node);
         add("for");
         cc.maybeInsertSpace();
@@ -742,9 +775,8 @@ public class CodeGenerator {
         add(first.getNext());
         add(")");
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), false);
-        break;
-
-      case FOR_OF:
+      }
+      case FOR_OF -> {
         Preconditions.checkState(childCount == 3, node);
         add("for");
         cc.maybeInsertSpace();
@@ -757,9 +789,8 @@ public class CodeGenerator {
         addExpr(first.getNext(), NodeUtil.precedence(Token.ASSIGN), Context.OTHER);
         add(")");
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), false);
-        break;
-
-      case FOR_AWAIT_OF:
+      }
+      case FOR_AWAIT_OF -> {
         Preconditions.checkState(childCount == 3, node);
         add("for await");
         cc.maybeInsertSpace();
@@ -772,9 +803,8 @@ public class CodeGenerator {
         addExpr(first.getNext(), NodeUtil.precedence(Token.ASSIGN), Context.OTHER);
         add(")");
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), false);
-        break;
-
-      case DO:
+      }
+      case DO -> {
         Preconditions.checkState(childCount == 2, node);
         add("do");
         addNonEmptyStatement(first, Context.OTHER, false);
@@ -784,10 +814,9 @@ public class CodeGenerator {
         add("(");
         add(last);
         add(")");
-        cc.endStatement();
-        break;
-
-      case WHILE:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case WHILE -> {
         Preconditions.checkState(childCount == 2, node);
         add("while");
         cc.maybeInsertSpace();
@@ -795,160 +824,104 @@ public class CodeGenerator {
         add(first);
         add(")");
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), false);
-        break;
-
-      case EMPTY:
-        Preconditions.checkState(childCount == 0, node);
-        break;
-
-      case OPTCHAIN_GETPROP:
-        {
-          checkState(
-              childCount == 2, "Bad OPTCHAIN_GETPROP: expected 2 children, but got %s", childCount);
-          checkState(last.isString(), "Bad OPTCHAIN_GETPROP: RHS should be STRING");
-          addExpr(first, NodeUtil.precedence(type), context);
-          add(node.isOptionalChainStart() ? "?." : ".");
-          addIdentifier(last);
+      }
+      case EMPTY -> Preconditions.checkState(childCount == 0, node);
+      case OPTCHAIN_GETPROP -> {
+        addExpr(first, NodeUtil.precedence(type), context);
+        add(node.isOptionalChainStart() ? "?." : ".");
+        addGetpropIdentifier(node);
+      }
+      case GETPROP -> {
+        // This attempts to convert rewritten aliased code back to the original code,
+        // such as when using goog.scope(). See ScopedAliases.java for the original code.
+        // NOTE: OPTCHAIN_GETPROP case doesn't need this logic, because it only applies to
+        // qualified names.
+        if (useOriginalName && node.getOriginalName() != null) {
+          // The ScopedAliases pass will convert variable assignments and function declarations
+          // to assignments to GETPROP nodes, like $jscomp.scope.SOME_VAR = 3;. This attempts to
+          // rewrite it back to the original code.
+          if (JSCOMP_SCOPE.matches(node.getFirstChild()) && node.getParent().isAssign()) {
+            add("var ");
+          }
+          addGetpropIdentifier(node);
           break;
         }
-
-      case GETPROP:
-        {
-          // This attempts to convert rewritten aliased code back to the original code,
-          // such as when using goog.scope(). See ScopedAliases.java for the original code.
-          // NOTE: OPTCHAIN_GETPROP case doesn't need this logic, because it only applies to
-          // qualified names.
-          if (useOriginalName && node.getOriginalName() != null) {
-            // The ScopedAliases pass will convert variable assignments and function declarations
-            // to assignments to GETPROP nodes, like $jscomp.scope.SOME_VAR = 3;. This attempts to
-            // rewrite it back to the original code.
-            if (node.getFirstChild().matchesQualifiedName("$jscomp.scope")
-                && node.getParent().isAssign()) {
-              add("var ");
-            }
-            addIdentifier(node.getOriginalName());
-            break;
-          }
-          checkState(childCount == 2, "Bad GETPROP: expected 2 children, but got %s", childCount);
-          checkState(last.isString(), "Bad GETPROP: RHS should be STRING");
-          // We need parentheses to distinguish
-          // `a?.b.c` from `(a?.b).c`
-          boolean breakOutOfOptionalChain = NodeUtil.isOptChainNode(first);
-          // `2.toString()` is invalid - it must be `(2).toString()`
-          boolean needsParens = first.isNumber() || breakOutOfOptionalChain;
-          if (needsParens) {
-            add("(");
-          }
-          addExpr(first, NodeUtil.precedence(type), context);
-          if (needsParens) {
-            add(")");
-          }
-          if (quoteKeywordProperties && TokenStream.isKeyword(last.getString())) {
-            // NOTE: We don't have to worry about quoting keyword properties in the
-            // OPTCHAIN_GETPROP case above, because we only need to quote keywords for
-            // ES3-compatible output.
-            add("[");
-            add(last);
-            add("]");
-          } else {
-            add(".");
-            addIdentifier(last);
-          }
-          break;
+        // We need parentheses to distinguish
+        // `a?.b.c` from `(a?.b).c`
+        boolean breakOutOfOptionalChain = NodeUtil.isOptChainNode(first);
+        // `2.toString()` is invalid - it must be `(2).toString()`
+        boolean needsParens = first.isNumber() || breakOutOfOptionalChain;
+        if (needsParens) {
+          add("(");
         }
-
-      case OPTCHAIN_GETELEM:
-        {
-          checkState(
-              childCount == 2,
-              "Bad GETELEM node: Expected 2 children but got %s. For node: %s",
-              childCount,
-              node);
-          addExpr(first, NodeUtil.precedence(type), context);
-          if (node.isOptionalChainStart()) {
-            add("?.");
-          }
-          add("[");
-          add(first.getNext());
-          add("]");
-          break;
+        addExpr(first, NodeUtil.precedence(type), context);
+        if (needsParens) {
+          add(")");
         }
-
-      case GETELEM:
-        {
-          checkState(
-              childCount == 2,
-              "Bad GETELEM node: Expected 2 children but got %s. For node: %s",
-              childCount,
-              node);
-          boolean needsParens = NodeUtil.isOptChainNode(first);
-          if (needsParens) {
-            add("(");
-          }
-          addExpr(first, NodeUtil.precedence(type), context);
-          if (needsParens) {
-            add(")");
-          }
-          add("[");
-          add(first.getNext());
-          add("]");
-          break;
+        if (quoteKeywordProperties && TokenStream.isKeyword(node.getString())) {
+          // NOTE: We don't have to worry about quoting keyword properties in the
+          // OPTCHAIN_GETPROP case above, because we only need to quote keywords for
+          // ES3-compatible output.
+          //
+          // Must be a single call to `add` otherwise the generator will add a trailing space.
+          add("[\"" + node.getString() + "\"]");
+        } else {
+          add(".");
+          addGetpropIdentifier(node);
         }
-
-      case WITH:
+      }
+      case OPTCHAIN_GETELEM -> {
+        checkState(
+            childCount == 2,
+            "Bad GETELEM node: Expected 2 children but got %s. For node: %s",
+            childCount,
+            node);
+        addExpr(first, NodeUtil.precedence(type), context);
+        if (node.isOptionalChainStart()) {
+          add("?.");
+        }
+        add("[");
+        add(first.getNext());
+        add("]");
+      }
+      case GETELEM -> {
+        checkState(
+            childCount == 2,
+            "Bad GETELEM node: Expected 2 children but got %s. For node: %s",
+            childCount,
+            node);
+        boolean needsParens = NodeUtil.isOptChainNode(first);
+        if (needsParens) {
+          add("(");
+        }
+        addExpr(first, NodeUtil.precedence(type), context);
+        if (needsParens) {
+          add(")");
+        }
+        add("[");
+        add(first.getNext());
+        add("]");
+      }
+      case WITH -> {
         Preconditions.checkState(childCount == 2, node);
         add("with(");
         add(first);
         add(")");
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), false);
-        break;
-
-      case INC:
-      case DEC:
-        {
-          checkState(childCount == 1, node);
-          String o = type == Token.INC ? "++" : "--";
-          boolean postProp = node.getBooleanProp(Node.INCRDECR_PROP);
-          if (postProp) {
-            addExpr(first, NodeUtil.precedence(type), context);
-            cc.addOp(o, false);
-          } else {
-            cc.addOp(o, false);
-            add(first);
-          }
-          break;
+      }
+      case INC, DEC -> {
+        checkState(childCount == 1, node);
+        String o = type == Token.INC ? "++" : "--";
+        boolean postProp = node.getBooleanProp(Node.INCRDECR_PROP);
+        if (postProp) {
+          addExpr(first, NodeUtil.precedence(type), context);
+          cc.addOp(o, false);
+        } else {
+          cc.addOp(o, false);
+          add(first);
         }
-
-      case OPTCHAIN_CALL:
-        {
-          // We have two special cases here:
-          // 1) If the left hand side of the call is a direct reference to eval,
-          // then it must have a DIRECT_EVAL annotation. If it does not, then
-          // that means it was originally an indirect call to eval, and that
-          // indirectness must be preserved.
-          // 2) If the left hand side of the call is a property reference,
-          // then the call must not a FREE_CALL annotation. If it does, then
-          // that means it was originally an call without an explicit this and
-          // that must be preserved.
-          if (isIndirectEval(first)
-              || (node.getBooleanProp(Node.FREE_CALL) && NodeUtil.isNormalOrOptChainGet(first))) {
-            add("(0,");
-            addExpr(first, NodeUtil.precedence(Token.COMMA), Context.OTHER);
-            add(")");
-          } else {
-            addExpr(first, NodeUtil.precedence(type), context);
-          }
-          Node args = first.getNext();
-          if (node.isOptionalChainStart()) {
-            add("?.");
-          }
-          add("(");
-          addList(args);
-          add(")");
-          break;
-        }
-
-      case CALL:
+      }
+      case OPTCHAIN_CALL -> {
         // We have two special cases here:
         // 1) If the left hand side of the call is a direct reference to eval,
         // then it must have a DIRECT_EVAL annotation. If it does not, then
@@ -958,31 +931,30 @@ public class CodeGenerator {
         // then the call must not a FREE_CALL annotation. If it does, then
         // that means it was originally an call without an explicit this and
         // that must be preserved.
-        {
-          boolean needsParens = NodeUtil.isOptChainNode(first);
-          if (isIndirectEval(first)
-              || (node.getBooleanProp(Node.FREE_CALL) && NodeUtil.isNormalOrOptChainGet(first))) {
-            add("(0,");
+        if (isIndirectEval(first)
+            || (node.getBooleanProp(Node.FREE_CALL) && NodeUtil.isNormalOrOptChainGet(first))) {
+          add("(0,");
           addExpr(first, NodeUtil.precedence(Token.COMMA), Context.OTHER);
           add(")");
         } else {
-            if (needsParens) {
-              add("(");
-            }
-            addExpr(first, NodeUtil.precedence(type), context);
-            if (needsParens) {
-              add(")");
-            }
+          addExpr(first, NodeUtil.precedence(type), context);
         }
-
         Node args = first.getNext();
+        if (node.isOptionalChainStart()) {
+          add("?.");
+        }
         add("(");
         addList(args);
         add(")");
-        break;
-        }
+      }
+      case CALL -> {
+        this.addInvocationTarget(node, context);
 
-      case IF:
+        add("(");
+        addList(first.getNext());
+        add(")");
+      }
+      case IF -> {
         Preconditions.checkState(childCount == 2 || childCount == 3, node);
         boolean hasElse = childCount == 3;
         boolean ambiguousElseClause = context == Context.BEFORE_DANGLING_ELSE && !hasElse;
@@ -1008,29 +980,24 @@ public class CodeGenerator {
         if (ambiguousElseClause) {
           cc.endBlock();
         }
-        break;
-
-      case NULL:
+      }
+      case NULL -> {
         Preconditions.checkState(childCount == 0, node);
         cc.addConstant("null");
-        break;
-
-      case THIS:
+      }
+      case THIS -> {
         Preconditions.checkState(childCount == 0, node);
         add("this");
-        break;
-
-      case SUPER:
+      }
+      case SUPER -> {
         Preconditions.checkState(childCount == 0, node);
         add("super");
-        break;
-
-      case NEW_TARGET:
+      }
+      case NEW_TARGET -> {
         Preconditions.checkState(childCount == 0, node);
         add("new.target");
-        break;
-
-      case YIELD:
+      }
+      case YIELD -> {
         add("yield");
         if (node.isYieldAll()) {
           checkNotNull(first);
@@ -1040,24 +1007,20 @@ public class CodeGenerator {
           cc.maybeInsertSpace();
           addExpr(first, NodeUtil.precedence(type), Context.OTHER);
         }
-        break;
-
-      case AWAIT:
+      }
+      case AWAIT -> {
         add("await ");
         addExpr(first, NodeUtil.precedence(type), Context.OTHER);
-        break;
-
-      case FALSE:
+      }
+      case FALSE -> {
         Preconditions.checkState(childCount == 0, node);
         cc.addConstant("false");
-        break;
-
-      case TRUE:
+      }
+      case TRUE -> {
         Preconditions.checkState(childCount == 0, node);
         cc.addConstant("true");
-        break;
-
-      case CONTINUE:
+      }
+      case CONTINUE -> {
         Preconditions.checkState(childCount <= 1, node);
         add("continue");
         if (childCount == 1) {
@@ -1067,16 +1030,14 @@ public class CodeGenerator {
           add(" ");
           add(first);
         }
-        cc.endStatement();
-        break;
-
-      case DEBUGGER:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case DEBUGGER -> {
         Preconditions.checkState(childCount == 0, node);
         add("debugger");
-        cc.endStatement();
-        break;
-
-      case BREAK:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case BREAK -> {
         Preconditions.checkState(childCount <= 1, node);
         add("break");
         if (childCount == 1) {
@@ -1086,16 +1047,14 @@ public class CodeGenerator {
           add(" ");
           add(first);
         }
-        cc.endStatement();
-        break;
-
-      case EXPR_RESULT:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case EXPR_RESULT -> {
         Preconditions.checkState(childCount == 1, node);
         add(first, Context.START_OF_EXPR);
-        cc.endStatement();
-        break;
-
-      case NEW:
+        cc.endStatement(hasTrailingCommentOnSameLine(node));
+      }
+      case NEW -> {
         add("new ");
         int precedence = NodeUtil.precedence(type);
 
@@ -1109,7 +1068,10 @@ public class CodeGenerator {
         // If the first child contains a CALL, then claim higher precedence
         // to force parentheses. Otherwise, when parsed, NEW will bind to the
         // first viable parentheses (don't traverse into functions).
-        if (NodeUtil.has(first, Node::isCall, NodeUtil.MATCH_NOT_FUNCTION)) {
+        // Also, NEW requires parentheses around an optional chain callee.
+        // If the first child is an arrow function, then parentheses is needed
+        if (NodeUtil.has(first, Node::isCall, NodeUtil.MATCH_NOT_FUNCTION)
+            || NodeUtil.isOptChainNode(first)) {
           precedence = NodeUtil.precedence(first.getToken()) + 1;
         }
         addExpr(first, precedence, Context.OTHER);
@@ -1120,50 +1082,46 @@ public class CodeGenerator {
           add("(");
           addList(next);
           add(")");
+        } else {
+          if (cc.shouldPreserveExtras(node)) {
+            add("(");
+            add(")");
+          }
         }
-        break;
-
-      case STRING_KEY:
-        addStringKey(node);
-        break;
-
-      case STRING:
+      }
+      case STRING_KEY -> addStringKey(node);
+      case STRINGLIT -> {
         Preconditions.checkState(childCount == 0, "String node %s may not have children", node);
         addJsString(node);
-        break;
-
-      case DELPROP:
+      }
+      case DELPROP -> {
         Preconditions.checkState(childCount == 1, node);
         add("delete ");
         add(first);
-        break;
-
-      case OBJECTLIT:
-        {
-          boolean needsParens = context == Context.START_OF_EXPR || context.atArrowFunctionBody();
-          if (needsParens) {
-            add("(");
-          }
-          add("{");
-          for (Node c = first; c != null; c = c.getNext()) {
-            if (c != first) {
-              cc.listSeparator();
-            }
-
-            checkState(NodeUtil.isObjLitProperty(c) || c.isSpread(), c);
-            add(c);
-          }
-          if (first != null && prettyPrint && node.hasTrailingComma()) {
+      }
+      case OBJECTLIT -> {
+        boolean needsParens = context == Context.START_OF_EXPR || context.atArrowFunctionBody();
+        if (needsParens) {
+          add("(");
+        }
+        add("{");
+        for (Node c = first; c != null; c = c.getNext()) {
+          if (c != first) {
             cc.listSeparator();
           }
-          add("}");
-          if (needsParens) {
-            add(")");
-          }
-          break;
-        }
 
-      case COMPUTED_PROP:
+          checkState(NodeUtil.isObjLitProperty(c) || c.isSpread(), c);
+          add(c);
+        }
+        if (first != null && node.hasTrailingComma()) {
+          cc.optionalListSeparator();
+        }
+        add("}");
+        if (needsParens) {
+          add(")");
+        }
+      }
+      case COMPUTED_PROP -> {
         maybeAddAccessibilityModifier(node);
         if (node.getBooleanProp(Node.STATIC_MEMBER)) {
           add("static ");
@@ -1217,36 +1175,34 @@ public class CodeGenerator {
             checkState(node.getBooleanProp(Node.COMPUTED_PROP_VARIABLE), node);
           }
         }
-        break;
-
-      case OBJECT_PATTERN:
+      }
+      case OBJECT_PATTERN -> {
         addObjectPattern(node);
         maybeAddTypeDecl(node);
-        break;
-
-      case SWITCH:
+      }
+      case SWITCH -> {
         add("switch(");
         add(first);
         add(")");
+        add(last, context);
+      }
+      case SWITCH_BODY -> {
         cc.beginBlock();
-        addAllSiblings(first.getNext());
+        addAllSiblings(first);
         cc.endBlock(context == Context.STATEMENT);
-        break;
-
-      case CASE:
+      }
+      case CASE -> {
         Preconditions.checkState(childCount == 2, node);
         add("case ");
         add(first);
         addCaseBody(last);
-        break;
-
-      case DEFAULT_CASE:
+      }
+      case DEFAULT_CASE -> {
         Preconditions.checkState(childCount == 1, node);
         add("default");
         addCaseBody(first);
-        break;
-
-      case LABEL:
+      }
+      case LABEL -> {
         Preconditions.checkState(childCount == 2, node);
         if (!first.isLabelName()) {
           throw new Error("Unexpected token type. Should be LABEL_NAME.");
@@ -1257,9 +1213,8 @@ public class CodeGenerator {
           cc.maybeInsertSpace();
         }
         addNonEmptyStatement(last, getContextForNonEmptyExpression(context), true);
-        break;
-
-      case CAST:
+      }
+      case CAST -> {
         if (preserveTypeAnnotations) {
           add("(");
           add(first); // drop context because of added parentheses
@@ -1267,14 +1222,12 @@ public class CodeGenerator {
         } else {
           add(first, context); // preserve context
         }
-        break;
-
-      case TAGGED_TEMPLATELIT:
-        add(first, Context.START_OF_EXPR);
+      }
+      case TAGGED_TEMPLATELIT -> {
+        this.addInvocationTarget(node, context);
         add(first.getNext());
-        break;
-
-      case TEMPLATELIT:
+      }
+      case TEMPLATELIT -> {
         cc.beginTemplateLit();
         for (Node c = first; c != null; c = c.getNext()) {
           if (c.isTemplateLitString()) {
@@ -1286,70 +1239,56 @@ public class CodeGenerator {
           }
         }
         cc.endTemplateLit();
-        break;
-
-        // Type Declaration ASTs.
-      case STRING_TYPE:
-        add("string");
-        break;
-      case BOOLEAN_TYPE:
-        add("boolean");
-        break;
-      case NUMBER_TYPE:
-        add("number");
-        break;
-      case ANY_TYPE:
-        add("any");
-        break;
-      case VOID_TYPE:
-        add("void");
-        break;
-      case NAMED_TYPE:
-        // Children are a chain of getprop nodes.
-        add(first);
-        break;
-      case ARRAY_TYPE:
+      }
+      // Type Declaration ASTs.
+      case STRING_TYPE -> add("string");
+      case BOOLEAN_TYPE -> add("boolean");
+      case NUMBER_TYPE -> add("number");
+      case ANY_TYPE -> add("any");
+      case VOID_TYPE -> add("void");
+      case NAMED_TYPE ->
+          // Children are a chain of getprop nodes.
+          add(first);
+      case ARRAY_TYPE -> {
         addExpr(first, NodeUtil.precedence(Token.ARRAY_TYPE), context);
         add("[]");
-        break;
-      case FUNCTION_TYPE:
+      }
+      case FUNCTION_TYPE -> {
         Node returnType = first;
         add("(");
         addList(first.getNext());
         add(")");
         cc.addOp("=>", true);
         add(returnType);
-        break;
-      case UNION_TYPE:
-        addList(first, "|");
-        break;
-      case RECORD_TYPE:
+      }
+      case UNION_TYPE -> addList(first, "|");
+      case RECORD_TYPE -> {
         add("{");
         addList(first, false, Context.OTHER, ",");
         add("}");
-        break;
-      case PARAMETERIZED_TYPE:
+      }
+      case PARAMETERIZED_TYPE -> {
         // First child is the type that's parameterized, later children are the arguments.
         add(first);
         add("<");
         addList(first.getNext());
         add(">");
-        break;
         // CLASS -> NAME,EXPR|EMPTY,BLOCK
-      case GENERIC_TYPE_LIST:
+      }
+      case GENERIC_TYPE_LIST -> {
         add("<");
         addList(first, false, Context.STATEMENT, ",");
         add(">");
-        break;
-      case GENERIC_TYPE:
+      }
+      case GENERIC_TYPE -> {
         addIdentifier(node.getString());
         if (node.hasChildren()) {
           add("extends");
           cc.maybeInsertSpace();
           add(node.getFirstChild());
         }
-        break;
-      case INTERFACE:
+      }
+      case INTERFACE -> {
         {
           checkState(childCount == 3, node);
           Node name = first;
@@ -1371,69 +1310,55 @@ public class CodeGenerator {
           }
           add(members);
         }
-        break;
-      case ENUM:
-        {
-          checkState(childCount == 2, node);
-          Node name = first;
-          Node members = last;
-          add("enum");
-          add(name);
-          add(members);
-          break;
-        }
-      case NAMESPACE:
-        {
-          checkState(childCount == 2, node);
-          Node name = first;
-          Node elements = last;
-          add("namespace");
-          add(name);
-          add(elements);
-          break;
-        }
-      case TYPE_ALIAS:
+      }
+      case ENUM -> {
+        checkState(childCount == 2, node);
+        Node name = first;
+        Node members = last;
+        add("enum");
+        add(name);
+        add(members);
+      }
+      case NAMESPACE -> {
+        checkState(childCount == 2, node);
+        Node name = first;
+        Node elements = last;
+        add("namespace");
+        add(name);
+        add(elements);
+      }
+      case TYPE_ALIAS -> {
         add("type");
         add(node.getString());
         cc.addOp("=", true);
         add(last);
-        cc.endStatement(true);
-        break;
-      case DECLARE:
+        cc.endStatement(/* needSemiColon= */ true, hasTrailingCommentOnSameLine(node));
+      }
+      case DECLARE -> {
         add("declare");
         add(first);
         processEnd(node, context);
-        break;
-      case INDEX_SIGNATURE:
+      }
+      case INDEX_SIGNATURE -> {
         add("[");
         add(first);
         add("]");
         maybeAddTypeDecl(node);
-        cc.endStatement(true);
-        break;
-      case CALL_SIGNATURE:
+        cc.endStatement(/* needSemiColon= */ true, hasTrailingCommentOnSameLine(node));
+      }
+      case CALL_SIGNATURE -> {
         if (node.getBooleanProp(Node.CONSTRUCT_SIGNATURE)) {
           add("new ");
         }
         maybeAddGenericTypes(node);
         add(first);
         maybeAddTypeDecl(node);
-        cc.endStatement(true);
-        break;
-      default:
-        throw new IllegalStateException("Unknown token " + type + "\n" + node.toStringTree());
-    }
-
-    // print any trailing nonJSDoc comment attached to this node
-    if (printNonJSDocComments) {
-      NonJSDocComment nonJSDocComment = node.getNonJSDocComment();
-      if (nonJSDocComment != null && nonJSDocComment.isTrailing()) {
-        String nonJSDocCommentString = node.getNonJSDocCommentString();
-        if (!nonJSDocCommentString.isEmpty()) {
-          addNonJsDoc_trailing(node, nonJSDocComment);
-        }
+        cc.endStatement(/* needSemiColon= */ true, hasTrailingCommentOnSameLine(node));
       }
+      default ->
+          throw new IllegalStateException("Unknown token " + type + "\n" + node.toStringTree());
     }
+    printTrailingComment(node);
 
     cc.endSourceMapping(node);
   }
@@ -1442,10 +1367,10 @@ public class CodeGenerator {
     cc.addIdentifier(identifierEscape(identifier));
   }
 
-  private void addIdentifier(Node identifier) {
-    cc.startSourceMapping(identifier);
-    addIdentifier(identifier.getString());
-    cc.endSourceMapping(identifier);
+  private void addGetpropIdentifier(Node getprop) {
+    cc.startSourceMapping(getprop);
+    addIdentifier(getprop.getString());
+    cc.endSourceMapping(getprop);
   }
 
   private int precedence(Node n) {
@@ -1455,8 +1380,52 @@ public class CodeGenerator {
     return NodeUtil.precedence(n.getToken());
   }
 
-  private static boolean arrowFunctionNeedsParens(Node n) {
+  /**
+   * We have two special cases here:
+   *
+   * <ul>
+   *   <li>If the left hand side of the call is a direct reference to eval, then it must have a
+   *       DIRECT_EVAL annotation. If it does not, then that means it was originally an indirect
+   *       call to eval, and that indirectness must be preserved.
+   *   <li>If the left hand side of the call is a property reference, then the call must not a
+   *       FREE_CALL annotation. If it does, then that means it was originally an call without an
+   *       explicit this and that must be preserved.
+   */
+  private void addInvocationTarget(Node node, Context context) {
+    Node first = node.getFirstChild();
+
+    boolean needsParens = NodeUtil.isOptChainNode(first);
+    if (isIndirectEval(first)
+        || (node.getBooleanProp(Node.FREE_CALL) && NodeUtil.isNormalOrOptChainGet(first))) {
+      add("(0,");
+      addExpr(first, NodeUtil.precedence(Token.COMMA), Context.OTHER);
+      add(")");
+    } else {
+      if (needsParens) {
+        add("(");
+      }
+      addExpr(first, NodeUtil.precedence(node.getToken()), context);
+      if (needsParens) {
+        add(")");
+      }
+    }
+  }
+
+  private boolean arrowFunctionNeedsParens(Node n) {
     Node parent = n.getParent();
+    Node expressionOrEnclosingCast = n;
+    while (parent != null && parent.isCast()) {
+      if (preserveTypeAnnotations) {
+        // If printing type annotations, any expression in a CAST automatically is wrapped in
+        // parentheses when printing the CAST. Returning true here would add a second, unnecessary
+        // pair of parentheses.
+        return false;
+      }
+      // If not printing type annotations, then pretend the CAST node is not there and check the
+      // parent of the CAST.
+      expressionOrEnclosingCast = parent;
+      parent = parent.getParent();
+    }
 
     // Once you cut through the layers of non-terminals used to define operator precedence,
     // you can see the following are true.
@@ -1482,27 +1451,30 @@ public class CodeGenerator {
         || NodeUtil.isUnaryOperator(parent)
         || NodeUtil.isUpdateOperator(parent)
         || parent.isTaggedTemplateLit()
-        || parent.isGetProp()) {
+        || parent.isGetProp()
+        || parent.isOptChainGetProp()
+        || parent.isAwait()
+        || parent.isYield()) {
       // LeftHandSideExpression OP LeftHandSideExpression
       // OP LeftHandSideExpression | LeftHandSideExpression OP
       // MemberExpression TemplateLiteral
       // MemberExpression '.' IdentifierName
       return true;
-    } else if (parent.isGetElem() || parent.isCall() || parent.isHook()) {
+    } else if (parent.isGetElem()
+        || parent.isCall()
+        || parent.isHook()
+        || parent.isOptChainGetElem()
+        || parent.isOptChainCall()
+        || parent.isNew()) {
       // MemberExpression '[' Expression ']'
       // MemberFunction '(' AssignmentExpressionList ')'
       // LeftHandSideExpression ? AssignmentExpression : AssignmentExpression
-      return isFirstChild(n);
+      return expressionOrEnclosingCast.isFirstChildOf(parent);
     } else {
       // All other cases are either illegal (e.g. because you cannot assign a value to an
       // ArrowFunction) or do not require parens.
       return false;
     }
-  }
-
-  private static boolean isFirstChild(Node n) {
-    Node parent = n.getParent();
-    return parent != null && n == parent.getFirstChild();
   }
 
   private void addArrowFunction(Node n, Node first, Node last, Context context) {
@@ -1593,15 +1565,19 @@ public class CodeGenerator {
   }
 
   /**
-   * We could use addList recursively here, but sometimes we produce
-   * very deeply nested operators and run out of stack space, so we
-   * just unroll the recursion when possible.
+   * We could use addList recursively here, but sometimes we produce very deeply nested operators
+   * and run out of stack space, so we just unroll the recursion when possible.
    *
-   * We assume nodes are left-recursive.
+   * <p>We assume nodes are left-recursive.
    */
   private void unrollBinaryOperator(
-      Node n, Token op, String opStr, Context context,
-      Context rhsContext, int leftPrecedence, int rightPrecedence) {
+      Node n,
+      Token op,
+      String opStr,
+      Context context,
+      Context rhsContext,
+      int leftPrecedence,
+      int rightPrecedence) {
     Node firstNonOperator = n.getFirstChild();
     while (firstNonOperator.getToken() == op) {
       firstNonOperator = firstNonOperator.getFirstChild();
@@ -1653,14 +1629,13 @@ public class CodeGenerator {
   }
 
   /**
-   * Adds a block or expression, substituting a VOID with an empty statement.
-   * This is used for "for (...);" and "if (...);" type statements.
+   * Adds a block or expression, substituting a VOID with an empty statement. This is used for "for
+   * (...);" and "if (...);" type statements.
    *
    * @param n The node to print.
    * @param context The context to determine how the node should be printed.
    */
-  private void addNonEmptyStatement(
-      Node n, Context context, boolean allowNonBlockChild) {
+  private void addNonEmptyStatement(Node n, Context context, boolean allowNonBlockChild) {
     Node nodeToProcess = n;
 
     if (!allowNonBlockChild && !n.isBlock()) {
@@ -1672,24 +1647,27 @@ public class CodeGenerator {
     if (n.isBlock()) {
       int count = getNonEmptyChildCount(n, 2);
       if (count == 0) {
-        if (cc.shouldPreserveExtraBlocks()) {
+        if (cc.shouldPreserveExtras(n)) {
           cc.beginBlock();
+          printTrailingComment(n);
           cc.endBlock(cc.breakAfterBlockFor(n, context == Context.STATEMENT));
         } else {
-          cc.endStatement(true);
+          printTrailingComment(n);
+          cc.endStatement(/* needSemiColon= */ true, /* hasTrailingCommentOnSameLine= */ false);
         }
         return;
       }
 
       if (count == 1) {
         // Preserve the block only if needed or requested.
-        //'let', 'const', etc are not allowed by themselves in "if" and other
+        // 'let', 'const', etc are not allowed by themselves in "if" and other
         // structures. Also, hack around a IE6/7 browser bug that needs a block around DOs.
         Node firstAndOnlyChild = getFirstNonEmptyChild(n);
-        boolean alwaysWrapInBlock = cc.shouldPreserveExtraBlocks();
+        boolean alwaysWrapInBlock = cc.shouldPreserveExtras(n);
         if (alwaysWrapInBlock || isBlockDeclOrDo(firstAndOnlyChild)) {
           cc.beginBlock();
           add(firstAndOnlyChild, Context.STATEMENT);
+          printTrailingComment(n);
           cc.maybeLineBreak();
           cc.endBlock(cc.breakAfterBlockFor(n, context == Context.STATEMENT));
           return;
@@ -1701,15 +1679,16 @@ public class CodeGenerator {
     }
 
     if (nodeToProcess.isEmpty()) {
-      cc.endStatement(true);
+      printTrailingComment(n);
+      cc.endStatement(/* needSemiColon= */ true, /* hasTrailingCommentOnSameLine= */ false);
     } else {
       add(nodeToProcess, context);
+      printTrailingComment(n);
     }
   }
 
   /**
-   * @return Whether the Node is a DO or a declaration that is only allowed
-   * in restricted contexts.
+   * @return Whether the Node is a DO or a declaration that is only allowed in restricted contexts.
    */
   private static boolean isBlockDeclOrDo(Node n) {
     if (n.isLabel()) {
@@ -1729,16 +1708,10 @@ public class CodeGenerator {
         }
       }
     } else {
-      switch (n.getToken()) {
-        case LET:
-        case CONST:
-        case FUNCTION:
-        case CLASS:
-        case DO:
-          return true;
-        default:
-          return false;
-      }
+      return switch (n.getToken()) {
+        case LET, CONST, FUNCTION, CLASS, DO -> true;
+        default -> false;
+      };
     }
   }
 
@@ -1766,6 +1739,9 @@ public class CodeGenerator {
       // precedence is not enough here since using && or || with ?? without parentheses
       // is a syntax error as ?? expands directly to |
       return true;
+    } else if (n.isAssign() && n.getParent().isClass()) {
+      // Class declarations with assignments should be wrapped in parentheses.
+      return true;
     } else {
       return precedence(n) < minPrecedence;
     }
@@ -1786,7 +1762,7 @@ public class CodeGenerator {
 
   private boolean isFirstOperandOfExponentiationExpression(Node n) {
     Node parent = n.getParent();
-    return parent != null && parent.getToken() == Token.EXPONENT && parent.getFirstChild() == n;
+    return parent != null && parent.isExponent() && parent.getFirstChild() == n;
   }
 
   void addList(Node firstInList) {
@@ -1797,25 +1773,23 @@ public class CodeGenerator {
     addList(firstInList, true, Context.OTHER, separator);
   }
 
-  void addList(Node firstInList, boolean isArrayOrFunctionArgument,
-      Context lhsContext, String separator) {
+  void addList(
+      Node firstInList, boolean isArrayOrFunctionArgument, Context lhsContext, String separator) {
     if (firstInList == null) {
       return;
     }
     for (Node n = firstInList; n != null; n = n.getNext()) {
       boolean isFirst = n == firstInList;
+      int minPrecedence = isArrayOrFunctionArgument ? 1 : 0;
       if (isFirst) {
-        addExpr(n, isArrayOrFunctionArgument ? 1 : 0, lhsContext);
+        addExpr(n, minPrecedence, lhsContext);
       } else {
         cc.addOp(separator, true);
-        addExpr(n, isArrayOrFunctionArgument ? 1 : 0,
-            getContextForNoInOperator(lhsContext));
+        addExpr(n, minPrecedence, getContextForNoInOperator(lhsContext));
       }
     }
-    if (prettyPrint
-        && isArrayOrFunctionArgument
-        && checkNotNull(firstInList.getParent()).hasTrailingComma()) {
-      cc.listSeparator();
+    if (isArrayOrFunctionArgument && checkNotNull(firstInList.getParent()).hasTrailingComma()) {
+      cc.optionalListSeparator();
     }
   }
 
@@ -1823,11 +1797,11 @@ public class CodeGenerator {
     String key = n.getString();
     // Object literal property names don't have to be quoted if they are not JavaScript keywords.
     boolean mustBeQuoted =
-        n.isQuotedString()
-        || (quoteKeywordProperties && TokenStream.isKeyword(key))
-        || !TokenStream.isJSIdentifier(key)
-        // do not encode literally any non-literal characters that were Unicode escaped.
-        || !NodeUtil.isLatin(key);
+        n.isQuotedStringKey()
+            || (quoteKeywordProperties && TokenStream.isKeyword(key))
+            || !TokenStream.isJSIdentifier(key)
+            // do not encode literally any non-literal characters that were Unicode escaped.
+            || !NodeUtil.isLatin(key);
     if (!mustBeQuoted) {
       // Check if the property is eligible to be printed as shorthand.
       if (n.isShorthandProperty()) {
@@ -1870,9 +1844,7 @@ public class CodeGenerator {
   }
 
   /**
-   * This function adds a comma-separated list as is specified by an ARRAYLIT node with the
-   * associated skipIndexes array. This is a space optimization since we avoid creating a whole Node
-   * object for each empty array literal slot.
+   * Adds a comma-separated list as is specified by an ARRAYLIT node.
    *
    * @param firstInList The first in the node list (chained through the next property).
    */
@@ -1889,8 +1861,10 @@ public class CodeGenerator {
       lastWasEmpty = n.isEmpty();
     }
 
-    if (lastWasEmpty || (prettyPrint && checkNotNull(firstInList.getParent()).hasTrailingComma())) {
+    if (lastWasEmpty) {
       cc.listSeparator();
+    } else if (firstInList.getParent().hasTrailingComma()) {
+      cc.optionalListSeparator();
     }
   }
 
@@ -1916,7 +1890,7 @@ public class CodeGenerator {
     if (nonJSDocComment.isEndingAsLineComment()) {
       // Non trailing line comments can not be on the same line as the node.
       checkState(
-          commentEndPosition.line < nodeLineNumber,
+          gentsMode || commentEndPosition.line < nodeLineNumber,
           "Non trailing line comments can not be on the same line as the node.");
       add(content + "\n");
     } else {
@@ -1934,54 +1908,45 @@ public class CodeGenerator {
     }
   }
 
-  private void addNonJsDoc_trailing(Node n, NonJSDocComment nonJSDocComment) {
+  private void addNonJsDoctrailing(NonJSDocComment nonJSDocComment, boolean sameLine) {
     String content = nonJSDocComment.getCommentString();
-    SourcePosition commentStartPosition = nonJSDocComment.getStartPosition();
-    int nodeLineNumber = n.getLineno() - 1; // source lines are 1-indexed
     if (nonJSDocComment.isEndingAsLineComment()) {
-      // Trailing line comments *must* be on the same line as the node. e.g. `let a; // some`
-      checkState(
-          commentStartPosition.line == nodeLineNumber,
-          "Trailing line comments *must* be on the same line as the node.");
       // Trailing line comments *must* end with a `\n`. E.g.. `let x; //comment\n`
-      add(" " + content + "\n");
+      add(" " + content);
+      if (sameLine) {
+        cc.startNewLine();
+      }
     } else {
       if (nonJSDocComment.isInline()) {
         // e.g. `foo(x /*comment*/);` is inline
         add(" " + content);
       } else {
         // e.g. `let x; /*comment*/` is non-inline
-        add(" " + content + "\n");
+        add(" " + content);
+        if (sameLine) {
+          cc.startNewLine();
+        }
       }
     }
   }
 
   /** Outputs a JS string, using the optimal (single/double) quote character */
   private void addJsString(Node n) {
-    String s = n.getString();
-    boolean useSlashV = n.getBooleanProp(Node.SLASH_V);
-    if (useSlashV) {
-      add(jsString(n.getString(), useSlashV));
-    } else {
-      String cached = escapedJsStrings.get(s);
-      if (cached == null) {
-        cached = jsString(n.getString(), useSlashV);
-        escapedJsStrings.put(s, cached);
-      }
-      add(cached);
-    }
+    add(jsString(n.getString()));
   }
 
-  private String jsString(String s, boolean useSlashV) {
+  private String jsString(String s) {
     int singleq = 0;
     int doubleq = 0;
 
     // could count the quotes and pick the optimal quote character
     for (int i = 0; i < s.length(); i++) {
       switch (s.charAt(i)) {
-        case '"': doubleq++; break;
-        case '\'': singleq++; break;
-        default: // skip non-quote characters
+        case '"' -> doubleq++;
+        case '\'' -> singleq++;
+        default -> {
+          // skip non-quote characters
+        }
       }
     }
 
@@ -2000,14 +1965,12 @@ public class CodeGenerator {
       singlequote = "\'";
     }
 
-    return quote
-        + strEscape(s, doublequote, singlequote, "`", "\\\\", "$", useSlashV, false)
-        + quote;
+    return quote + strEscape(s, doublequote, singlequote, "`", "\\\\", "$", false) + quote;
   }
 
   /** Escapes regular expression */
   String regexpEscape(String s) {
-    return '/' + strEscape(s, "\"", "'", "`", "\\", "$", false, true) + '/';
+    return '/' + strEscape(s, "\"", "'", "`", "\\", "$", true) + '/';
   }
 
   /** Helper to escape JavaScript string as well as regular expression */
@@ -2018,50 +1981,46 @@ public class CodeGenerator {
       String backtickEscape,
       String backslashEscape,
       String dollarEscape,
-      boolean useSlashV,
       boolean isRegexp) {
     StringBuilder sb = new StringBuilder(s.length() + 2);
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
       switch (c) {
-        case '\0': sb.append("\\x00"); break;
-        case '\u000B':
-          if (useSlashV) {
+        case '\0' -> sb.append("\\x00");
+        case '\u000B' -> {
+          if (!isRegexp) {
             sb.append("\\v");
           } else {
             sb.append("\\x0B");
           }
-          break;
-        // From the SingleEscapeCharacter grammar production.
-        case '\b': sb.append("\\b"); break;
-        case '\f': sb.append("\\f"); break;
-        case '\n': sb.append("\\n"); break;
-        case '\r': sb.append("\\r"); break;
-        case '\t': sb.append("\\t"); break;
-        case '\\': sb.append(backslashEscape); break;
-        case '\"': sb.append(doublequoteEscape); break;
-        case '\'': sb.append(singlequoteEscape); break;
-        case '$': sb.append(dollarEscape); break;
-        case '`': sb.append(backtickEscape); break;
-
-        case '=':
+          // From the SingleEscapeCharacter grammar production.
+        }
+        case '\b' -> sb.append("\\b");
+        case '\f' -> sb.append("\\f");
+        case '\n' -> sb.append("\\n");
+        case '\r' -> sb.append("\\r");
+        case '\t' -> sb.append("\\t");
+        case '\\' -> sb.append(backslashEscape);
+        case '\"' -> sb.append(doublequoteEscape);
+        case '\'' -> sb.append(singlequoteEscape);
+        case '$' -> sb.append(dollarEscape);
+        case '`' -> sb.append(backtickEscape);
+        case '=' -> {
           // '=' is a syntactically significant regexp character.
           if (trustedStrings || isRegexp) {
             sb.append(c);
           } else {
             sb.append("\\x3d");
           }
-          break;
-
-        case '&':
+        }
+        case '&' -> {
           if (trustedStrings || isRegexp) {
             sb.append(c);
           } else {
             sb.append("\\x26");
           }
-          break;
-
-        case '>':
+        }
+        case '>' -> {
           if (!trustedStrings && !isRegexp) {
             sb.append(GT_ESCAPED);
             break;
@@ -2079,8 +2038,8 @@ public class CodeGenerator {
           } else {
             sb.append(c);
           }
-          break;
-        case '<':
+        }
+        case '<' -> {
           if (!trustedStrings && !isRegexp) {
             sb.append(LT_ESCAPED);
             break;
@@ -2101,9 +2060,8 @@ public class CodeGenerator {
           } else {
             sb.append(c);
           }
-          break;
-
-        default:
+        }
+        default -> {
           if (isRegexp
               || !outputFeatureSet.contains(Feature.UNESCAPED_UNICODE_LINE_OR_PARAGRAPH_SEP)) {
             // In 2019 these characters (line and paragraph separators) are valid in strings but
@@ -2132,6 +2090,7 @@ public class CodeGenerator {
             // so we play it safe and Unicode escape them.
             Util.appendHexJavaScriptRepresentation(sb, c);
           }
+        }
       }
     }
     return sb.toString();
@@ -2149,22 +2108,10 @@ public class CodeGenerator {
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
       switch (c) {
-          // From the SingleEscapeCharacter grammar production.
-        case '\b':
-        case '\f':
-        case '\n':
-        case '\r':
-        case '\t':
-        case '\\':
-        case '\"':
-        case '\'':
-        case '$':
-        case '`':
-        case '\u2028':
-        case '\u2029':
-          sb.append(c);
-          break;
-        default:
+        case '\b', '\f', '\n', '\r', '\t', '\\', '\"', '\'', '$', '`', '\u2028', '\u2029' ->
+            // From the SingleEscapeCharacter grammar production.
+            sb.append(c);
+        default -> {
           if ((outputCharsetEncoder != null && outputCharsetEncoder.canEncode(c))
               || (c > 0x1f && c < 0x7f)) {
             // If we're given an outputCharsetEncoder, then check if the character can be
@@ -2178,6 +2125,7 @@ public class CodeGenerator {
             // so we play it safe and Unicode escape them.
             Util.appendHexJavaScriptRepresentation(sb, c);
           }
+        }
       }
     }
     return sb.toString();
@@ -2204,10 +2152,10 @@ public class CodeGenerator {
     }
     return sb.toString();
   }
+
   /**
    * @param maxCount The maximum number of children to look for.
-   * @return The number of children of this node that are non empty up to
-   * maxCount.
+   * @return The number of children of this node that are non empty up to maxCount.
    */
   private static int getNonEmptyChildCount(Node n, int maxCount) {
     int i = 0;
@@ -2223,7 +2171,7 @@ public class CodeGenerator {
   }
 
   /** Gets the first non-empty child of the given node. */
-  private static Node getFirstNonEmptyChild(Node n) {
+  private static @Nullable Node getFirstNonEmptyChild(Node n) {
     for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
       if (c.isBlock()) {
         Node result = getFirstNonEmptyChild(c);
@@ -2238,9 +2186,8 @@ public class CodeGenerator {
   }
 
   /**
-   * Information on the current context. Used for disambiguating special cases.
-   * For example, a "{" could indicate the start of an object literal or a
-   * block, depending on the current context.
+   * Information on the current context. Used for disambiguating special cases. For example, a "{"
+   * could indicate the start of an object literal or a block, depending on the current context.
    */
   public enum Context {
     STATEMENT,
@@ -2250,21 +2197,18 @@ public class CodeGenerator {
     // expression can't contain an in operator.  Pass this context flag down
     // until we reach expressions which no longer have the limitation.
     IN_FOR_INIT_CLAUSE(
-        /** inForInitClause */
-        true,
-        /** at start of arrow fn */
+        /* inForInitClause= */ true,
+        /* at start of arrow fn */
         false),
     // Handle object literals at the start of a non-block arrow function body.
     // This is only important when the first token after the "=>" is "{".
     START_OF_ARROW_FN_BODY(
-        /** inForInitClause */
-        false,
-        /** at start of arrow fn */
+        /* inForInitClause= */ false,
+        /* at start of arrow fn */
         true),
     START_OF_ARROW_FN_IN_FOR_INIT(
-        /** inForInitClause */
-        true,
-        /** atArrowFunctionBody */
+        /* inForInitClause= */ true,
+        /* atArrowFunctionBody */
         true),
     OTHER; // nothing special to watch out for.
 
@@ -2298,8 +2242,8 @@ public class CodeGenerator {
   }
 
   /**
-   * If we're in a IN_FOR_INIT_CLAUSE, we can't permit in operators in the
-   * expression.  Pass on the IN_FOR_INIT_CLAUSE flag through subexpressions.
+   * If we're in a IN_FOR_INIT_CLAUSE, we can't permit in operators in the expression. Pass on the
+   * IN_FOR_INIT_CLAUSE flag through subexpressions.
    */
   private static Context getContextForNoInOperator(Context context) {
     return (context.inForInInitClause() ? context : Context.OTHER);
@@ -2317,49 +2261,42 @@ public class CodeGenerator {
 
   private void processEnd(Node n, Context context) {
     switch (n.getToken()) {
-      case CLASS:
-      case INTERFACE:
-      case ENUM:
-      case NAMESPACE:
-        cc.endClass(context == Context.STATEMENT);
-        break;
-      case FUNCTION:
+      case CLASS, INTERFACE, ENUM, NAMESPACE -> cc.endClass(context == Context.STATEMENT);
+      case FUNCTION -> {
         if (n.getLastChild().isEmpty()) {
-          cc.endStatement(true);
+          cc.endStatement(/* needSemiColon= */ true, /* hasTrailingCommentOnSameLine= */ false);
         } else {
           cc.endFunction(context == Context.STATEMENT);
         }
-        break;
-      case DECLARE:
+      }
+      case DECLARE -> {
         if (n.getParent().getToken() != Token.NAMESPACE_ELEMENTS) {
           processEnd(n.getFirstChild(), context);
         }
-        break;
-      case EXPORT:
+      }
+      case EXPORT -> {
         if (n.getParent().getToken() != Token.NAMESPACE_ELEMENTS
-            && n.getFirstChild().getToken() != Token.DECLARE) {
+            && !n.getFirstChild().isDeclare()) {
           processEnd(n.getFirstChild(), context);
         }
-        break;
-      case COMPUTED_PROP:
+      }
+      case COMPUTED_PROP -> {
         if (n.hasOneChild()) {
-          cc.endStatement(true);
+          cc.endStatement(/* needSemiColon= */ true, /* hasTrailingCommentOnSameLine= */ false);
         }
-        break;
-      case MEMBER_FUNCTION_DEF:
-      case GETTER_DEF:
-      case SETTER_DEF:
+      }
+      case MEMBER_FUNCTION_DEF, GETTER_DEF, SETTER_DEF -> {
         if (n.getFirstChild().getLastChild().isEmpty()) {
-          cc.endStatement(true);
+          cc.endStatement(/* needSemiColon= */ true, /* hasTrailingCommentOnSameLine= */ false);
         }
-        break;
-      case MEMBER_VARIABLE_DEF:
-        cc.endStatement(true);
-        break;
-      default:
+      }
+      case MEMBER_VARIABLE_DEF ->
+          cc.endStatement(/* needSemiColon= */ true, /* hasTrailingCommentOnSameLine= */ false);
+      default -> {
         if (context == Context.STATEMENT) {
-          cc.endStatement();
+          cc.endStatement(/* hasTrailingCommentOnSameLine= */ false);
         }
+      }
     }
   }
 }

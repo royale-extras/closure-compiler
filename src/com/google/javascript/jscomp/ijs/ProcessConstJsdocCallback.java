@@ -22,14 +22,14 @@ import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.QualifiedName;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A callback that calls the abstract method on every "inferrable const". This is a constant
  * declaration for which there is no declared type and an RHS is present. This is useful for giving
  * warnings like the CONSTANT_WITHOUT_EXPLICIT_TYPE diagnostic.
  *
- * As a side effect, this callback also populates the given FileInfo (assumed empty) with all of
+ * <p>As a side effect, this callback also populates the given FileInfo (assumed empty) with all of
  * the declarations found throughout the compilation.
  */
 abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrderCallback {
@@ -48,19 +48,25 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
-      case CLASS:
+      case CLASS -> {
         if (NodeUtil.isStatementParent(parent)) {
           currentFile.recordNameDeclaration(n.getFirstChild());
         }
-        break;
-      case FUNCTION:
+      }
+      case MEMBER_FIELD_DEF -> {
+        if (NodeUtil.getRValueOfLValue(n) != null) {
+          processDeclarationWithRhs(t, n);
+        }
+        currentFile.recordMemberFieldDef(n);
+      }
+      case FUNCTION -> {
         if (NodeUtil.isStatementParent(parent)) {
           currentFile.recordNameDeclaration(n.getFirstChild());
         } else if (ClassUtil.isClassMethod(n) && ClassUtil.hasNamedClass(n)) {
           currentFile.recordMethod(n);
         }
-        break;
-      case EXPR_RESULT:
+      }
+      case EXPR_RESULT -> {
         Node expr = n.getFirstChild();
         switch (expr.getToken()) {
           case CALL:
@@ -79,24 +85,23 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
           case GETPROP:
             currentFile.recordNameDeclaration(expr);
             break;
+          case GETELEM:
+            break;
           default:
-            throw new RuntimeException("Unexpected declaration: " + expr);
+            throw new IllegalArgumentException("Unexpected declaration: " + expr);
         }
-        break;
-      case VAR:
-      case CONST:
-      case LET:
+      }
+      case VAR, CONST, LET -> {
         checkState(n.hasOneChild(), n);
         recordDeclaration(t, n.getFirstChild(), n.getFirstChild().getLastChild());
-        break;
-      case STRING_KEY:
+      }
+      case STRING_KEY -> {
         if (parent.isObjectLit() && n.hasOneChild()) {
           processDeclarationWithRhs(t, n);
           currentFile.recordStringKeyDeclaration(n);
         }
-        break;
-      default:
-        break;
+      }
+      default -> {}
     }
   }
 
@@ -106,6 +111,8 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
         && GOOG_DEFINE.matches(rhs.getFirstChild())
         && lhs.isQualifiedName()) {
       currentFile.recordDefine(rhs);
+    } else if (lhs.isGetElem()) {
+      return;
     } else {
       recordNameDeclaration(lhs, rhs);
       if (!lhs.isDestructuringLhs() && rhs != null) {
@@ -118,17 +125,19 @@ abstract class ProcessConstJsdocCallback extends NodeTraversal.AbstractPostOrder
     checkArgument(NodeUtil.isNameDeclaration(lhs.getParent()) || lhs.getParent().isAssign());
     boolean isImport = PotentialDeclaration.isImportRhs(rhs);
     boolean isAlias = PotentialDeclaration.isAliasDeclaration(lhs, rhs);
-    for (Node name : NodeUtil.findLhsNodesInNode(lhs.getParent())) {
-      if (isAlias || isImport) {
-        currentFile.recordAliasDeclaration(name);
-      } else {
-        currentFile.recordNameDeclaration(name);
-      }
-    }
+    NodeUtil.visitLhsNodesInNode(
+        lhs.getParent(),
+        (name) -> {
+          if (isAlias || isImport) {
+            currentFile.recordAliasDeclaration(name);
+          } else {
+            currentFile.recordNameDeclaration(name);
+          }
+        });
   }
 
   private void processDeclarationWithRhs(NodeTraversal t, Node lhs) {
-    checkArgument(lhs.isQualifiedName() || lhs.isStringKey(), lhs);
+    checkArgument(lhs.isQualifiedName() || lhs.isStringKey() || lhs.isMemberFieldDef(), lhs);
     checkState(NodeUtil.getRValueOfLValue(lhs) != null, lhs);
     if (PotentialDeclaration.isConstToBeInferred(lhs)) {
       processConstWithRhs(t, lhs);

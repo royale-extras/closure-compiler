@@ -15,19 +15,15 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.javascript.jscomp.Es6ToEs3Util.createGenericType;
-import static com.google.javascript.jscomp.Es6ToEs3Util.createType;
-import static com.google.javascript.jscomp.Es6ToEs3Util.withType;
+import static com.google.javascript.jscomp.AstFactory.type;
 
-import com.google.javascript.rhino.IR;
+import com.google.javascript.jscomp.colors.Color;
+import com.google.javascript.jscomp.colors.StandardColors;
+import com.google.javascript.jscomp.js.RuntimeJsLibManager.JsLibField;
 import com.google.javascript.rhino.JSDocInfo;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.JSTypeNative;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import com.google.javascript.rhino.StaticScope;
 
 /**
  * Helper class for transpiling ES6 template literals.
@@ -37,12 +33,20 @@ class Es6TemplateLiterals {
 
   private final AstFactory astFactory;
   private final AbstractCompiler compiler;
-  private final JSTypeRegistry registry;
+  private final StaticScope namespace;
+  private final JsLibField createTemplateTagFirstArg;
+  private final JsLibField createTemplateTagFirstArgWithRaw;
 
   Es6TemplateLiterals(AbstractCompiler compiler) {
     this.compiler = compiler;
     this.astFactory = compiler.createAstFactory();
-    this.registry = compiler.getTypeRegistry();
+    this.namespace = this.compiler.getTranspilationNamespace();
+
+    var runtimeJsLibManager = compiler.getRuntimeJsLibManager();
+    this.createTemplateTagFirstArg =
+        runtimeJsLibManager.getJsLibField("$jscomp.createTemplateTagFirstArg");
+    this.createTemplateTagFirstArgWithRaw =
+        runtimeJsLibManager.getJsLibField("$jscomp.createTemplateTagFirstArgWithRaw");
   }
 
   /**
@@ -62,8 +66,7 @@ class Es6TemplateLiterals {
         n.replaceWith(firstStr);
       } else {
         // Add the first string with the first substitution expression
-        Node add =
-            withType(IR.add(firstStr, n.removeFirstChild().removeFirstChild()), n.getJSType());
+        Node add = astFactory.createAdd(firstStr, n.removeFirstChild().removeFirstChild());
         // Process the rest of the template literal
         for (int i = 2; i < length; i++) {
           Node child = n.removeFirstChild();
@@ -78,15 +81,13 @@ class Es6TemplateLiterals {
             }
           }
           add =
-              withType(
-                  IR.add(
-                      add,
-                      child.isTemplateLitString()
-                          ? astFactory.createString(child.getCookedString())
-                          : child.removeFirstChild()),
-                  n.getJSType());
+              astFactory.createAdd(
+                  add,
+                  child.isTemplateLitString()
+                      ? astFactory.createString(child.getCookedString())
+                      : child.removeFirstChild());
         }
-        n.replaceWith(add.useSourceInfoIfMissingFromForTree(n));
+        n.replaceWith(add.srcrefTreeIfMissing(n));
       }
     }
     t.reportCodeChange();
@@ -119,15 +120,9 @@ class Es6TemplateLiterals {
    *
    * @param n A TAGGED_TEMPLATELIT node
    */
-  void visitTaggedTemplateLiteral(NodeTraversal t, Node n, boolean addTypes) {
-    JSType stringType = createType(addTypes, registry, JSTypeNative.STRING_TYPE);
-    JSType arrayType = createGenericType(addTypes, registry, JSTypeNative.ARRAY_TYPE, stringType);
-    JSType templateArrayType =
-        createType(addTypes, registry, JSTypeNative.I_TEMPLATE_ARRAY_TYPE);
-
+  void visitTaggedTemplateLiteral(NodeTraversal t, Node n, Node insertBefore) {
     Node templateLit = n.getLastChild();
-    Node cooked = createCookedStringArray(templateLit, templateArrayType);
-    Node siteObject = withType(cooked, templateArrayType);
+    Node siteObject = createCookedStringArray(templateLit);
 
     // Node holding the function call to the runtime injected function
     Node callTemplateTagArgCreator;
@@ -136,18 +131,20 @@ class Es6TemplateLiterals {
       // cooked array at runtime to make the raw array a copy of the cooked array.
       callTemplateTagArgCreator =
           astFactory.createCall(
-              astFactory.createQName(t.getScope(), "$jscomp.createTemplateTagFirstArg"),
+              astFactory.createQName(this.namespace, createTemplateTagFirstArg),
+              type(siteObject),
               siteObject.cloneTree());
     } else {
       // The raw string array is different, so we need to construct it.
-      Node raw = createRawStringArray(templateLit, arrayType);
+      Node raw = createRawStringArray(templateLit);
       callTemplateTagArgCreator =
           astFactory.createCall(
-              astFactory.createQName(t.getScope(), "$jscomp.createTemplateTagFirstArgWithRaw"),
+              astFactory.createQName(this.namespace, createTemplateTagFirstArgWithRaw),
+              type(siteObject),
               siteObject.cloneTree(),
               raw);
     }
-    JSDocInfoBuilder jsDocInfoBuilder = new JSDocInfoBuilder(false);
+    JSDocInfo.Builder jsDocInfoBuilder = JSDocInfo.builder();
     jsDocInfoBuilder.recordNoInline();
     JSDocInfo info = jsDocInfoBuilder.build();
 
@@ -158,31 +155,31 @@ class Es6TemplateLiterals {
         astFactory
             .createSingleVarNameDeclaration(TEMPLATELIT_VAR + uniqueId, callTemplateTagArgCreator)
             .setJSDocInfo(info)
-            .useSourceInfoIfMissingFromForTree(n);
+            .srcrefTreeIfMissing(n);
 
-    // Get the nearest SCRIPT-scoped node as insertion point for this assignment as injecting to the
-    // top of the script causes runtime errors
-    // https://github.com/google/closure-compiler/issues/3589
-    Node insertionPoint = findInsertionPoint(n);
-    insertionPoint.getParent().addChildBefore(tagFnFirstArgDeclaration, insertionPoint);
+    // For the first script, insertion point is right after the runtime injected function definition
+    // as injecting to the top of the script causes runtime errors
+    // https://github.com/google/closure-compiler/issues/3589. For any subsequent script(s), the
+    // call is injected to the top of that script.
+    tagFnFirstArgDeclaration.insertBefore(insertBefore);
     t.reportCodeChange(tagFnFirstArgDeclaration);
 
     // Generate the call expression.
     Node tagFnFirstArg = tagFnFirstArgDeclaration.getFirstChild().cloneNode();
-    Node call = withType(IR.call(n.removeFirstChild(), tagFnFirstArg), n.getJSType());
+    Node call = astFactory.createCall(n.removeFirstChild(), type(n), tagFnFirstArg);
     for (Node child = templateLit.getFirstChild(); child != null; child = child.getNext()) {
       if (!child.isTemplateLitString()) {
         call.addChildToBack(child.removeFirstChild());
       }
     }
-    call.useSourceInfoIfMissingFromForTree(templateLit);
+    call.srcrefTreeIfMissing(templateLit);
     call.putBooleanProp(Node.FREE_CALL, !call.getFirstChild().isGetProp());
     n.replaceWith(call);
     t.reportCodeChange();
   }
 
-  private Node createRawStringArray(Node n, JSType arrayType) {
-    Node array = withType(IR.arraylit(), arrayType);
+  private Node createRawStringArray(Node n) {
+    Node array = astFactory.createArraylit();
     for (Node child = n.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isTemplateLitString()) {
         array.addChildToBack(astFactory.createString(child.getRawString()));
@@ -191,23 +188,15 @@ class Es6TemplateLiterals {
     return array;
   }
 
-  /**
-   * Finds the closest enclosing node whose parent is a SCRIPT. We'll want to insert the call to
-   * `var tagFnFirstArg = $jscomp.createTemplateTagFirstArg...` just before that one.
-   */
-  private static Node findInsertionPoint(Node n) {
-    Node insertionPoint = n;
-    Node insertionParent = checkNotNull(insertionPoint.getParent(), n);
-    while (!insertionParent.isScript()) {
-      insertionPoint = insertionParent;
-      insertionParent = checkNotNull(insertionPoint.getParent(), insertionPoint);
-    }
-    checkState(insertionParent.isScript(), insertionParent);
-    return insertionPoint;
-  }
-
-  private Node createCookedStringArray(Node n, JSType templateArrayType) {
-    Node array = withType(IR.arraylit(), templateArrayType);
+  private Node createCookedStringArray(Node n) {
+    Color templateArrayType =
+        astFactory.isAddingColors()
+            ? compiler.getColorRegistry().get(StandardColors.I_TEMPLATE_ARRAY_ID)
+            : null;
+    Node array =
+        astFactory
+            .createArraylit()
+            .setColor(templateArrayType); // tighten the type from Array to ITemplateArray
     for (Node child = n.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isTemplateLitString()) {
         if (child.getCookedString() != null) {

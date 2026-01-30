@@ -16,7 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
@@ -36,7 +35,7 @@ import com.google.javascript.rhino.StaticSourceFile;
  * increasing" because we often insert generated code with out-of-order line numbers. (e.g. imagine
  * inlining a function from a.js into b.js, but having the source information point to a.js)
  */
-class SourceInfoCheck implements Callback, CompilerPass {
+class SourceInfoCheck implements NodeTraversal.Callback, CompilerPass {
 
   private static final DiagnosticType MISSING_LINE_INFO =
       DiagnosticType.error(
@@ -44,7 +43,7 @@ class SourceInfoCheck implements Callback, CompilerPass {
           "No source location information associated with {0}."
               + "\nMost likely a Node has been created without setting the source file"
               + " and line/column location.  Usually this is done using"
-              + " Node.useSourceInfoIfMissingFrom and supplying a Node from the source AST.");
+              + " Node.srcrefIfMissing and supplying a Node from the source AST.");
 
   private static final DiagnosticType MISSING_LENGTH =
       DiagnosticType.error(

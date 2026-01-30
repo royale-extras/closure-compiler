@@ -19,7 +19,6 @@ package com.google.javascript.jscomp;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -33,21 +32,18 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+/**
+ */
 @RunWith(JUnit4.class)
 public final class CombinedCompilerPassTest {
 
   private Compiler compiler;
 
   /**
-   * Returns a Node tree with the post-order traversal a b c d e f g h i j k l m
-   * and the in-order traversal m d a b c h e f g l i j k:
+   * Returns a Node tree with the post-order traversal a b c d e f g h i j k l m and the in-order
+   * traversal m d a b c h e f g l i j k:
    *
-   *                                   m
-   *                         ,---------|---------.
-   *                         d         h         l
-   *                      ,--|--.   ,--|--.   ,--|--.
-   *                      a  b  c   e  f  g   i  j  k
-   *
+   * <p>m ,---------|---------. d h l ,--|--. ,--|--. ,--|--. a b c e f g i j k
    */
   private static Node createPostOrderAlphabet() {
     Node a = Node.newString("a");
@@ -90,11 +86,10 @@ public final class CombinedCompilerPassTest {
   }
 
   /**
-   * Concatenates contents of string nodes encountered in pre-order
-   * and post-order traversals. Abbreviates traversals by ignoring subtrees
-   * rooted with specified strings.
+   * Concatenates contents of string nodes encountered in pre-order and post-order traversals.
+   * Abbreviates traversals by ignoring subtrees rooted with specified strings.
    */
-  private static class ConcatTraversal implements Callback {
+  private static class ConcatTraversal implements NodeTraversal.Callback {
     private final StringBuilder visited = new StringBuilder();
     private final StringBuilder shouldTraversed = new StringBuilder();
     private final Set<String> ignoring = new HashSet<>();
@@ -106,13 +101,13 @@ public final class CombinedCompilerPassTest {
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      assertThat(n.getToken()).isEqualTo(Token.STRING);
+      assertThat(n.getToken()).isEqualTo(Token.STRINGLIT);
       visited.append(n.getString());
     }
 
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
-      assertThat(n.getToken()).isEqualTo(Token.STRING);
+      assertThat(n.getToken()).isEqualTo(Token.STRINGLIT);
       shouldTraversed.append(n.getString());
       return !ignoring.contains(n.getString());
     }
@@ -133,16 +128,15 @@ public final class CombinedCompilerPassTest {
   }
 
   /**
-   * Collection of data for a traversal test. Contains the traversal callback
-   * and the expected pre- and post-order traversal results.
+   * Collection of data for a traversal test. Contains the traversal callback and the expected pre-
+   * and post-order traversal results.
    */
   private static class TestHelper {
     private final ConcatTraversal traversal;
     private final String expectedVisited;
     private final String shouldTraverseExpected;
 
-    TestHelper(ConcatTraversal traversal, String expectedVisited,
-         String shouldTraverseExpected) {
+    TestHelper(ConcatTraversal traversal, String expectedVisited, String shouldTraverseExpected) {
       this.traversal = traversal;
       this.expectedVisited = expectedVisited;
       this.shouldTraverseExpected = shouldTraverseExpected;
@@ -154,16 +148,12 @@ public final class CombinedCompilerPassTest {
 
     void checkResults() {
       assertWithMessage(
-              "ConcatTraversal ignoring "
-                  + traversal.getIgnoring()
-                  + " has unexpected visiting order")
+              "ConcatTraversal ignoring %s has unexpected visiting order", traversal.getIgnoring())
           .that(traversal.getVisited())
           .isEqualTo(expectedVisited);
 
       assertWithMessage(
-              "ConcatTraversal ignoring "
-                  + traversal.getIgnoring()
-                  + " has unexpected traversal order")
+              "ConcatTraversal ignoring %s has unexpected traversal order", traversal.getIgnoring())
           .that(traversal.getShouldTraversed())
           .isEqualTo(shouldTraverseExpected);
     }
@@ -172,14 +162,11 @@ public final class CombinedCompilerPassTest {
   private static List<TestHelper> createStringTests() {
     List<TestHelper> tests = new ArrayList<>();
 
-    tests.add(new TestHelper(
-        new ConcatTraversal(), "abcdefghijklm", "mdabchefglijk"));
+    tests.add(new TestHelper(new ConcatTraversal(), "abcdefghijklm", "mdabchefglijk"));
 
-    tests.add(new TestHelper(
-        new ConcatTraversal().ignore("d"), "efghijklm", "mdhefglijk"));
+    tests.add(new TestHelper(new ConcatTraversal().ignore("d"), "efghijklm", "mdhefglijk"));
 
-    tests.add(new TestHelper(
-        new ConcatTraversal().ignore("f"), "abcdeghijklm", "mdabchefglijk"));
+    tests.add(new TestHelper(new ConcatTraversal().ignore("f"), "abcdeghijklm", "mdabchefglijk"));
 
     tests.add(new TestHelper(new ConcatTraversal().ignore("m"), "", "m"));
 
@@ -189,8 +176,7 @@ public final class CombinedCompilerPassTest {
   @Test
   public void testIndividualPasses() {
     for (TestHelper test : createStringTests()) {
-      CombinedCompilerPass pass =
-          new CombinedCompilerPass(compiler, test.getTraversal());
+      CombinedCompilerPass pass = new CombinedCompilerPass(compiler, test.getTraversal());
       pass.process(null, createPostOrderAlphabet());
       test.checkResults();
     }
@@ -198,14 +184,13 @@ public final class CombinedCompilerPassTest {
 
   @Test
   public void testCombinedPasses() {
-    List<TestHelper> tests  = createStringTests();
-    Callback[] callbacks = new Callback[tests.size()];
+    List<TestHelper> tests = createStringTests();
+    NodeTraversal.Callback[] callbacks = new NodeTraversal.Callback[tests.size()];
     int i = 0;
     for (TestHelper test : tests) {
       callbacks[i++] = test.getTraversal();
     }
-    CombinedCompilerPass pass =
-        new CombinedCompilerPass(compiler, callbacks);
+    CombinedCompilerPass pass = new CombinedCompilerPass(compiler, callbacks);
     pass.process(null, createPostOrderAlphabet());
     for (TestHelper test : tests) {
       test.checkResults();
@@ -213,13 +198,13 @@ public final class CombinedCompilerPassTest {
   }
 
   /**
-   * Records the scopes visited during an AST traversal. Abbreviates traversals
-   * by ignoring subtrees rooted with specified NAME nodes.
+   * Records the scopes visited during an AST traversal. Abbreviates traversals by ignoring subtrees
+   * rooted with specified NAME nodes.
    */
   private static class ScopeRecordingCallback implements ScopedCallback {
 
-    Set<Node> visitedScopes = new HashSet<>();
-    Set<String> ignoring = new HashSet<>();
+    final Set<Node> visitedScopes = new HashSet<>();
+    final Set<String> ignoring = new HashSet<>();
 
     void ignore(String name) {
       ignoring.add(name);
@@ -240,19 +225,15 @@ public final class CombinedCompilerPassTest {
     }
 
     @Override
-    public void exitScope(NodeTraversal t) {
-    }
+    public void exitScope(NodeTraversal t) {}
 
     @Override
-    public void visit(NodeTraversal t, Node n, Node parent) {
-    }
-
+    public void visit(NodeTraversal t, Node n, Node parent) {}
   }
 
   @Test
   public void testScopes() {
-    Node root =
-        compiler.parseTestCode("var y = function() { var x = function() { };}");
+    Node root = compiler.parseTestCode("var y = function() { var x = function() { };}");
 
     ScopeRecordingCallback c1 = new ScopeRecordingCallback();
     c1.ignore("y");

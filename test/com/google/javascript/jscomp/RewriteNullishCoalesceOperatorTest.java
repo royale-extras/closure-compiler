@@ -15,7 +15,6 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -25,16 +24,13 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class RewriteNullishCoalesceOperatorTest extends CompilerTestCase {
 
-  @Override
   @Before
-  public void setUp() throws Exception {
-    super.setUp();
-
-    setAcceptedLanguage(LanguageMode.UNSUPPORTED);
-    setLanguageOut(LanguageMode.ECMASCRIPT_2019);
-
-    enableTypeInfoValidation();
+  public void customSetUp() throws Exception {
+    enableNormalize();
     enableTypeCheck();
+    enableTypeInfoValidation();
+    replaceTypesWithColors();
+    enableMultistageCompilation();
   }
 
   @Override
@@ -47,8 +43,10 @@ public final class RewriteNullishCoalesceOperatorTest extends CompilerTestCase {
     test(
         srcs("a ?? b"),
         expected(
-            "let $jscomp$nullish$tmp0; ($jscomp$nullish$tmp0 = a) != null ? $jscomp$nullish$tmp0 :"
-                + " b"));
+            """
+            let $jscomp$nullish$tmp0;
+            ($jscomp$nullish$tmp0 = a) != null ? $jscomp$nullish$tmp0 : b
+            """));
   }
 
   @Test
@@ -56,8 +54,23 @@ public final class RewriteNullishCoalesceOperatorTest extends CompilerTestCase {
     test(
         srcs("(x + y) ?? (a && b)"),
         expected(
-            "let $jscomp$nullish$tmp0; ($jscomp$nullish$tmp0 = x + y) != null ?"
-                + " $jscomp$nullish$tmp0 : (a && b)"));
+            """
+            let $jscomp$nullish$tmp0;
+            ($jscomp$nullish$tmp0 = x + y) != null ? $jscomp$nullish$tmp0 : (a && b)
+            """));
+  }
+
+  @Test
+  public void insideArrowFunctionBody() {
+    test(
+        srcs("() => (x + y) ?? (a && b)"),
+        expected(
+            """
+            () => {
+              let $jscomp$nullish$tmp0;
+              return ($jscomp$nullish$tmp0 = x + y) != null ? $jscomp$nullish$tmp0 : (a && b)
+            }
+            """));
   }
 
   @Test
@@ -65,10 +78,10 @@ public final class RewriteNullishCoalesceOperatorTest extends CompilerTestCase {
     test(
         srcs("a ?? b ?? c"),
         expected(
-            lines(
-                "let $jscomp$nullish$tmp0; let $jscomp$nullish$tmp1;",
-                "($jscomp$nullish$tmp1 = ($jscomp$nullish$tmp0 = a) != null ? $jscomp$nullish$tmp0"
-                    + " : b) != null",
-                "? $jscomp$nullish$tmp1 : c;")));
+"""
+let $jscomp$nullish$tmp0; let $jscomp$nullish$tmp1;
+($jscomp$nullish$tmp1 = ($jscomp$nullish$tmp0 = a) != null ? $jscomp$nullish$tmp0 : b) != null
+? $jscomp$nullish$tmp1 : c;
+"""));
   }
 }

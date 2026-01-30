@@ -19,34 +19,20 @@ package com.google.javascript.jscomp;
 import static com.google.javascript.jscomp.ClosureOptimizePrimitives.DUPLICATE_SET_MEMBER;
 import static com.google.javascript.jscomp.parsing.parser.testing.FeatureSetSubject.assertFS;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link ClosureOptimizePrimitives}.
- *
- * @author agrieve@google.com (Andrew Grieve)
- */
+/** Tests for {@link ClosureOptimizePrimitives}. */
 @RunWith(JUnit4.class)
 public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
 
-  private boolean propertyRenamingEnabled = true;
   private boolean canUseEs6Syntax = true;
 
-  @Override protected CompilerPass getProcessor(final Compiler compiler) {
-    return new ClosureOptimizePrimitives(compiler, propertyRenamingEnabled, canUseEs6Syntax);
-  }
-
   @Override
-  @Before
-  public void setUp() throws Exception {
-    super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
-    disableScriptFeatureValidation();
+  protected CompilerPass getProcessor(final Compiler compiler) {
+    return new ClosureOptimizePrimitives(compiler, canUseEs6Syntax);
   }
 
   @Test
@@ -61,8 +47,12 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
 
   @Test
   public void testObjectCreate2() {
-    test("var a = goog$object$create('b',goog$object$create('c','d'))",
-         "var a = {'b':{'c':'d'}};");
+    test(
+        """
+        var a = module$contents$goog$object_create(
+        'b',module$contents$goog$object_create('c','d'))
+        """,
+        "var a = {'b':{'c':'d'}};");
   }
 
   @Test
@@ -72,8 +62,9 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
 
   @Test
   public void testObjectCreate4() {
-    test("alert(goog.object.create(1,2).toString())",
-         "alert({1:2}.toString())");
+    test(
+        "alert(goog.object.create(1,2).toString())", //
+        "alert({1:2}.toString())");
   }
 
   @Test
@@ -82,11 +73,32 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testObjectCreateNonConstKey1() {
-    test("var a = goog.object.create('a', 1, 2, 3, foo, bar);",
-         "var a = {'a': 1, 2: 3, [foo]: bar};");
+  public void testObjectCreateGoogProvide() {
+    // TODO(user): Delete this once goog.object is a goog.module.
+    test("var a = goog$object$create('b',goog$object$create('c','d'))", "var a = {'b':{'c':'d'}};");
+  }
 
-    assertFS(getLastCompiler().getFeatureSet()).has(Feature.COMPUTED_PROPERTIES);
+  @Test
+  public void testObjectCreateRewritten() {
+    enableRewriteClosureCode();
+    test("var a = goog.object.create('a', 1, 'b', 2);", "var a = {'a': 1, 'b': 2};");
+  }
+
+  @Test
+  public void testObjectCreateRewrittenRemoveParens() {
+    enableRewriteClosureCode();
+    test(
+        "var a = goog.object.create(('a'), 1, ('b'), 2);", //
+        "var a = {'a': 1, 'b': 2};");
+  }
+
+  @Test
+  public void testObjectCreateNonConstKey1() {
+    test(
+        "var a = goog.object.create('a', 1, 2, 3, foo, bar);", //
+        "var a = {'a': 1, 2: 3, [foo]: bar};");
+
+    assertFS(getLastCompiler().getAllowableFeatures()).has(Feature.COMPUTED_PROPERTIES);
   }
 
   @Test
@@ -96,20 +108,34 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
 
   @Test
   public void testObjectCreateNonConstKey3() {
-    test("var a = goog$object$create(i++,goog$object$create(foo(), 'd'))",
-         "var a = {[i++]: {[foo()]: 'd'}};");
+    test(
+        """
+        var a = module$contents$goog$object_create(
+        i++,module$contents$goog$object_create(foo(), 'd'))
+        """,
+        "var a = {[i++]: {[foo()]: 'd'}};");
   }
 
   @Test
   public void testObjectCreateNonConstKey4() {
-    test("alert(goog.object.create(a = 1, 2).toString())",
+    test(
+        "alert(goog.object.create(a = 1, 2).toString())", //
         "alert({[a = 1]: 2}.toString())");
   }
 
   @Test
   public void testObjectCreateNonConstKey5() {
-    test("goog.object.create(function foo() {}, 2).toString()",
+    test(
+        "goog.object.create(function foo() {}, 2).toString()", //
         "({[function foo() {}]: 2}).toString()");
+  }
+
+  @Test
+  public void testObjectCreateNonConstKeyGoogProvide() {
+    // TODO(user): Delete this once goog.object is a goog.module.
+    test(
+        "var a = goog$object$create(i++,goog$object$create(foo(), 'd'))",
+        "var a = {[i++]: {[foo()]: 'd'}};");
   }
 
   @Test
@@ -130,8 +156,9 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
 
   @Test
   public void testObjectCreateSetOneNumericalArg() {
-    test("alert(goog.object.createSet(1).toString())",
-         "alert({1:true}.toString())");
+    test(
+        "alert(goog.object.createSet(1).toString())", //
+        "alert({1:true}.toString())");
   }
 
   @Test
@@ -148,13 +175,23 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
 
   @Test
   public void testObjectCreateSetNonConstKey1() {
-    test("var a = goog.object.createSet(foo, bar);",
-         "var a = {[foo]: true, [bar]: true};");
+    test(
+        "var a = goog.object.createSet(foo, bar);", //
+        "var a = {[foo]: true, [bar]: true};");
   }
 
   @Test
   public void testObjectCreateSetNonConstKey2() {
-    test("alert(goog$object$createSet(a = 1, 2).toString())",
+    test(
+        "alert(module$contents$goog$object_createSet(a = 1, 2).toString())",
+        "alert({[a = 1]: true, 2: true}.toString())");
+  }
+
+  @Test
+  public void testObjectCreateSetNonConstKeyGoogProvide() {
+    // TODO(user): Delete this once goog.object is a goog.module.
+    test(
+        "alert(goog$object$createSet(a = 1, 2).toString())",
         "alert({[a = 1]: true, 2: true}.toString())");
   }
 
@@ -184,24 +221,6 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testDomTagName() {
-    testSame("goog.dom.TagName.A = 'A';");
-    testSame("goog.dom.TagName.prototype.toString = function() { return 'a'; };");
-    test("goog.dom.createDom(goog.dom.TagName.A)", "goog.dom.createDom('A')");
-    test("goog$dom$createDom(goog$dom$TagName$A)", "goog$dom$createDom('A')");
-    test("goog.dom.createDom(goog.dom.TagName.A + 'REA')", "goog.dom.createDom('A' + 'REA')");
-    test("goog.dom.TagName.function__new_goog_dom_TagName__string___undefined$DIV", "'DIV'");
-    test("goog.dom.TagName.JSC$0935_DIV", "'DIV'");
-  }
-
-  @Test
-  public void testPropertyReflectionSimple() {
-    propertyRenamingEnabled = false;
-    test("goog.reflect.objectProperty('push', [])", "'push'");
-    test("JSCompiler_renameProperty('push', [])", "'push'");
-  }
-
-  @Test
   public void testPropertyReflectionAdvanced() {
     test("goog.reflect.objectProperty('push', [])", "JSCompiler_renameProperty('push', [])");
     testSame("JSCompiler_renameProperty('push', [])");
@@ -216,63 +235,71 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   @Test
   public void testEs6ClassCompatibility() {
     test(
-        lines(
-            "class C {",
-            "  constructor() {",
-            "    this.x = goog.object.create(1, 2);",
-            "  }",
-            "}"),
-        lines(
-            "class C {",
-            "  constructor() {",
-            "    this.x = {1: 2};",
-            "  }",
-            "}"));
+        """
+        class C {
+          constructor() {
+            this.x = goog.object.create(1, 2);
+          }
+        }
+        """,
+        """
+        class C {
+          constructor() {
+            this.x = {1: 2};
+          }
+        }
+        """);
   }
 
   @Test
   public void testEs6MemberFunctionDefCompatibility() {
     test(
-        lines(
-            "var obj = {",
-            "  method() {",
-            "    return goog.object.create('a', 2);",
-            "  }",
-            "}"),
-        lines(
-            "var obj = {",
-            "  method() {",
-            "    return {'a': 2};",
-            "  }",
-            "}"));
+        """
+        var obj = {
+          method() {
+            return goog.object.create('a', 2);
+          }
+        }
+        """,
+        """
+        var obj = {
+          method() {
+            return {'a': 2};
+          }
+        }
+        """);
   }
 
   @Test
   public void testEs6ComputedPropCompatibility() {
     test(
-        lines(
-            "var obj = {",
-            "  [goog.object.create(1, 2)]: 42",
-            "}"),
-        lines(
-            "var obj = {",
-            "  [{1: 2}]: 42",
-            "}"));
+        """
+        var obj = {
+          [goog.object.create(1, 2)]: 42
+        }
+        """,
+        """
+        var obj = {
+          [{1: 2}]: 42
+        }
+        """);
   }
 
   @Test
   public void testEs6TemplateLitCompatibility() {
     test(
-        lines(
-            "function tag(strings) {",
-            "  return goog.object.create('a', 2);",
-            "}",
-            "tag`template`"),
-        lines(
-            "function tag(strings) {",
-            "  return {'a': 2};",
-            "}",
-            "tag`template`"));
+        """
+        function tag(strings) {
+          return goog.object.create('a', 2);
+        }
+        tag`template`
+        """,
+        """
+        function tag(strings) {
+          return {'a': 2};
+        }
+        tag`template`
+        """);
   }
 
   @Test
@@ -283,13 +310,15 @@ public final class ClosureOptimizePrimitivesTest extends CompilerTestCase {
   @Test
   public void testEs6AsyncCompatibility() {
     test(
-        lines(
-            "async function foo() {",
-            "   return await goog.object.create('a', 2);",
-            "}"),
-        lines(
-            "async function foo() {",
-            "   return await {'a': 2};",
-            "}"));
+        """
+        async function foo() {
+           return await goog.object.create('a', 2);
+        }
+        """,
+        """
+        async function foo() {
+           return await {'a': 2};
+        }
+        """);
   }
 }

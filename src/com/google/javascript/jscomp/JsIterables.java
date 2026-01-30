@@ -25,6 +25,7 @@ import com.google.javascript.rhino.jstype.TemplateType;
 import com.google.javascript.rhino.jstype.TemplateTypeMap;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Models type transformations of JavaScript `Iterable` and `Iterator` types.
@@ -47,18 +48,49 @@ final class JsIterables {
             .autobox()
             .getTemplateTypeMap();
 
-    if (templateTypeMap.hasTemplateKey(typeRegistry.getIterableTemplate())) {
+    if (templateTypeMap.hasTemplateKey(typeRegistry.getIterableValueTemplate())) {
       // `Iterable<SomeElementType>` or `Generator<SomeElementType>`
-      return templateTypeMap.getResolvedTemplateType(typeRegistry.getIterableTemplate());
+      return templateTypeMap.getResolvedTemplateType(typeRegistry.getIterableValueTemplate());
     } else if (templateTypeMap.hasTemplateKey(typeRegistry.getIteratorValueTemplate())) {
       // `Iterator<SomeElementType>`
       return templateTypeMap.getResolvedTemplateType(typeRegistry.getIteratorValueTemplate());
-    } else if (templateTypeMap.hasTemplateKey(typeRegistry.getAsyncIterableTemplate())) {
+    } else if (templateTypeMap.hasTemplateKey(typeRegistry.getAsyncIterableValueTemplate())) {
       // `AsyncIterable<SomeElementType>` or `AsyncGenerator<SomeElementType>`
-      return templateTypeMap.getResolvedTemplateType(typeRegistry.getAsyncIterableTemplate());
+      return templateTypeMap.getResolvedTemplateType(typeRegistry.getAsyncIterableValueTemplate());
     } else if (templateTypeMap.hasTemplateKey(typeRegistry.getAsyncIteratorValueTemplate())) {
       // `AsyncIterator<SomeElementType>`
       return templateTypeMap.getResolvedTemplateType(typeRegistry.getAsyncIteratorValueTemplate());
+    }
+    return typeRegistry.getNativeType(UNKNOWN_TYPE);
+  }
+
+  /**
+   * Returns the given `Iterable`s return type.
+   *
+   * <p>This corresponds to the `TReturn` template variable in {@code Iterable<T, TReturn, TNext>}.
+   *
+   * <p>If the given type is not an `Iterator`, `Iterable`, `AsyncIterator`, or `AsyncIterable`,
+   * returns the unknown type.
+   */
+  static final JSType getReturnElementType(JSType iterableOrIterator, JSTypeRegistry typeRegistry) {
+    TemplateTypeMap templateTypeMap =
+        iterableOrIterator
+            // Remember that `string` will box to a `Iterable`.
+            .autobox()
+            .getTemplateTypeMap();
+
+    if (templateTypeMap.hasTemplateKey(typeRegistry.getIterableReturnTemplate())) {
+      // `Iterable<?, SomeElementType>` or `Generator<?, SomeElementType>`
+      return templateTypeMap.getResolvedTemplateType(typeRegistry.getIterableReturnTemplate());
+    } else if (templateTypeMap.hasTemplateKey(typeRegistry.getIteratorReturnTemplate())) {
+      // `Iterator<?, SomeElementType>`
+      return templateTypeMap.getResolvedTemplateType(typeRegistry.getIteratorReturnTemplate());
+    } else if (templateTypeMap.hasTemplateKey(typeRegistry.getAsyncIterableReturnTemplate())) {
+      // `AsyncIterable<?, SomeElementType>` or `AsyncGenerator<?, SomeElementType>`
+      return templateTypeMap.getResolvedTemplateType(typeRegistry.getAsyncIterableReturnTemplate());
+    } else if (templateTypeMap.hasTemplateKey(typeRegistry.getAsyncIteratorReturnTemplate())) {
+      // `AsyncIterator<?, SomeElementType>`
+      return templateTypeMap.getResolvedTemplateType(typeRegistry.getAsyncIteratorReturnTemplate());
     }
     return typeRegistry.getNativeType(UNKNOWN_TYPE);
   }
@@ -76,7 +108,7 @@ final class JsIterables {
   /**
    * The template of an Iterable|AsyncIterable, or a mismatch if subtype of Iterable|AsyncIterable.
    */
-  static final class MaybeBoxedIterableOrAsyncIterable {
+  static final class MaybeBoxedType {
     private final JSType templatedType;
     private final JSType mismatchType;
 
@@ -88,7 +120,7 @@ final class JsIterables {
      *     {@code number} is not iterable or async iterable) or a piece of a union that caused the
      *     mismatch (e.g. {@code number} in {@code number|Iterable<Qux>}). Null if a match.
      */
-    private MaybeBoxedIterableOrAsyncIterable(JSType templatedType, JSType mismatchType) {
+    private MaybeBoxedType(@Nullable JSType templatedType, @Nullable JSType mismatchType) {
       this.templatedType = templatedType;
       this.mismatchType = mismatchType;
     }
@@ -123,13 +155,38 @@ final class JsIterables {
   }
 
   /**
+   * Returns the template for iterable types.
+   *
+   * <p>This does not apply to async-iterables.
+   *
+   * <p>If this value is not an Iterable, we return a sentinel.
+   */
+  static final MaybeBoxedType maybeBoxIterable(JSType type, JSTypeRegistry typeRegistry) {
+    return maybeBoxIterableAndPossiblyAsyncIterable(
+        type, typeRegistry, /* includeAsyncIterable= */ false);
+  }
+
+  /**
+   * Returns the template for iterable or async-iterable types.
+   *
+   * <p>If this value is not an Iterable or AsyncIterable, we return a sentinel.
+   */
+  static final MaybeBoxedType maybeBoxIterableOrAsyncIterable(
+      JSType type, JSTypeRegistry typeRegistry) {
+    return maybeBoxIterableAndPossiblyAsyncIterable(
+        type, typeRegistry, /* includeAsyncIterable= */ true);
+  }
+
+  /**
    * Given a type, if it is an iterable or async iterable, will return its template. If not a
    * subtype of Iterable|AsyncIterable, returns an object that has no match, and will indicate the
    * mismatch. e.g. both {@code number} and {@code number|Iterable} are not subtypes of
    * Iterable|AsyncIterable.
+   *
+   * @param includeAsyncIterable whether to look for AsyncIterable as opposed to just Iterable
    */
-  static final MaybeBoxedIterableOrAsyncIterable maybeBoxIterableOrAsyncIterable(
-      JSType type, JSTypeRegistry typeRegistry) {
+  private static final MaybeBoxedType maybeBoxIterableAndPossiblyAsyncIterable(
+      JSType type, JSTypeRegistry typeRegistry, boolean includeAsyncIterable) {
     List<JSType> templatedTypes = new ArrayList<>();
 
     // Note: we don't just use JSType.autobox() here because that removes null and undefined.
@@ -138,32 +195,34 @@ final class JsIterables {
       for (JSType alt : type.toMaybeUnionType().getAlternates()) {
         alt = alt.isBoxableScalar() ? alt.autoboxesTo() : alt;
         boolean isIterable = alt.isSubtypeOf(typeRegistry.getNativeType(ITERABLE_TYPE));
-        boolean isAsyncIterable = alt.isSubtypeOf(typeRegistry.getNativeType(ASYNC_ITERABLE_TYPE));
+        boolean isAsyncIterable =
+            includeAsyncIterable
+                && alt.isSubtypeOf(typeRegistry.getNativeType(ASYNC_ITERABLE_TYPE));
         if (!isIterable && !isAsyncIterable) {
-          return new MaybeBoxedIterableOrAsyncIterable(null, alt);
+          return new MaybeBoxedType(null, alt);
         }
         TemplateType valueTemplate =
             isAsyncIterable
-                ? typeRegistry.getAsyncIterableTemplate()
-                : typeRegistry.getIterableTemplate();
+                ? typeRegistry.getAsyncIterableValueTemplate()
+                : typeRegistry.getIterableValueTemplate();
         templatedTypes.add(alt.getTemplateTypeMap().getResolvedTemplateType(valueTemplate));
       }
     } else {
       JSType autoboxedType = type.isBoxableScalar() ? type.autoboxesTo() : type;
       boolean isIterable = autoboxedType.isSubtypeOf(typeRegistry.getNativeType(ITERABLE_TYPE));
       boolean isAsyncIterable =
-          autoboxedType.isSubtypeOf(typeRegistry.getNativeType(ASYNC_ITERABLE_TYPE));
+          includeAsyncIterable
+              && autoboxedType.isSubtypeOf(typeRegistry.getNativeType(ASYNC_ITERABLE_TYPE));
       if (!isIterable && !isAsyncIterable) {
-        return new MaybeBoxedIterableOrAsyncIterable(null, autoboxedType);
+        return new MaybeBoxedType(null, autoboxedType);
       }
       TemplateType templateType =
           isAsyncIterable
-              ? typeRegistry.getAsyncIterableTemplate()
-              : typeRegistry.getIterableTemplate();
+              ? typeRegistry.getAsyncIterableValueTemplate()
+              : typeRegistry.getIterableValueTemplate();
       templatedTypes.add(autoboxedType.getTemplateTypeMap().getResolvedTemplateType(templateType));
     }
-    return new MaybeBoxedIterableOrAsyncIterable(
-        typeRegistry.createUnionType(templatedTypes), null);
+    return new MaybeBoxedType(typeRegistry.createUnionType(templatedTypes), null);
   }
 
   private JsIterables() {}

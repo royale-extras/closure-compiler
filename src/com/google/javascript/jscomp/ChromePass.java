@@ -18,19 +18,19 @@ package com.google.javascript.jscomp;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Compiler pass for Chrome-specific needs. It handles the following Chrome JS features:
@@ -52,7 +52,12 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
   private static final String CR_DEFINE_PROPERTY = "cr.defineProperty";
   private static final String VIRTUAL_FILE = "<ChromePass.java>";
   private static final Node VIRTUAL_NODE =
-      IR.empty().setStaticSourceFile(new SourceFile(VIRTUAL_FILE, SourceKind.EXTERN));
+      IR.empty().setStaticSourceFile(SourceFile.fromCode(VIRTUAL_FILE, "", SourceKind.EXTERN));
+  private static final QualifiedName CR_PROPERTYKIND_JS = QualifiedName.of("cr.PropertyKind.JS");
+  private static final QualifiedName CR_PROPERTYKIND_ATTR =
+      QualifiedName.of("cr.PropertyKind.ATTR");
+  private static final QualifiedName CR_PROPERTYKIND_BOOL_ATTR =
+      QualifiedName.of("cr.PropertyKind.BOOL_ATTR");
 
   private static final String CR_DEFINE_COMMON_EXPLANATION =
       "It should be called like this:"
@@ -94,7 +99,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
   public ChromePass(AbstractCompiler compiler) {
     this.compiler = compiler;
     // The global variable "cr" is declared in ui/webui/resources/js/cr.js.
-    this.createdObjects = new HashSet<>(Arrays.asList("cr"));
+    this.createdObjects = new LinkedHashSet<>(Arrays.asList("cr"));
   }
 
   @Override
@@ -165,20 +170,19 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
 
     Node definitionNode = IR.exprResult(getPropNode).srcref(parent);
 
-    parent.getParent().addChildAfter(definitionNode, parent);
+    definitionNode.insertAfter(parent);
     compiler.reportChangeToEnclosingScope(isCrDefinePropertyCall ? call : getPropNode);
   }
 
-  @Nullable
-  private Node getTypeByCrPropertyKind(@Nullable Node propertyKind) {
-    if (propertyKind == null || propertyKind.matchesQualifiedName("cr.PropertyKind.JS")) {
+  private @Nullable Node getTypeByCrPropertyKind(@Nullable Node propertyKind) {
+    if (propertyKind == null || CR_PROPERTYKIND_JS.matches(propertyKind)) {
       // This is valid, it just doesn't tell us much about the type.
       return null;
     }
-    if (propertyKind.matchesQualifiedName("cr.PropertyKind.ATTR")) {
+    if (CR_PROPERTYKIND_ATTR.matches(propertyKind)) {
       return IR.string("string");
     }
-    if (propertyKind.matchesQualifiedName("cr.PropertyKind.BOOL_ATTR")) {
+    if (CR_PROPERTYKIND_BOOL_ATTR.matches(propertyKind)) {
       return IR.string("boolean");
     }
     compiler.report(
@@ -190,7 +194,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
   }
 
   private static void setJsDocWithType(Node target, Node type) {
-    JSDocInfoBuilder builder = new JSDocInfoBuilder(false);
+    JSDocInfo.Builder builder = JSDocInfo.builder();
     builder.recordType(new JSTypeExpression(type.srcrefTree(VIRTUAL_NODE), VIRTUAL_FILE));
     target.setJSDocInfo(builder.build());
   }
@@ -198,7 +202,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
   private void createAndInsertObjectsForQualifiedName(Node scriptChild, String namespace) {
     List<Node> objectsForQualifiedName = createObjectsForQualifiedName(namespace);
     for (Node n : objectsForQualifiedName) {
-      scriptChild.getParent().addChildBefore(n, scriptChild);
+      n.srcrefTree(scriptChild).insertBefore(scriptChild);
     }
     if (!objectsForQualifiedName.isEmpty()) {
       compiler.reportChangeToEnclosingScope(scriptChild);
@@ -213,7 +217,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
     Node namespaceArg = crDefineCallNode.getSecondChild();
     Node function = crDefineCallNode.getChildAtIndex(2);
 
-    if (!namespaceArg.isString()) {
+    if (!namespaceArg.isStringLit()) {
       compiler.report(JSError.make(namespaceArg, CR_DEFINE_INVALID_FIRST_ARGUMENT));
       return;
     }
@@ -249,9 +253,9 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
   }
 
   private static Map<String, String> objectLitToMap(Node objectLit) {
-    Map<String, String> res = new HashMap<>();
+    Map<String, String> res = new LinkedHashMap<>();
 
-    for (Node keyNode : objectLit.children()) {
+    for (Node keyNode = objectLit.getFirstChild(); keyNode != null; keyNode = keyNode.getNext()) {
       String key = keyNode.getString();
 
       Node valueNode = keyNode.getFirstChild();
@@ -292,15 +296,14 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
   }
 
   private void createObjectIfNew(List<Node> objects, String name, boolean needVar) {
-    if (!createdObjects.contains(name)) {
-      objects.add(createJsNode((needVar ? "var " : "") + name + " = " + name + " || {};"));
-      createdObjects.add(name);
+    if (createdObjects.contains(name)) {
+      return;
     }
-  }
+    createdObjects.add(name);
 
-  private Node createJsNode(String code) {
-    // The parent node after parseSyntheticCode() is SCRIPT node, we need to get rid of it.
-    return compiler.parseSyntheticCode(code).removeFirstChild();
+    Node v = NodeUtil.newQName(this.compiler, name);
+    Node lhs = IR.or(v.cloneTree(), IR.objectlit());
+    objects.add(needVar ? IR.var(v, lhs) : IR.exprResult(IR.assign(v, lhs)));
   }
 
   private class RenameInternalsToExternalsCallback extends AbstractPostOrderCallback {
@@ -347,7 +350,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
         Node clone = n.cloneTree();
         if (clone.isClass()) {
           Node className = clone.getFirstChild();
-          className.replaceWith(IR.empty().useSourceInfoFrom(className));
+          className.replaceWith(IR.empty().srcref(className));
         }
         NodeUtil.markNewScopesChanged(clone, compiler);
         Node exprResult =
@@ -356,9 +359,9 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
 
         if (n.getJSDocInfo() != null) {
           exprResult.getFirstChild().setJSDocInfo(n.getJSDocInfo());
-          clone.removeProp(Node.JSDOC_INFO_PROP);
+          clone.setJSDocInfo(null);
         }
-        this.namespaceBlock.replaceChild(n, exprResult);
+        n.replaceWith(exprResult);
         NodeUtil.markFunctionsDeleted(n, compiler);
         compiler.reportChangeToEnclosingScope(exprResult);
       } else if (n.isName()
@@ -388,7 +391,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
             if (parent.getJSDocInfo() != null) {
               exprResult.getFirstChild().setJSDocInfo(parent.getJSDocInfo().clone());
             }
-            this.namespaceBlock.replaceChild(parent, exprResult);
+            parent.replaceWith(exprResult);
             compiler.reportChangeToEnclosingScope(exprResult);
           }
         } else {
@@ -404,7 +407,7 @@ public class ChromePass extends AbstractPostOrderCallback implements CompilerPas
             parent.putBooleanProp(Node.FREE_CALL, false);
           }
 
-          parent.replaceChild(n, newNode);
+          n.replaceWith(newNode);
           compiler.reportChangeToEnclosingScope(newNode);
         }
       }

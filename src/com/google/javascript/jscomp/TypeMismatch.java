@@ -15,11 +15,12 @@
  */
 package com.google.javascript.jscomp;
 
+import static java.util.Objects.requireNonNull;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.InlineMe;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.FunctionType;
@@ -34,20 +35,35 @@ import java.util.Iterator;
  *
  * <p>Type-based optimizations should take this into account so that they don't wreck code with type
  * warnings.
+ *
+ * @param found The RHS type; the type of the assignment target.
+ * @param required The LHS type; the type being assigned.
+ * @param location The location of the assignment.
  */
-@AutoValue
-public abstract class TypeMismatch implements Serializable {
-  /** The RHS type; the type of the assignment target. */
-  public abstract JSType getFound();
+public record TypeMismatch(JSType found, JSType required, Node location) implements Serializable {
+  public TypeMismatch {
+    requireNonNull(found, "found");
+    requireNonNull(required, "required");
+    requireNonNull(location, "location");
+  }
 
-  /** The LHS type; the type being assigned. */
-  public abstract JSType getRequired();
+  @InlineMe(replacement = "this.found()")
+  public JSType getFound() {
+    return found();
+  }
 
-  /** The location of the assignment. */
-  abstract Node getLocation();
+  @InlineMe(replacement = "this.required()")
+  public JSType getRequired() {
+    return required();
+  }
+
+  @InlineMe(replacement = "this.location()")
+  public Node getLocation() {
+    return location();
+  }
 
   private static TypeMismatch create(JSType found, JSType required, Node location) {
-    return new AutoValue_TypeMismatch(found, required, location);
+    return new TypeMismatch(found, required, location);
   }
 
   @VisibleForTesting
@@ -61,7 +77,6 @@ public abstract class TypeMismatch implements Serializable {
   static class Accumulator implements Serializable {
 
     private final ArrayList<TypeMismatch> mismatches = new ArrayList<>();
-    private final ArrayList<TypeMismatch> implicitInterfaceUses = new ArrayList<>();
 
     void registerMismatch(Node location, JSType found, JSType required) {
       // Don't register a mismatch for differences in null or undefined or if the
@@ -69,13 +84,14 @@ public abstract class TypeMismatch implements Serializable {
       found = removeNullUndefinedAndTemplates(found);
       required = removeNullUndefinedAndTemplates(required);
       if (found.isSubtypeOf(required) || required.isSubtypeOf(found)) {
-        boolean strictMismatch =
-            !found.isSubtypeWithoutStructuralTyping(required)
-                && !required.isSubtypeWithoutStructuralTyping(found);
-        if (strictMismatch && bothAreNotTemplateTypes(found, required)) {
-          this.implicitInterfaceUses.add(TypeMismatch.create(found, required, location));
-        }
         return;
+      }
+      if (required.isUnionType()) {
+        for (JSType requiredAltType : required.toMaybeUnionType().getAlternates()) {
+          if (requiredAltType.isSubtypeOf(found)) {
+            return;
+          }
+        }
       }
 
       if (bothAreNotTemplateTypes(found, required)) {
@@ -95,42 +111,12 @@ public abstract class TypeMismatch implements Serializable {
       }
     }
 
-    void recordImplicitUseOfNativeObject(Node location, JSType found, JSType required) {
-      found = found.restrictByNotNullOrUndefined();
-      required = required.restrictByNotNullOrUndefined();
-      if (isInstanceOfObject(found)
-          && !isInstanceOfObject(required)
-          && !required.isUnknownType()
-          && bothAreNotTemplateTypes(found, required)) {
-        this.mismatches.add(TypeMismatch.create(found, required, location));
-      }
-    }
-
-    void recordImplicitInterfaceUses(Node location, JSType found, JSType required) {
-      found = removeNullUndefinedAndTemplates(found);
-      required = removeNullUndefinedAndTemplates(required);
-      if (required.isUnknownType()) {
-        return;
-      }
-      boolean strictMismatch =
-          !found.isSubtypeWithoutStructuralTyping(required)
-              && !required.isSubtypeWithoutStructuralTyping(found);
-      boolean mismatch = !found.isSubtypeOf(required) && !required.isSubtypeOf(found);
-      if ((strictMismatch || mismatch) && bothAreNotTemplateTypes(found, required)) {
-        this.implicitInterfaceUses.add(TypeMismatch.create(found, required, location));
-      }
-    }
-
     ImmutableCollection<TypeMismatch> getMismatches() {
       return ImmutableList.copyOf(this.mismatches);
     }
 
-    ImmutableCollection<TypeMismatch> getImplicitInterfaceUses() {
-      return ImmutableList.copyOf(this.implicitInterfaceUses);
-    }
-
     private void registerIfMismatch(Node location, JSType found, JSType required) {
-      if (found != null && required != null && !found.isSubtypeWithoutStructuralTyping(required)) {
+      if (found != null && required != null && !found.isSubtypeOf(required)) {
         this.registerMismatch(location, found, required);
       }
     }
@@ -146,15 +132,6 @@ public abstract class TypeMismatch implements Serializable {
      */
     private static boolean bothAreNotTemplateTypes(JSType found, JSType required) {
       return !found.isTemplateType() && !required.isTemplateType();
-    }
-
-    private static boolean isInstanceOfObject(JSType type) {
-      // Some type whose class is Object
-      ObjectType obj = type.toMaybeObjectType();
-      if (obj != null && obj.isNativeObjectType() && "Object".equals(obj.getReferenceName())) {
-        return true;
-      }
-      return type.isRecordType() || type.isLiteralObject();
     }
 
     private static JSType removeNullUndefinedAndTemplates(JSType t) {

@@ -34,20 +34,31 @@ import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.QualifiedName;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
+import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Finds the Polymer behavior definitions associated with Polymer element definitions.
+ *
  * @see https://www.polymer-project.org/1.0/docs/devguide/behaviors
  */
 final class PolymerBehaviorExtractor {
 
-  private static final ImmutableSet<String> BEHAVIOR_NAMES_NOT_TO_COPY = ImmutableSet.of(
-        "created", "attached", "detached", "attributeChanged", "configure", "ready",
-        "properties", "listeners", "observers", "hostAttributes");
+  private static final ImmutableSet<String> BEHAVIOR_NAMES_NOT_TO_COPY =
+      ImmutableSet.of(
+          "created",
+          "attached",
+          "detached",
+          "attributeChanged",
+          "configure",
+          "ready",
+          "properties",
+          "listeners",
+          "observers",
+          "hostAttributes");
 
   private static final String GOOG_MODULE_EXPORTS = "exports";
 
@@ -58,7 +69,8 @@ final class PolymerBehaviorExtractor {
 
   private final Table<String, ModuleMetadata, ResolveBehaviorNameResult> resolveMemoized =
       HashBasedTable.create();
-  private final Map<String, ResolveBehaviorNameResult> globalResolveMemoized = new HashMap<>();
+  private final Map<String, ResolveBehaviorNameResult> globalResolveMemoized =
+      new LinkedHashMap<>();
 
   PolymerBehaviorExtractor(
       AbstractCompiler compiler,
@@ -95,10 +107,13 @@ final class PolymerBehaviorExtractor {
     }
 
     ImmutableList.Builder<BehaviorDefinition> behaviors = ImmutableList.builder();
-    for (Node behaviorName : behaviorArray.children()) {
+    for (Node behaviorName = behaviorArray.getFirstChild();
+        behaviorName != null;
+        behaviorName = behaviorName.getNext()) {
       if (behaviorName.isObjectLit()) {
         PolymerPassStaticUtils.switchDollarSignPropsToBrackets(behaviorName, compiler);
         PolymerPassStaticUtils.quoteListenerAndHostAttributeKeys(behaviorName, compiler);
+        PolymerPassStaticUtils.protectObserverAndPropertyFunctionKeys(behaviorName);
         if (NodeUtil.getFirstPropMatchingKey(behaviorName, "is") != null) {
           compiler.report(JSError.make(behaviorName, PolymerPassErrors.POLYMER_INVALID_BEHAVIOR));
         }
@@ -166,7 +181,7 @@ final class PolymerBehaviorExtractor {
     final ModuleMetadata moduleMetadata;
 
     ResolveBehaviorNameResult(
-        Node node, boolean isGlobalDeclaration, ModuleMetadata moduleMetadata) {
+        @Nullable Node node, boolean isGlobalDeclaration, @Nullable ModuleMetadata moduleMetadata) {
       this.node = node;
       this.isGlobalDeclaration = isGlobalDeclaration;
       this.moduleMetadata = moduleMetadata;
@@ -189,7 +204,7 @@ final class PolymerBehaviorExtractor {
    *     resolved.
    */
   private ResolveBehaviorNameResult resolveBehaviorName(
-      @Nullable String name, ModuleMetadata moduleMetadata) {
+      @Nullable String name, @Nullable ModuleMetadata moduleMetadata) {
     if (name == null) {
       return FAILED_RESOLVE_RESULT;
     }
@@ -287,7 +302,7 @@ final class PolymerBehaviorExtractor {
    * <p>Returns null if the name is not from a legacy module, and resolution should continue
    * normally.
    */
-  private ResolveBehaviorNameResult resolveReferenceToLegacyGoogModule(String name) {
+  private @Nullable ResolveBehaviorNameResult resolveReferenceToLegacyGoogModule(String name) {
     int dot = name.length();
     while (dot >= 0) {
       String subNamespace = name.substring(0, dot);
@@ -315,7 +330,7 @@ final class PolymerBehaviorExtractor {
     }
     return GOOG_MODULE_GET.matches(callNode.getFirstChild())
         && callNode.hasTwoChildren()
-        && callNode.getSecondChild().isString();
+        && callNode.getSecondChild().isStringLit();
   }
 
   private ResolveBehaviorNameResult resolveGoogModuleGet(String moduleNamespace) {
@@ -337,7 +352,8 @@ final class PolymerBehaviorExtractor {
    * <p>Returns null if the given name is not imported or {@link #FAILED_RESOLVE_RESULT} if it is
    * imported but is not annotated @polymerBehavior.
    */
-  private ResolveBehaviorNameResult getNameIfModuleImport(String name, ModuleMetadata metadata) {
+  private @Nullable ResolveBehaviorNameResult getNameIfModuleImport(
+      String name, ModuleMetadata metadata) {
     if (metadata == null || (!metadata.isEs6Module() && !metadata.isGoogModule())) {
       return null;
     }
@@ -417,13 +433,21 @@ final class PolymerBehaviorExtractor {
   private static ImmutableList<MemberDefinition> getBehaviorFunctionsToCopy(Node behaviorObjLit) {
     checkState(behaviorObjLit.isObjectLit());
     ImmutableList.Builder<MemberDefinition> functionsToCopy = ImmutableList.builder();
+    Node enclosingModule = NodeUtil.getEnclosingModuleIfPresent(behaviorObjLit);
 
-    for (Node keyNode : behaviorObjLit.children()) {
-      boolean isFunctionDefinition = (keyNode.isStringKey() && keyNode.getFirstChild().isFunction())
-          || keyNode.isMemberFunctionDef();
+    for (Node keyNode = behaviorObjLit.getFirstChild();
+        keyNode != null;
+        keyNode = keyNode.getNext()) {
+      boolean isFunctionDefinition =
+          (keyNode.isStringKey() && keyNode.getFirstChild().isFunction())
+              || keyNode.isMemberFunctionDef();
       if (isFunctionDefinition && !BEHAVIOR_NAMES_NOT_TO_COPY.contains(keyNode.getString())) {
-        functionsToCopy.add(new MemberDefinition(NodeUtil.getBestJSDocInfo(keyNode), keyNode,
-          keyNode.getFirstChild()));
+        functionsToCopy.add(
+            new MemberDefinition(
+                NodeUtil.getBestJSDocInfo(keyNode),
+                keyNode,
+                keyNode.getFirstChild(),
+                enclosingModule));
       }
     }
 
@@ -432,11 +456,10 @@ final class PolymerBehaviorExtractor {
 
   /**
    * Similar to {@link Node#getQualifiedName} but also handles CAST nodes. For example, given a
-   * GETPROP representing "(/** @type {?} *\/ (x)).y.z" returns "x.y.z". Returns null if node is
-   * not a NAME, GETPROP, or CAST. See b/64389806 for Polymer-specific context.
+   * GETPROP representing "(/** @type {?} *\/ (x)).y.z" returns "x.y.z". Returns null if node is not
+   * a NAME, GETPROP, or CAST. See b/64389806 for Polymer-specific context.
    */
-  @Nullable
-  private static String getQualifiedNameThroughCast(Node node) {
+  private static @Nullable String getQualifiedNameThroughCast(Node node) {
     if (node.isName()) {
       String name = node.getString();
       return name.isEmpty() ? null : name;
@@ -445,7 +468,7 @@ final class PolymerBehaviorExtractor {
       if (left == null) {
         return null;
       }
-      String right = node.getLastChild().getString();
+      String right = node.getString();
       return left + "." + right;
     } else if (node.isCast()) {
       return getQualifiedNameThroughCast(node.getFirstChild());
@@ -460,13 +483,20 @@ final class PolymerBehaviorExtractor {
   private static ImmutableList<MemberDefinition> getNonPropertyMembersToCopy(Node behaviorObjLit) {
     checkState(behaviorObjLit.isObjectLit());
     ImmutableList.Builder<MemberDefinition> membersToCopy = ImmutableList.builder();
+    Node enclosingModule = NodeUtil.getEnclosingModuleIfPresent(behaviorObjLit);
 
-    for (Node keyNode : behaviorObjLit.children()) {
-      boolean isNonFunctionMember = keyNode.isGetterDef()
-          || (keyNode.isStringKey() && !keyNode.getFirstChild().isFunction());
+    for (Node keyNode = behaviorObjLit.getFirstChild();
+        keyNode != null;
+        keyNode = keyNode.getNext()) {
+      boolean isNonFunctionMember =
+          keyNode.isGetterDef() || (keyNode.isStringKey() && !keyNode.getFirstChild().isFunction());
       if (isNonFunctionMember && !BEHAVIOR_NAMES_NOT_TO_COPY.contains(keyNode.getString())) {
-        membersToCopy.add(new MemberDefinition(NodeUtil.getBestJSDocInfo(keyNode), keyNode,
-          keyNode.getFirstChild()));
+        membersToCopy.add(
+            new MemberDefinition(
+                NodeUtil.getBestJSDocInfo(keyNode),
+                keyNode,
+                keyNode.getFirstChild(),
+                enclosingModule));
       }
     }
 
@@ -478,33 +508,25 @@ final class PolymerBehaviorExtractor {
    * which use the behavior.
    */
   static final class BehaviorDefinition {
-    /**
-     * Properties declared in the behavior 'properties' block.
-     */
+    /** Properties declared in the behavior 'properties' block. */
     final List<MemberDefinition> props;
 
-    /**
-     * Functions intended to be copied to elements which use this Behavior.
-     */
+    /** Functions intended to be copied to elements which use this Behavior. */
     final List<MemberDefinition> functionsToCopy;
 
-    /**
-     * Other members intended to be copied to elements which use this Behavior.
-     */
+    /** Other members intended to be copied to elements which use this Behavior. */
     final List<MemberDefinition> nonPropertyMembersToCopy;
 
-    /**
-     * Whether this Behavior is declared in the global scope.
-     */
+    /** Whether this Behavior is declared in the global scope. */
     final boolean isGlobalDeclaration;
 
-    /**
-     * Language features to carry over to the extraction destination.
-     */
+    /** Language features to carry over to the extraction destination. */
     final FeatureSet features;
 
     /** Containing MODULE_BODY if this behavior is defined inside a module, otherwise null */
     final Node behaviorModule;
+
+    private @Nullable Set<String> lazyModuleLocalNames;
 
     BehaviorDefinition(
         List<MemberDefinition> props,
@@ -519,6 +541,20 @@ final class PolymerBehaviorExtractor {
       this.isGlobalDeclaration = isGlobalDeclaration;
       this.features = features;
       this.behaviorModule = behaviorModule;
+    }
+
+    Set<String> getModuleLocalNames(AbstractCompiler compiler) {
+      if (lazyModuleLocalNames == null) {
+        lazyModuleLocalNames = this.accumulateModuleLocalVars(compiler);
+      }
+      return lazyModuleLocalNames;
+    }
+
+    private Set<String> accumulateModuleLocalVars(AbstractCompiler compiler) {
+      SyntacticScopeCreator scopeCreator = new SyntacticScopeCreator(compiler);
+      Scope globalScope = Scope.createGlobalScope(behaviorModule.getParent());
+      return NodeUtil.getAllVarNamesDeclaredInModule(
+          behaviorModule, compiler, scopeCreator, globalScope);
     }
   }
 }

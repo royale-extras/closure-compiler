@@ -22,7 +22,7 @@ import com.google.javascript.rhino.Node;
 /**
  * Checks that ES6 Modules are used correctly, and do not reference undefined keywords or features.
  */
-public final class Es6CheckModule extends AbstractPostOrderCallback implements HotSwapCompilerPass {
+public final class Es6CheckModule extends AbstractPostOrderCallback implements CompilerPass {
   static final DiagnosticType ES6_MODULE_REFERENCES_THIS =
       DiagnosticType.warning(
           "ES6_MODULE_REFERENCES_THIS", "The body of an ES6 module cannot reference 'this'.");
@@ -43,20 +43,14 @@ public final class Es6CheckModule extends AbstractPostOrderCallback implements H
   }
 
   @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
-  }
-
-  @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
-      case THIS:
+      case THIS -> {
         if (t.inModuleHoistScope()) {
           t.report(n, ES6_MODULE_REFERENCES_THIS);
         }
-        break;
-      case GETPROP:
-      case GETELEM:
+      }
+      case GETPROP, GETELEM -> {
         if (NodeUtil.isLValue(n)
             && !NodeUtil.isDeclarationLValue(n)
             && n.getFirstChild().isName()) {
@@ -70,8 +64,8 @@ public final class Es6CheckModule extends AbstractPostOrderCallback implements H
             }
           }
         }
-        break;
-      case NAME:
+      }
+      case NAME -> {
         if (NodeUtil.isLValue(n) && !NodeUtil.isDeclarationLValue(n)) {
           Var var = t.getScope().getVar(n.getString());
           if (var != null) {
@@ -85,9 +79,8 @@ public final class Es6CheckModule extends AbstractPostOrderCallback implements H
             }
           }
         }
-        break;
-      default:
-        break;
+      }
+      default -> {}
     }
   }
 }

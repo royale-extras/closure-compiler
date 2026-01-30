@@ -59,9 +59,16 @@ $jscomp.polyfill('Symbol', function(orig) {
   };
 
 
-  /** @const {string} */
-  var SYMBOL_PREFIX = 'jscomp_symbol_';
+  /**
+   * Identifier for this compiled binary.
+   * @const {number}
+   */
+  var BIN_ID = (Math.random() * 1e9) >>> 0;
 
+  /** @const {string} */
+  var SYMBOL_PREFIX = 'jscomp_symbol_' + BIN_ID + '_';
+
+  /** @type {number} */
   var counter = 0;
 
   /**
@@ -75,63 +82,33 @@ $jscomp.polyfill('Symbol', function(orig) {
       throw new TypeError('Symbol is not a constructor');
     }
     return (new SymbolClass(
-        SYMBOL_PREFIX + (opt_description || '') + '_' + (counter++),
+        SYMBOL_PREFIX + (opt_description || '') + '_' + counter++,
         opt_description));
   };
 
   return symbolPolyfill;
 }, 'es6', 'es3');
 
-/**
- * Initializes Symbol.iterator (if it's not already defined) and adds a
- * Symbol.iterator property to the Array prototype.
- */
-// TODO(rishipal): Remove this function
-$jscomp.initSymbolIterator = function() {};
-
 $jscomp.polyfill('Symbol.iterator', function(orig) {
   if (orig) return orig;  // no polyfill needed
 
   var symbolIterator = Symbol('Symbol.iterator');
 
-  // Polyfill 'Symbol.iterator' onto Array and the various TypedArray* objects.
-  // This array uses strings to index into $jscomp.global because the TypedArray
-  // objects are present in IE11 but not on older browsers. Using bracket access
-  // saves code size compared to `typeof Int8Array === 'function' && Int8Array`.
-  var /** !Array<string> */ arrayLikes = [
-    'Array',
-    // List taken from https://tc39.es/ecma262/#sec-typedarray-objects.
-    // The BigInt*Arrays are intentionally omitted because they are only present
-    // in browsers where Symbol is fully supported.
-    'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
-    'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array'
-  ];
-
-  for (var i = 0; i < arrayLikes.length; i++) {
-    var ArrayLikeCtor = /** @type {*} */ ($jscomp.global[arrayLikes[i]]);
-    if (typeof ArrayLikeCtor === 'function' &&
-        typeof ArrayLikeCtor.prototype[symbolIterator] != 'function') {
-      $jscomp.defineProperty(ArrayLikeCtor.prototype, symbolIterator, {
-        configurable: true,
-        writable: true,
-        /**
-         * @this {IArrayLike}
-         * @return {!IteratorIterable}
-         */
-        value: function() {
-          return $jscomp.iteratorPrototype($jscomp.arrayIteratorImpl(this));
-        }
-      });
+  // Polyfill 'Symbol.iterator' onto Array.
+  $jscomp.defineProperty(Array.prototype, symbolIterator, {
+    configurable: true,
+    writable: true,
+    /**
+     * @this {IArrayLike}
+     * @return {!IteratorIterable}
+     */
+    value: function() {
+      return $jscomp.iteratorPrototype($jscomp.arrayIteratorImpl(this));
     }
-  }
+  });
+
   return symbolIterator;
 }, 'es6', 'es3');
-
-/**
- * Initializes Symbol.asyncIterator (if it's not already defined)
- */
-// TODO(rishipal): Remove this function
-$jscomp.initSymbolAsyncIterator = function() {};
 
 $jscomp.polyfill('Symbol.asyncIterator', function(orig) {
   if (orig) {
@@ -139,6 +116,13 @@ $jscomp.polyfill('Symbol.asyncIterator', function(orig) {
   }
   return Symbol('Symbol.asyncIterator');
 }, 'es9', 'es3');
+
+$jscomp.polyfill('Symbol.toStringTag', function(orig) {
+  if (orig) {
+    return orig;
+  }
+  return Symbol('Symbol.toStringTag');
+}, 'es6', 'es3');
 
 /**
  * Returns an iterator with the given `next` method.  Passing

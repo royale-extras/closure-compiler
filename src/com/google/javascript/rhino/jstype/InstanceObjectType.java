@@ -41,12 +41,12 @@ package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.javascript.rhino.Node;
 
 /** An object type that is an instance of some function constructor. */
 final class InstanceObjectType extends PrototypeObjectType {
-  private static final long serialVersionUID = 1L;
-
   private static final JSTypeClass TYPE_CLASS = JSTypeClass.INSTANCE_OBJECT;
 
   private final FunctionType constructor;
@@ -65,6 +65,7 @@ final class InstanceObjectType extends PrototypeObjectType {
       super(registry);
     }
 
+    @CanIgnoreReturnValue
     Builder setConstructor(FunctionType x) {
       this.constructor = x;
       return this;
@@ -111,8 +112,7 @@ final class InstanceObjectType extends PrototypeObjectType {
   }
 
   @Override
-  boolean defineProperty(String name, JSType type, boolean inferred,
-      Node propertyNode) {
+  boolean defineProperty(Property.Key name, JSType type, boolean inferred, Node propertyNode) {
     ObjectType proto = getImplicitPrototype();
     if (proto != null && proto.hasOwnDeclaredProperty(name)) {
       return false;
@@ -157,6 +157,12 @@ final class InstanceObjectType extends PrototypeObjectType {
   public boolean isArrayType() {
     return getConstructor().isNativeObjectType()
         && "Array".equals(getReferenceName());
+  }
+
+  @Override
+  public boolean isReadonlyArrayType() {
+    return getConstructor().isNativeObjectType()
+        && "ReadonlyArray".equals(getReferenceName());
   }
 
   @Override
@@ -214,18 +220,13 @@ final class InstanceObjectType extends PrototypeObjectType {
   }
 
   @Override
-  public Iterable<ObjectType> getCtorImplementedInterfaces() {
+  public ImmutableList<ObjectType> getCtorImplementedInterfaces() {
     return getConstructor().getImplementedInterfaces();
   }
 
   @Override
-  public Iterable<ObjectType> getCtorExtendedInterfaces() {
+  public ImmutableList<ObjectType> getCtorExtendedInterfaces() {
     return getConstructor().getExtendedInterfaces();
-  }
-
-  @Override
-  public boolean isAmbiguousObject() {
-    return getConstructor().createsAmbiguousObjects();
   }
 
   // The owner will always be a resolved type, so there's no need to set

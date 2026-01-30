@@ -24,73 +24,70 @@ import com.google.debugging.sourcemap.SourceMapGenerator;
 import com.google.debugging.sourcemap.SourceMapGeneratorFactory;
 import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.StaticSourceFile;
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Collects information mapping the generated (compiled) source back to
- * its original source for debugging purposes.
+ * Collects information mapping the generated (compiled) source back to its original source for
+ * debugging purposes.
  *
  * @see CodeConsumer
  * @see CodeGenerator
  * @see CodePrinter
  */
 public final class SourceMap {
-  /**
-   * An enumeration of available source map formats
-   */
+  /** An enumeration of available source map formats */
   public static enum Format {
-     DEFAULT {
-       @Override SourceMap getInstance() {
-         return new SourceMap(
-           SourceMapGeneratorFactory.getInstance(SourceMapFormat.DEFAULT));
-       }
-     },
-     V3 {
-       @Override SourceMap getInstance() {
-         return new SourceMap(
-           SourceMapGeneratorFactory.getInstance(SourceMapFormat.V3));
-        }
-     };
-     abstract SourceMap getInstance();
+    DEFAULT {
+      @Override
+      SourceMap getInstance() {
+        return new SourceMap(SourceMapGeneratorFactory.getInstance(SourceMapFormat.DEFAULT));
+      }
+    },
+    V3 {
+      @Override
+      SourceMap getInstance() {
+        return new SourceMap(SourceMapGeneratorFactory.getInstance(SourceMapFormat.V3));
+      }
+    };
+
+    abstract SourceMap getInstance();
   }
 
-  /**
-   * Source maps can be very large different levels of detail can be specified.
-   */
+  /** Source maps can be very large different levels of detail can be specified. */
   public static enum DetailLevel implements Predicate<Node> {
     // ALL is best when the fullest details are needed for debugging or for
     // code-origin analysis.
     ALL {
-      @Override public boolean apply(Node node) {
-        // For a GETPROP 'foo.bar' node we create two mappings from its children 'foo' and 'bar' so
-        // there is no need in creating mapping for the node itself.
-        return !node.isGetProp();
+      @Override
+      public boolean apply(Node node) {
+        return true;
       }
     },
     // SYMBOLS is intended to be used for stack trace deobfuscation when full
     // detail is not needed.
     SYMBOLS {
-      @Override public boolean apply(Node node) {
+      @Override
+      public boolean apply(Node node) {
         return node.isCall()
             || node.isNew()
             || node.isFunction()
             || node.isName()
-            || NodeUtil.isNormalGet(node)
+            || NodeUtil.isNormalOrOptChainGet(node)
             || NodeUtil.mayBeObjectLitKey(node)
-            || (node.isString() && NodeUtil.isNormalGet(node.getParent()))
             || node.isTaggedTemplateLit();
       }
     }
   }
 
   /**
-   * Function that mape a "destination" location to use within the source map. Should return null
-   * if the value is not mapped.
+   * Function that mape a "destination" location to use within the source map. Should return null if
+   * the value is not mapped.
    */
   @FunctionalInterface
   public interface LocationMapping {
@@ -98,23 +95,21 @@ public final class SourceMap {
      * @param location the location to transform
      * @return the transformed location or null if not transformed
      */
-    @Nullable
-    String map(String location);
+    @Nullable String map(String location);
   }
 
-  /**
-   * Simple {@link LocationMapping} that strips a prefix from a location.
-   */
+  /** Simple {@link LocationMapping} that strips a prefix from a location. */
   public static final class PrefixLocationMapping implements LocationMapping {
     final String prefix;
     final String replacement;
+
     public PrefixLocationMapping(String prefix, String replacement) {
       this.prefix = prefix;
       this.replacement = replacement;
     }
 
     @Override
-    public String map(String location) {
+    public @Nullable String map(String location) {
       if (location.startsWith(prefix)) {
         return replacement + location.substring(prefix.length());
       }
@@ -127,9 +122,9 @@ public final class SourceMap {
 
     @Override
     public boolean equals(Object other) {
-      if (other instanceof PrefixLocationMapping) {
-        return ((PrefixLocationMapping) other).prefix.equals(prefix)
-            && ((PrefixLocationMapping) other).replacement.equals(replacement);
+      if (other instanceof PrefixLocationMapping prefixLocationMapping) {
+        return prefixLocationMapping.prefix.equals(prefix)
+            && prefixLocationMapping.replacement.equals(replacement);
       } else {
         return false;
       }
@@ -143,40 +138,69 @@ public final class SourceMap {
 
   private final SourceMapGenerator generator;
   private List<? extends LocationMapping> prefixMappings = ImmutableList.of();
-  private final Map<String, String> sourceLocationFixupCache = new HashMap<>();
+  private final Map<String, String> sourceLocationFixupCache = new LinkedHashMap<>();
+
   /**
    * A mapping derived from input source maps. Maps back to input sources that inputs to this
    * compilation job have been generated from, and used to create a source map that maps all the way
    * back to original inputs. {@code null} if no such mapping is wanted.
    */
-  @Nullable
-  private SourceFileMapping mapping;
+  private @Nullable SourceFileMapping mapping;
 
   private SourceMap(SourceMapGenerator generator) {
     this.generator = generator;
   }
 
-  public void addMapping(
-      Node node,
-      FilePosition outputStartPosition,
-      FilePosition outputEndPosition) {
-    String sourceFile = node.getSourceFileName();
+  /**
+   * Maintains a mapping from a given node to the position in the source code at which its generated
+   * form was placed. The positions are typically relative to the source file the node is located
+   * in, but might be adjusted if that source is being concatenated to other sources.
+   */
+  public static class Mapping {
+    Node node;
+    FilePosition start;
+    FilePosition end;
 
+    @Override
+    public String toString() {
+      // This toString() representation is used for debugging purposes only.
+      return "Mapping: start " + start + ", end " + end + ", node " + node;
+    }
+  }
+
+  public void addMapping(Mapping mapping) {
+    addMapping(mapping.node, mapping.start, mapping.end);
+  }
+
+  public void addMapping(
+      Node node, FilePosition outputStartPosition, FilePosition outputEndPosition) {
     // If the node does not have an associated source file or
     // its line number is -1, then the node does not have sufficient
     // information for a mapping to be useful.
+    StaticSourceFile sourceFile = node.getStaticSourceFile();
     if (sourceFile == null || node.getLineno() < 0) {
       return;
     }
 
+    String sourceFileName = sourceFile.getName();
     int lineNo = node.getLineno();
     int charNo = node.getCharno();
     String originalName = SourceMap.getOriginalName(node);
 
     if (mapping != null) {
-      OriginalMapping sourceMapping = mapping.getSourceMapping(sourceFile, lineNo, charNo);
-      if (sourceMapping != null) {
-        sourceFile = sourceMapping.getOriginalFile();
+      OriginalMapping sourceMapping = mapping.getSourceMapping(sourceFileName, lineNo, charNo);
+      if (sourceMapping == null) {
+        // The source file does not have a input map. We consider this to be an
+        // original source range and include it in the output map.
+      } else if (sourceMapping.equals(OriginalMapping.getDefaultInstance())) {
+        // The source file does have an input map, but it does not map the
+        // location. We consider this to be a synthetic code range and do not
+        // include it in the output map.
+        // TODO b/452676030 - Report the sourceless mapping.
+        return;
+      } else {
+        // The source file mapped our code range to its original source location.
+        sourceFileName = sourceMapping.getOriginalFile();
         lineNo = sourceMapping.getLineNumber();
         charNo = sourceMapping.getColumnPosition();
         String identifier = sourceMapping.getIdentifier();
@@ -186,32 +210,30 @@ public final class SourceMap {
       }
     }
 
-    sourceFile = fixupSourceLocation(sourceFile);
+    sourceFileName = fixupSourceLocation(sourceFileName);
 
     // Rhino source lines are one based but for v3 source maps, we make
     // them zero based.
     int lineBaseOffset = 1;
 
     generator.addMapping(
-        sourceFile, originalName,
+        sourceFileName,
+        originalName,
         new FilePosition(lineNo - lineBaseOffset, charNo),
-        outputStartPosition, outputEndPosition);
+        outputStartPosition,
+        outputEndPosition);
   }
 
   public void addSourceFile(String name, String code) {
     generator.addSourcesContent(fixupSourceLocation(name), code);
   }
 
-  private static String getOriginalName(Node node) {
+  private static @Nullable String getOriginalName(Node node) {
     if (node.getOriginalName() != null) {
       return node.getOriginalName();
     }
     if (node.isMemberFunctionDef()) {
       return node.getFirstChild().getOriginalName();
-    }
-    Node parent = node.getParent();
-    if (node.isString() && (parent.isGetProp() || parent.isOptChainGetProp())) {
-      return parent.getOriginalName();
     }
     return null;
   }
@@ -268,11 +290,9 @@ public final class SourceMap {
     generator.validate(validate);
   }
 
-  /**
-   * @param sourceMapLocationMappings
-   */
+  /** */
   public void setPrefixMappings(List<? extends LocationMapping> sourceMapLocationMappings) {
-     this.prefixMappings = sourceMapLocationMappings;
+    this.prefixMappings = sourceMapLocationMappings;
   }
 
   public void setSourceFileMapping(SourceFileMapping mapping) {

@@ -19,18 +19,13 @@ package com.google.javascript.jscomp;
 import com.google.debugging.sourcemap.SourceMapConsumerV3;
 import com.google.debugging.sourcemap.SourceMapParseException;
 import java.io.IOException;
-import java.io.Serializable;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
-/**
- * A lazy-loaded SourceMapConsumerV3 instance.
- */
-public final class SourceMapInput implements Serializable {
+/** A lazy-loaded SourceMapConsumerV3 instance. */
+public final class SourceMapInput {
   private final SourceFile sourceFile;
-  // No need to serialize the consumer, it will be recreated because the serialized version will
-  // have cached = false.
-  private transient volatile SourceMapConsumerV3 parsedSourceMap = null;
-  private transient volatile boolean cached = false;
+  private volatile @Nullable SourceMapConsumerV3 parsedSourceMap = null;
+  private volatile boolean cached = false;
 
   static final DiagnosticType SOURCEMAP_RESOLVE_FAILED =
       DiagnosticType.warning("SOURCEMAP_RESOLVE_FAILED", "Failed to resolve sourcemap at {0}: {1}");
@@ -51,29 +46,50 @@ public final class SourceMapInput implements Serializable {
     if (!cached) {
       // Avoid re-reading or reparsing files.
       cached = true;
-      String sourceMapPath = sourceFile.getOriginalPath();
+      String sourceMapPath = sourceFile.getName();
       try {
         String sourceMapContents = sourceFile.getCode();
         SourceMapConsumerV3 consumer = new SourceMapConsumerV3();
         consumer.parse(sourceMapContents);
+
+        // Detect an empty "default" source map provided by Gulp. We do not want
+        // to treat this file as having a real source map (implying this is an
+        // intermediate source file). Rather, this is the original source file.
+        // https://github.com/gulp-sourcemaps/gulp-sourcemaps/blob/91b94954/src/init/index.js#L116-L124
+        if (consumer.getFile() != null
+            && !consumer.getFile().isEmpty()
+            && consumer.getOriginalSources().size() == 1
+            && consumer.getOriginalSources().contains(consumer.getFile())
+            && consumer.getOriginalSourcesContent().size() == 1
+            && consumer.getOriginalNames().isEmpty()
+            && consumer.getLineCount() == -1) {
+          consumer = null;
+        }
+
         parsedSourceMap = consumer;
       } catch (IOException e) {
         JSError error =
             JSError.make(SourceMapInput.SOURCEMAP_RESOLVE_FAILED, sourceMapPath, e.getMessage());
-        errorManager.report(error.getDefaultLevel(), error);
+        errorManager.report(error.defaultLevel(), error);
       } catch (SourceMapParseException e) {
         JSError error =
             JSError.make(SourceMapInput.SOURCEMAP_PARSE_FAILED, sourceMapPath, e.getMessage());
-        errorManager.report(error.getDefaultLevel(), error);
+        errorManager.report(error.defaultLevel(), error);
       }
     }
     return parsedSourceMap;
   }
 
-  /**
-   * Gets the original location of this sourcemap file on disk.
-   */
+  /** Gets the original location of this sourcemap file on disk. */
   public String getOriginalPath() {
-    return sourceFile.getOriginalPath();
+    return sourceFile.getName();
+  }
+
+  public @Nullable String getRawSourceMapContents() {
+    try {
+      return this.sourceFile.getCode();
+    } catch (IOException e) {
+      return null;
+    }
   }
 }

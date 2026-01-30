@@ -63,10 +63,13 @@ public class InputId implements Serializable {
 
   @Override
   public boolean equals(Object obj) {
-    if (this == obj) return true;
-    if (obj == null) return false;
-    if (getClass() != obj.getClass()) return false;
-    return id.equals(((InputId) obj).id);
+    if (this == obj) {
+      return true;
+    }
+    if (!(obj instanceof InputId inputId)) {
+      return false;
+    }
+    return id.equals(inputId.id);
   }
 
   @Override

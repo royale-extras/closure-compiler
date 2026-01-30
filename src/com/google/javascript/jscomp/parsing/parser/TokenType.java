@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp.parsing.parser;
 
+import org.jspecify.annotations.Nullable;
 
 // 7.5 Tokens
 public enum TokenType {
@@ -127,7 +128,11 @@ public enum TokenType {
   CARET_EQUAL("^="),
   SLASH("/"),
   SLASH_EQUAL("/="),
-  POUND("#"),
+
+  // Logical Assignment Punctuators
+  AND_EQUAL("&&="),
+  OR_EQUAL("||="),
+  QUESTION_QUESTION_EQUAL("??="),
 
   // 7.8 Literals
   NULL,
@@ -154,8 +159,7 @@ public enum TokenType {
   TYPE,
   DECLARE,
   MODULE,
-  NAMESPACE
-  ;
+  NAMESPACE;
 
   public final String value;
 
@@ -163,7 +167,7 @@ public enum TokenType {
     this(null);
   }
 
-  TokenType(String value) {
+  TokenType(@Nullable String value) {
     this.value = value;
   }
 

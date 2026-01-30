@@ -15,20 +15,17 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.Es6ToEs3Util.CANNOT_CONVERT_YET;
+import static com.google.javascript.jscomp.TranspilationUtil.CANNOT_CONVERT_YET;
+import static com.google.javascript.jscomp.testing.CodeSubTree.findClassDefinition;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
-import static com.google.javascript.rhino.testing.TypeSubject.assertType;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.testing.NoninjectingCompiler;
+import com.google.javascript.jscomp.colors.Color;
+import com.google.javascript.jscomp.colors.StandardColors;
 import com.google.javascript.jscomp.testing.TestExternsBuilder;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.FunctionType;
-import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.JSTypeNative;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
-import com.google.javascript.rhino.jstype.ObjectType;
+import java.util.function.Function;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -49,36 +46,35 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 @SuppressWarnings("RhinoNodeGetFirstFirstChild")
 public final class Es6ConvertSuperTest extends CompilerTestCase {
-
   public Es6ConvertSuperTest() {
     super(MINIMAL_EXTERNS);
-  }
-
-  @Override
-  protected Compiler createCompiler() {
-    return new NoninjectingCompiler();
-  }
-
-  @Override
-  protected NoninjectingCompiler getLastCompiler() {
-    return (NoninjectingCompiler) super.getLastCompiler();
   }
 
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
-
+    enableNormalize();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2016);
     setLanguageOut(LanguageMode.ECMASCRIPT5);
     enableTypeCheck();
     enableTypeInfoValidation();
     enableScriptFeatureValidation();
+    replaceTypesWithColors();
+    enableMultistageCompilation();
+  }
+
+  private static PassFactory makePassFactory(
+      String name, Function<AbstractCompiler, CompilerPass> pass) {
+    return PassFactory.builder().setName(name).setInternalFactory(pass).build();
   }
 
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    return new Es6ConvertSuper(compiler);
+    PhaseOptimizer optimizer = new PhaseOptimizer(compiler, null);
+    optimizer.addOneTimePass(makePassFactory("es6NormalizeClasses", Es6NormalizeClasses::new));
+    optimizer.addOneTimePass(makePassFactory("es6ConvertSuper", Es6ConvertSuper::new));
+    return optimizer;
   }
 
   // Instance `super` resolution
@@ -87,75 +83,78 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
   public void testCallingSuperInstanceProperty() {
     test(
         externs(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  g(x) { }",
-                "}")),
+            """
+            class A {
+              constructor() { }
+
+              /** @param {number} x @return {string} */
+              g(x) { }
+            }
+            """),
         srcs(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  f() { super.g(3); }",
-                "}")),
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              f() { super.g(3); }
+            }
+            """),
         expected(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  f() { A.prototype.g.call(this, 3); }",
-                "}")));
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              f() { A.prototype.g.call(this, 3); }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    ObjectType classAPrototypeType = classAInstanceType.getImplicitPrototype();
-    FunctionType aDotGMethodType = classAPrototypeType.getPropertyType("g").toMaybeFunctionType();
-    JSType aDotGDotCallType =
-        aDotGMethodType // A.g property type
-            .getPropertyType("call");
+    Color classAPrototypeType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "A").getRootNode().getColor().getPrototypes());
 
-    JSType classBInstanceType = registry.getGlobalType("B");
+    Color aDotGMethodType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("g")
+            .getRootNode()
+            .getFirstChild()
+            .getColor();
+
+    Color classBInstanceType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "B")
+                .getRootNode()
+                .getColor()
+                .getInstanceColors());
 
     // A.prototype.g.call(this, 3)
     Node callNode =
-        getLastCompiler()
-            .getJsRoot() // root
-            .getFirstChild() // script
-            .getFirstChild() // class B
-            .getLastChild() // class B's body
-            .getLastChild() // f
-            .getOnlyChild() // function that implements f() {}
-            .getLastChild() // method body
-            .getFirstChild() // statement `A.prototype.g.call(this, 3);`
-            .getOnlyChild(); // CALL node within the statement
+        findClassDefinition(getLastCompiler(), "B")
+            .findMethodDefinition("f")
+            .findMatchingQNameReferences("A.prototype.g.call")
+            .get(0) // GETPROP node for A.prototype.g.call
+            .getParent(); // CALL node within the statement
     assertNode(callNode)
         .hasToken(Token.CALL)
         .hasLineno(4) // position and length of `super.g(3)`
-        .hasCharno(8)
-        .hasLength(10);
-    assertType(callNode.getJSType()).isEqualTo(aDotGMethodType.getReturnType());
+        .hasCharno(8);
+    assertNode(callNode).hasColorThat().isEqualTo(StandardColors.STRING);
 
     // A.prototype.g.call
     Node callee = callNode.getFirstChild();
     assertNode(callee)
         .matchesQualifiedName("A.prototype.g.call")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(8)
-        .hasLength(7);
-    assertType(callee.getJSType()).isEqualTo(aDotGDotCallType);
+        .hasCharno(14);
+    assertNode(callee).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A.prototype.g
     Node superDotGReplacement = callee.getFirstChild();
     assertNode(superDotGReplacement)
         .matchesQualifiedName("A.prototype.g")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(8)
-        .hasLength(7);
-    assertType(superDotGReplacement.getJSType()).isEqualTo(aDotGMethodType);
+        .hasCharno(14);
+    assertNode(superDotGReplacement).hasColorThat().isEqualTo(aDotGMethodType);
 
     // A.prototype
     Node superReplacement = superDotGReplacement.getFirstChild();
@@ -163,59 +162,63 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A.prototype")
         .hasLineno(4) // position and length of `super`
         .hasCharno(8)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAPrototypeType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAPrototypeType);
 
     // `this` node from `A.prototype.g.call(this, 3)`
     Node thisNode = callee.getNext();
     assertNode(thisNode)
         .hasToken(Token.THIS)
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(8)
-        .hasLength(7)
+        .hasCharno(14)
         .isIndexable(false); // there's no direct correlation with text in the original source
-    assertType(thisNode.getJSType()).isEqualTo(classBInstanceType);
+    assertNode(thisNode).hasColorThat().isEqualTo(classBInstanceType);
   }
 
   @Test
   public void testCallingSuperInstanceElement() {
     test(
         externs(
-            lines(
-                "/** @dict */",
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  ['g'](x) { };",
-                "}")),
+            """
+            /** @dict */
+            class A {
+              constructor() { }
+
+              /** @param {number} x */
+              ['g'](x) { };
+            }
+            """),
         srcs(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  ['f']() { super['g'](4); }",
-                "}")),
+            """
+            /** @dict */
+            class B extends A {
+              constructor() { super(); }
+
+              ['f']() { super['g'](4); }
+            }
+            """),
         expected(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() {",
-                "    super();",
-                "  }",
-                "",
-                "  ['f']() { A.prototype['g'].call(this, 4); }",
-                "}")));
+            """
+            class B extends A {
+              constructor() {
+                super();
+              }
+
+              ['f']() { A.prototype['g'].call(this, 4); }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    ObjectType classAPrototypeType = classAInstanceType.getImplicitPrototype();
-    JSType unknownType = registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
+    Color classAPrototypeType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "A").getRootNode().getColor().getPrototypes());
 
-    JSType classBInstanceType = registry.getGlobalType("B");
+    Color classBInstanceType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "B")
+                .getRootNode()
+                .getColor()
+                .getInstanceColors());
 
     // A.prototype['g'].call(this, 4)
     Node callNode =
@@ -232,29 +235,26 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(callNode)
         .hasToken(Token.CALL)
         .hasLineno(5) // position and length of `super['g'](4)`
-        .hasCharno(12)
-        .hasLength(13);
-    // computed property prevents doing any better than unknownType
-    assertType(callNode.getJSType()).isEqualTo(unknownType);
+        .hasCharno(12);
+    // computed property prevents doing any better than StandardColors.UNKNOWN
+    assertNode(callNode).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A.prototype['g'].call
     Node callee = callNode.getFirstChild();
     assertNode(callee)
         .hasToken(Token.GETPROP)
         .hasLineno(5) // position and length of `super['g']`
-        .hasCharno(12)
-        .hasLength(10);
-    assertType(callee.getJSType()).isEqualTo(unknownType);
+        .hasCharno(12);
+    assertNode(callee).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A.prototype['g']
     Node superGetelemReplacement = callee.getFirstChild();
     assertNode(superGetelemReplacement)
         .hasToken(Token.GETELEM)
         .hasLineno(5) // position and length of `super['g']`
-        .hasCharno(12)
-        .hasLength(10);
-    // computed property prevents doing any better than unknownType
-    assertType(superGetelemReplacement.getJSType()).isEqualTo(unknownType);
+        .hasCharno(12);
+    // computed property prevents doing any better than StandardColors.UNKNOWN
+    assertNode(superGetelemReplacement).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A.prototype
     Node superReplacement = superGetelemReplacement.getFirstChild();
@@ -262,9 +262,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A.prototype")
         .hasLineno(5) // position and length of `super`
         .hasCharno(12)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAPrototypeType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAPrototypeType);
 
     // `this` node from `A.prototype['g'].call(this, 3)`
     Node thisNode = callee.getNext();
@@ -272,42 +271,49 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .hasToken(Token.THIS)
         .hasLineno(5) // position and length of `super['g']`
         .hasCharno(12)
-        .hasLength(10)
         .isIndexable(false); // there's no direct correlation with text in the original source
-    assertType(thisNode.getJSType()).isEqualTo(classBInstanceType);
+    assertNode(thisNode).hasColorThat().isEqualTo(classBInstanceType);
   }
 
   @Test
   public void testAccessingSuperInstanceProperty() {
     test(
         externs(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  g(x) { }",
-                "}")),
+            """
+            class A {
+              constructor() { }
+
+              /** @param {number} x */
+              g(x) { }
+            }
+            """),
         srcs(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  f() { var t = super.g; }",
-                "}")),
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              f() { var t = super.g; }
+            }
+            """),
         expected(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  f() { var t = A.prototype.g; }",
-                "}")));
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              f() { var t = A.prototype.g; }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    ObjectType classAPrototypeType = classAInstanceType.getImplicitPrototype();
-    FunctionType aDotGMethodType = classAPrototypeType.getPropertyType("g").toMaybeFunctionType();
+    Color classAPrototypeType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "A").getRootNode().getColor().getPrototypes());
+    Color aDotGMethodType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("g")
+            .getRootNode()
+            .getFirstChild()
+            .getColor();
 
     // A.prototype.g
     Node superDotGReplacement =
@@ -325,9 +331,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(superDotGReplacement)
         .matchesQualifiedName("A.prototype.g")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(16)
-        .hasLength(7);
-    assertType(superDotGReplacement.getJSType()).isEqualTo(aDotGMethodType);
+        .hasCharno(22);
+    assertNode(superDotGReplacement).hasColorThat().isEqualTo(aDotGMethodType);
 
     // A.prototype
     Node superReplacement = superDotGReplacement.getFirstChild();
@@ -335,47 +340,47 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A.prototype")
         .hasLineno(4) // position and length of `super`
         .hasCharno(16)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAPrototypeType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAPrototypeType);
   }
 
   @Test
   public void testAccessingSuperInstanceElement() {
     test(
         externs(
-            lines(
-                "/** @dict */",
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  ['g'](x) { };",
-                "}")),
+            """
+            /** @dict */
+            class A {
+              constructor() { }
+
+              /** @param {number} x */
+              ['g'](x) { };
+            }
+            """),
         srcs(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  ['f']() { var t = super['g']; }",
-                "}")),
+            """
+            /** @dict */
+            class B extends A {
+              constructor() { super(); }
+
+              ['f']() { var t = super['g']; }
+            }
+            """),
         expected(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() {",
-                "    super();",
-                "  }",
-                "",
-                "  ['f']() { var t = A.prototype['g']; }",
-                "}")));
+            """
+            class B extends A {
+              constructor() {
+                super();
+              }
+
+              ['f']() { var t = A.prototype['g']; }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    ObjectType classAPrototypeType = classAInstanceType.getImplicitPrototype();
-    JSType unknownType = registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
+    Color classAPrototypeType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "A").getRootNode().getColor().getPrototypes());
 
     // A.prototype['g']
     Node superGetelemReplacement =
@@ -393,10 +398,9 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(superGetelemReplacement)
         .hasToken(Token.GETELEM)
         .hasLineno(5) // position and length of `super['g']`
-        .hasCharno(20)
-        .hasLength(10);
+        .hasCharno(20);
     // getelem prevents us doing any better than unknown type
-    assertType(superGetelemReplacement.getJSType()).isEqualTo(unknownType);
+    assertNode(superGetelemReplacement).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A.prototype
     Node superReplacement = superGetelemReplacement.getFirstChild();
@@ -404,47 +408,48 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A.prototype")
         .hasLineno(5) // position and length of `super`
         .hasCharno(20)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAPrototypeType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAPrototypeType);
   }
 
   @Test
   public void testCannotAssignToSuperInstanceProperty() {
     testError(
-        lines(
-            "class A {",
-            "  constructor() { }",
-            "",
-            "  /** @param {number} x */",
-            "  g(x) { }",
-            "}",
-            "",
-            "class B extends A {",
-            "  constructor() { super(); }",
-            "",
-            "  f() { super.g = 5; }",
-            "}"),
+        """
+        class A {
+          constructor() { }
+
+          /** @param {number} x */
+          g(x) { }
+        }
+
+        class B extends A {
+          constructor() { super(); }
+
+          f() { super.g = 5; }
+        }
+        """,
         CANNOT_CONVERT_YET);
   }
 
   @Test
   public void testCannotAssignToSuperInstanceElement() {
     testError(
-        lines(
-            "/** @dict */",
-            "class A {",
-            "  constructor() { }",
-            "",
-            "  /** @param {number} x */",
-            "  ['g'](x) { }",
-            "}",
-            "",
-            "class B extends A {",
-            "  constructor() { super(); }",
-            "",
-            "  ['f']() { super['g'] = 5; }",
-            "}"),
+        """
+        /** @dict */
+        class A {
+          constructor() { }
+
+          /** @param {number} x */
+          ['g'](x) { }
+        }
+
+        class B extends A {
+          constructor() { super(); }
+
+          ['f']() { super['g'] = 5; }
+        }
+        """,
         CANNOT_CONVERT_YET);
   }
 
@@ -454,43 +459,46 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
   public void testCallingSuperStaticProperty() {
     test(
         externs(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  static g(x) { }",
-                "}")),
+            """
+            class A {
+              constructor() { }
+
+              /** @param {number} x @return {string} */
+              static g(x) { }
+            }
+            """),
         srcs(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  static f() { super.g(3); }",
-                "}")),
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              static f() { super.g(3); }
+            }
+            """),
         expected(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  static f() { A.g.call(this, 3); }",
-                "}")));
+            """
+            class B extends A {
+              constructor() {
+                super();
+              }
+              /** @nocollapse */
+              static f() {
+                A.g.call(this, 3);
+              }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    FunctionType classAType =
-        registry
-            .getGlobalType("A")
-            .toObjectType() // instance type for A
-            .getConstructor();
-    FunctionType aDotGMethodType = classAType.getPropertyType("g").toMaybeFunctionType();
-    JSType aDotGDotCallType = aDotGMethodType.getPropertyType("call");
+    Color classAType = findClassDefinition(getLastCompiler(), "A").getRootNode().getColor();
+    Color aDotGMethodType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("g")
+            .getRootNode()
+            .getFirstChild()
+            .getColor();
+    Color aDotGDotCallType = StandardColors.UNKNOWN; // colors do not track ".call" type
 
-    FunctionType classBType =
-        registry
-            .getGlobalType("B")
-            .toObjectType() // instance type for B
-            .getConstructor();
+    Color classBType = findClassDefinition(getLastCompiler(), "B").getRootNode().getColor();
 
     // A.g.call(this, 3)
     Node callNode =
@@ -507,27 +515,24 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(callNode)
         .hasToken(Token.CALL)
         .hasLineno(4) // position and length of `super.g(3)`
-        .hasCharno(15)
-        .hasLength(10);
-    assertType(callNode.getJSType()).isEqualTo(aDotGMethodType.getReturnType());
+        .hasCharno(15);
+    assertNode(callNode).hasColorThat().isEqualTo(StandardColors.STRING);
 
     // A.g.call
     Node callee = callNode.getFirstChild();
     assertNode(callee)
         .matchesQualifiedName("A.g.call")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(15)
-        .hasLength(7);
-    assertType(callee.getJSType()).isEqualTo(aDotGDotCallType);
+        .hasCharno(21);
+    assertNode(callee).hasColorThat().isEqualTo(aDotGDotCallType);
 
     // A.g
     Node superDotGReplacement = callee.getFirstChild();
     assertNode(superDotGReplacement)
         .matchesQualifiedName("A.g")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(15)
-        .hasLength(7);
-    assertType(superDotGReplacement.getJSType()).isEqualTo(aDotGMethodType);
+        .hasCharno(21);
+    assertNode(superDotGReplacement).hasColorThat().isEqualTo(aDotGMethodType);
 
     // A
     Node superReplacement = superDotGReplacement.getFirstChild();
@@ -535,53 +540,52 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A")
         .hasLineno(4) // position and length of `super`
         .hasCharno(15)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAType);
 
     Node thisNode = callee.getNext();
     assertNode(thisNode).hasType(Token.THIS);
-    assertType(thisNode.getJSType()).isEqualTo(classBType);
+    assertNode(thisNode).hasColorThat().isEqualTo(classBType);
   }
 
   @Test
   public void testCallingSuperStaticElement() {
     test(
         externs(
-            lines(
-                "/** @dict */",
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  static ['g'](x) { };",
-                "}")),
+            """
+            /** @dict */
+            class A {
+              constructor() { }
+
+              /** @param {number} x */
+              static ['g'](x) { };
+            }
+            """),
         srcs(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  static ['f']() { super['g'](4); }",
-                "}")),
+            """
+            /** @dict */
+            class B extends A {
+              constructor() { super(); }
+
+              static ['f']() { super['g'](4); }
+            }
+            """),
         expected(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() {",
-                "    super();",
-                "  }",
-                "",
-                "  static ['f']() { A['g'].call(this, 4); }",
-                "}")));
+            """
+            class B extends A {
+              constructor() {
+                super();
+              }
+              /** @nocollapse */
+              static ["f"]() {
+                A["g"].call(this, 4);
+              }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    FunctionType classAType = classAInstanceType.getConstructor();
-    JSType unknownType = registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
-
-    JSType classBType = registry.getGlobalType("B").toObjectType().getConstructor();
+    Color classAType = findClassDefinition(getLastCompiler(), "A").getRootNode().getColor();
+    Color classBType = findClassDefinition(getLastCompiler(), "B").getRootNode().getColor();
 
     // A['g'].call(this, 4)
     Node callNode =
@@ -598,29 +602,26 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(callNode)
         .hasToken(Token.CALL)
         .hasLineno(5) // position and length of `super['g'](4)`
-        .hasCharno(19)
-        .hasLength(13);
-    // computed property prevents doing any better than unknownType
-    assertType(callNode.getJSType()).isEqualTo(unknownType);
+        .hasCharno(19);
+    // computed property prevents doing any better than StandardColors.UNKNOWN
+    assertNode(callNode).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A['g'].call
     Node callee = callNode.getFirstChild();
     assertNode(callee)
         .hasToken(Token.GETPROP)
         .hasLineno(5) // position and length of `super['g']`
-        .hasCharno(19)
-        .hasLength(10);
-    assertType(callee.getJSType()).isEqualTo(unknownType);
+        .hasCharno(19);
+    assertNode(callee).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A['g']
     Node superGetelemReplacement = callee.getFirstChild();
     assertNode(superGetelemReplacement)
         .hasToken(Token.GETELEM)
         .hasLineno(5) // position and length of `super['g']`
-        .hasCharno(19)
-        .hasLength(10);
-    // computed property prevents doing any better than unknownType
-    assertType(superGetelemReplacement.getJSType()).isEqualTo(unknownType);
+        .hasCharno(19);
+    // computed property prevents doing any better than StandardColors.UNKNOWN
+    assertNode(superGetelemReplacement).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A
     Node superReplacement = superGetelemReplacement.getFirstChild();
@@ -628,9 +629,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesName("A")
         .hasLineno(5) // position and length of `super`
         .hasCharno(19)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAType);
 
     // `this` node from `A['g'].call(this, 3)`
     Node thisNode = callee.getNext();
@@ -638,41 +638,47 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .hasToken(Token.THIS)
         .hasLineno(5) // position and length of `super['g']`
         .hasCharno(19)
-        .hasLength(10)
         .isIndexable(false); // there's no direct correlation with text in the original source
-    assertType(thisNode.getJSType()).isEqualTo(classBType);
+    assertNode(thisNode).hasColorThat().isEqualTo(classBType);
   }
 
   @Test
   public void testAccessingSuperStaticProperty() {
     test(
         externs(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  static g(x) { }",
-                "}")),
+            """
+            class A {
+              constructor() { }
+
+              /** @param {number} x */
+              static g(x) { }
+            }
+            """),
         srcs(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  static f() { var t = super.g; }",
-                "}")),
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              static f() { var t = super.g; }
+            }
+            """),
         expected(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  static f() { var t = A.g; }",
-                "}")));
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              static f() { var t = A.g; }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    FunctionType classAType = registry.getGlobalType("A").toObjectType().getConstructor();
-    JSType aDotGMethodType = classAType.getPropertyType("g");
+    Color classAType = findClassDefinition(getLastCompiler(), "A").getRootNode().getColor();
+    Color aDotGMethodType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("g")
+            .getRootNode()
+            .getFirstChild()
+            .getColor();
 
     // A.prototype.g
     Node superDotGReplacement =
@@ -690,9 +696,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(superDotGReplacement)
         .matchesQualifiedName("A.g")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(23)
-        .hasLength(7);
-    assertType(superDotGReplacement.getJSType()).isEqualTo(aDotGMethodType);
+        .hasCharno(29);
+    assertNode(superDotGReplacement).hasColorThat().isEqualTo(aDotGMethodType);
 
     // A.prototype
     Node superReplacement = superDotGReplacement.getFirstChild();
@@ -700,46 +705,45 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A")
         .hasLineno(4) // position and length of `super`
         .hasCharno(23)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAType);
   }
 
   @Test
   public void testAccessingSuperStaticElement() {
     test(
         externs(
-            lines(
-                "/** @dict */",
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  static ['g'](x) { };",
-                "}")),
+            """
+            /** @dict */
+            class A {
+              constructor() { }
+
+              /** @param {number} x */
+              static ['g'](x) { };
+            }
+            """),
         srcs(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  static ['f']() { var t = super['g']; }",
-                "}")),
+            """
+            /** @dict */
+            class B extends A {
+              constructor() { super(); }
+
+              static ['f']() { var t = super['g']; }
+            }
+            """),
         expected(
-            lines(
-                "/** @dict */",
-                "class B extends A {",
-                "  constructor() {",
-                "    super();",
-                "  }",
-                "",
-                "  static ['f']() { var t = A['g']; }",
-                "}")));
+            """
+            class B extends A {
+              constructor() {
+                super();
+              }
+
+              static ['f']() { var t = A['g']; }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    FunctionType classAType = registry.getGlobalType("A").toObjectType().getConstructor();
-    JSType unknownType = registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
+    Color classAType = findClassDefinition(getLastCompiler(), "A").getRootNode().getColor();
 
     // A.prototype.g
     Node superGetElemReplacement =
@@ -757,10 +761,9 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(superGetElemReplacement)
         .hasToken(Token.GETELEM)
         .hasLineno(5) // position and length of `super['g']`
-        .hasCharno(27)
-        .hasLength(10);
-    // computed property prevents doing any better than unknownType
-    assertType(superGetElemReplacement.getJSType()).isEqualTo(unknownType);
+        .hasCharno(27);
+    // computed property prevents doing any better than StandardColors.UNKNOWN
+    assertNode(superGetElemReplacement).hasColorThat().isEqualTo(StandardColors.UNKNOWN);
 
     // A.prototype
     Node superReplacement = superGetElemReplacement.getFirstChild();
@@ -768,9 +771,8 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A")
         .hasLineno(5) // position and length of `super`
         .hasCharno(27)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAType);
   }
 
   // Getters and setters
@@ -779,38 +781,49 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
   public void testResolvingSuperInGetter() {
     test(
         externs(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  g(x) { }",
-                "}")),
+            """
+            class A {
+              constructor() { }
+
+              /** @param {number} x @return {number} */
+              g(x) { }
+            }
+            """),
         srcs(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  get f() { super.g(3); }",
-                "}")),
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              get f() { super.g(3); }
+            }
+            """),
         expected(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  get f() { A.prototype.g.call(this, 3); }",
-                "}")));
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              get f() { A.prototype.g.call(this, 3); }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    ObjectType classAPrototypeType = classAInstanceType.getImplicitPrototype();
-    FunctionType aDotGMethodType = classAPrototypeType.getPropertyType("g").toMaybeFunctionType();
-    JSType aDotGDotCallType =
-        aDotGMethodType // A.g property type
-            .getPropertyType("call");
+    Color classAPrototypeType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "A").getRootNode().getColor().getPrototypes());
+    Color aDotGMethodType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("g")
+            .getRootNode()
+            .getFirstChild()
+            .getColor();
+    Color aDotGDotCallType = StandardColors.UNKNOWN; // colors do not track ".call" type
 
-    JSType classBInstanceType = registry.getGlobalType("B");
+    Color classBInstanceType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "B")
+                .getRootNode()
+                .getColor()
+                .getInstanceColors());
 
     // A.prototype.g.call(this, 3)
     Node callNode =
@@ -827,27 +840,24 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(callNode)
         .hasToken(Token.CALL)
         .hasLineno(4) // position and length of `super.g(3)`
-        .hasCharno(12)
-        .hasLength(10);
-    assertType(callNode.getJSType()).isEqualTo(aDotGMethodType.getReturnType());
+        .hasCharno(12);
+    assertNode(callNode).hasColorThat().isEqualTo(StandardColors.NUMBER);
 
     // A.prototype.g.call
     Node callee = callNode.getFirstChild();
     assertNode(callee)
         .matchesQualifiedName("A.prototype.g.call")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(12)
-        .hasLength(7);
-    assertType(callee.getJSType()).isEqualTo(aDotGDotCallType);
+        .hasCharno(18);
+    assertNode(callee).hasColorThat().isEqualTo(aDotGDotCallType);
 
     // A.prototype.g
     Node superDotGReplacement = callee.getFirstChild();
     assertNode(superDotGReplacement)
         .matchesQualifiedName("A.prototype.g")
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(12)
-        .hasLength(7);
-    assertType(superDotGReplacement.getJSType()).isEqualTo(aDotGMethodType);
+        .hasCharno(18);
+    assertNode(superDotGReplacement).hasColorThat().isEqualTo(aDotGMethodType);
 
     // A.prototype
     Node superReplacement = superDotGReplacement.getFirstChild();
@@ -855,59 +865,67 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A.prototype")
         .hasLineno(4) // position and length of `super`
         .hasCharno(12)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAPrototypeType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAPrototypeType);
 
     // `this` node from `A.prototype.g.call(this, 3)`
     Node thisNode = callee.getNext();
     assertNode(thisNode)
         .hasToken(Token.THIS)
         .hasLineno(4) // position and length of `super.g`
-        .hasCharno(12)
-        .hasLength(7)
+        .hasCharno(18)
         .isIndexable(false); // there's no direct correlation with text in the original source
-    assertType(thisNode.getJSType()).isEqualTo(classBInstanceType);
+    assertNode(thisNode).hasColorThat().isEqualTo(classBInstanceType);
   }
 
   @Test
   public void testResolvingSuperInSetter() {
     test(
         externs(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "",
-                "  /** @param {number} x */",
-                "  g(x) { }",
-                "}")),
+            """
+            class A {
+              constructor() { }
+
+              /** @param {number} x @return {string} */
+              g(x) { }
+            }
+            """),
         srcs(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  /** @param {number} x */",
-                "  set f(x) { super.g(x); }",
-                "}")),
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              /** @param {number} y */
+              set f(y) { super.g(y); }
+            }
+            """),
         expected(
-            lines(
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "",
-                "  /** @param {number} x */",
-                "  set f(x) { A.prototype.g.call(this, x); }",
-                "}")));
+            """
+            class B extends A {
+              constructor() { super(); }
+
+              set f(y) { A.prototype.g.call(this, y); }
+            }
+            """));
 
     // get types we need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    ObjectType classAInstanceType = registry.getGlobalType("A").toObjectType();
-    ObjectType classAPrototypeType = classAInstanceType.getImplicitPrototype();
-    FunctionType aDotGMethodType = classAPrototypeType.getPropertyType("g").toMaybeFunctionType();
-    JSType aDotGDotCallType =
-        aDotGMethodType // A.g property type
-            .getPropertyType("call");
+    Color classAPrototypeType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "A").getRootNode().getColor().getPrototypes());
+    Color aDotGMethodType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("g")
+            .getRootNode()
+            .getFirstChild()
+            .getColor();
+    Color aDotGDotCallType = StandardColors.UNKNOWN; // colors do not track ".call" type
 
-    JSType classBInstanceType = registry.getGlobalType("B");
+    Color classBInstanceType =
+        Color.createUnion(
+            findClassDefinition(getLastCompiler(), "B")
+                .getRootNode()
+                .getColor()
+                .getInstanceColors());
 
     // A.prototype.g.call(this, x)
     Node callNode =
@@ -924,27 +942,24 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     assertNode(callNode)
         .hasToken(Token.CALL)
         .hasLineno(5) // position and length of `super.g(3)`
-        .hasCharno(13)
-        .hasLength(10);
-    assertType(callNode.getJSType()).isEqualTo(aDotGMethodType.getReturnType());
+        .hasCharno(13);
+    assertNode(callNode).hasColorThat().isEqualTo(StandardColors.STRING);
 
     // A.prototype.g.call
     Node callee = callNode.getFirstChild();
     assertNode(callee)
         .matchesQualifiedName("A.prototype.g.call")
         .hasLineno(5) // position and length of `super.g`
-        .hasCharno(13)
-        .hasLength(7);
-    assertType(callee.getJSType()).isEqualTo(aDotGDotCallType);
+        .hasCharno(19);
+    assertNode(callee).hasColorThat().isEqualTo(aDotGDotCallType);
 
     // A.prototype.g
     Node superDotGReplacement = callee.getFirstChild();
     assertNode(superDotGReplacement)
         .matchesQualifiedName("A.prototype.g")
         .hasLineno(5) // position and length of `super.g`
-        .hasCharno(13)
-        .hasLength(7);
-    assertType(superDotGReplacement.getJSType()).isEqualTo(aDotGMethodType);
+        .hasCharno(19);
+    assertNode(superDotGReplacement).hasColorThat().isEqualTo(aDotGMethodType);
 
     // A.prototype
     Node superReplacement = superDotGReplacement.getFirstChild();
@@ -952,19 +967,116 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .matchesQualifiedName("A.prototype")
         .hasLineno(5) // position and length of `super`
         .hasCharno(13)
-        .hasLength(5)
         .hasOriginalName("super");
-    assertType(superReplacement.getJSType()).isEqualTo(classAPrototypeType);
+    assertNode(superReplacement).hasColorThat().isEqualTo(classAPrototypeType);
 
     // `this` node from `A.prototype.g.call(this, 3)`
     Node thisNode = callee.getNext();
     assertNode(thisNode)
         .hasToken(Token.THIS)
         .hasLineno(5) // position and length of `super.g`
-        .hasCharno(13)
-        .hasLength(7)
+        .hasCharno(19)
         .isIndexable(false); // there's no direct correlation with text in the original source
-    assertType(thisNode.getJSType()).isEqualTo(classBInstanceType);
+    assertNode(thisNode).hasColorThat().isEqualTo(classBInstanceType);
+  }
+
+  @Test
+  public void testAccessingStaticGetterViaSuper() {
+    test(
+        externs(
+            """
+            class Parent {
+              constructor() {}
+              /** @return {string} */
+              static getName() {}
+              /** @return {string} */
+              static get greeting() {}
+            }
+            """),
+        srcs(
+            """
+            class Child extends Parent {
+              constructor() {
+                super();
+              }
+              static getName() {
+                return 'Child';
+              }
+              static getGreeting() {
+                return super.greeting;
+              }
+            }
+            """),
+        expected(
+            """
+            class Child extends Parent {
+              constructor() {
+                super();
+              }
+              static getName() {
+                return 'Child';
+              }
+              /** @nocollapse */
+              static getGreeting() {
+                return Reflect.get(
+                    Parent, JSCompiler_renameProperty('greeting', Parent), this);
+              }
+            }
+            """));
+
+    // get types we need to check
+    Color parentType = findClassDefinition(getLastCompiler(), "Parent").getRootNode().getColor();
+    Color childType = findClassDefinition(getLastCompiler(), "Child").getRootNode().getColor();
+
+    // return Reflect.get(Parent, JSCompiler_renameProperty("greeting", Parent), this);
+    Node returnStmt =
+        findClassDefinition(getLastCompiler(), "Child")
+            .findMethodDefinition("getGreeting")
+            .getRootNode() // MEMBER_FUNCTION_DEF
+            .getOnlyChild() // FUNCTION
+            .getLastChild() // BLOCK
+            .getOnlyChild(); // RETURN
+    assertNode(returnStmt).hasToken(Token.RETURN);
+
+    // Reflect.get(Parent, JSCompiler_renameProperty("greeting", Parent), this)
+    Node reflectGetCall = returnStmt.getOnlyChild();
+    assertNode(reflectGetCall).hasToken(Token.CALL).hasColorThat().isEqualTo(StandardColors.STRING);
+
+    // Reflect.get
+    Node callee = reflectGetCall.getFirstChild();
+    assertNode(callee).matchesQualifiedName("Reflect.get");
+
+    // Parent
+    Node parentName = callee.getNext();
+    assertNode(parentName)
+        .matchesQualifiedName("Parent")
+        .hasOriginalName("super")
+        .hasColorThat()
+        .isEqualTo(parentType);
+
+    // JSCompiler_renameProperty("greeting", Parent)
+    Node renamePropertyCall = parentName.getNext();
+    assertNode(renamePropertyCall)
+        .hasToken(Token.CALL)
+        .hasColorThat()
+        .isEqualTo(StandardColors.STRING);
+
+    {
+      // "greeting"
+      Node greetingString = renamePropertyCall.getSecondChild();
+      assertNode(greetingString)
+          .isString("greeting")
+          .hasColorThat()
+          .isEqualTo(StandardColors.STRING);
+
+      // Parent
+      Node parentNameArg = greetingString.getNext();
+      assertNode(parentNameArg).matchesQualifiedName("Parent").hasColorThat().isEqualTo(parentType);
+    }
+
+    // this
+    Node thisNode = renamePropertyCall.getNext();
+    assertNode(thisNode).hasToken(Token.THIS).hasColorThat().isEqualTo(childType);
   }
 
   // Constructor synthesis
@@ -974,34 +1086,27 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     test(
         externs(""),
         srcs(
-            lines(
-                "class A { }", // Force wrapping.
-                "",
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "}")),
-        expected(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "}",
-                "",
-                "class B extends A {",
-                "  constructor() { super(); }",
-                "}")));
+            """
+            class A { } // Force wrapping.
 
-    // get the types we'll need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    FunctionType classAConstructorType =
-        registry.getGlobalType("A").toObjectType().getConstructor();
+            class B extends A {
+              constructor() { super(); }
+            }
+            """),
+        expected(
+            """
+            class A {
+              constructor() { }
+            }
+
+            class B extends A {
+              constructor() { super(); }
+            }
+            """));
 
     // class A { ... }
-    Node classANode =
-        getLastCompiler()
-            .getJsRoot() // root
-            .getFirstChild() // script
-            .getFirstChild();
-    assertType(classANode.getJSType()).isEqualTo(classAConstructorType);
+    Node classANode = findClassDefinition(getLastCompiler(), "A").getRootNode();
+    Color classAConstructorType = classANode.getColor();
 
     // constructor() { }
     Node constructorMemberFunctionDefForA =
@@ -1012,18 +1117,16 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .isMemberFunctionDef("constructor")
         .hasLineno(1) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(11)
         .isIndexable(false);
-    assertType(constructorMemberFunctionDefForA.getJSType()).isEqualTo(classAConstructorType);
+    assertNode(constructorMemberFunctionDefForA).hasColorThat().isEqualTo(classAConstructorType);
 
     Node constructorFunctionForA = constructorMemberFunctionDefForA.getOnlyChild();
     assertNode(constructorFunctionForA)
         .hasToken(Token.FUNCTION)
         .hasLineno(1) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(11)
         .isIndexable(false);
-    assertType(constructorFunctionForA.getJSType()).isEqualTo(classAConstructorType);
+    assertNode(constructorFunctionForA).hasColorThat().isEqualTo(classAConstructorType);
   }
 
   @Test
@@ -1031,37 +1134,32 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
     test(
         externs(new TestExternsBuilder().addArguments().build()),
         srcs(
-            lines(
-                "class A {", // Force wrapping.
-                "  constructor() { }",
-                "}",
-                "",
-                "class B extends A { }")),
-        expected(
-            lines(
-                "class A {",
-                "  constructor() { }",
-                "}",
-                "",
-                "class B extends A {",
-                "  constructor() { super(...arguments); }",
-                "}")));
+            """
+            class A { // Force wrapping.
+              constructor() { }
+            }
 
-    // get the types we'll need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    FunctionType classAConstructorType =
-        registry.getGlobalType("A").toObjectType().getConstructor();
-    ObjectType classBInstanceType = registry.getGlobalType("B").toObjectType();
-    FunctionType classBConstructorType = classBInstanceType.getConstructor();
-    JSType argumentsType = registry.getGlobalType("Arguments");
+            class B extends A { }
+            """),
+        expected(
+            """
+            class A {
+              constructor() { }
+            }
+
+            class B extends A {
+              constructor() { super(...arguments); }
+            }
+            """));
+
+    // class A { ... }
+    Node classANode = findClassDefinition(getLastCompiler(), "A").getRootNode();
+    Color classAConstructorType = classANode.getColor();
 
     // class B extends A { ... }
-    Node classBNode =
-        getLastCompiler()
-            .getJsRoot() // root
-            .getFirstChild() // script
-            .getSecondChild(); // class A is first, then B
-    assertType(classBNode.getJSType()).isEqualTo(classBConstructorType);
+    Node classBNode = findClassDefinition(getLastCompiler(), "B").getRootNode();
+    Color classBConstructorType = classBNode.getColor();
+    Color classBInstanceType = Color.createUnion(classBConstructorType.getInstanceColors());
 
     // constructor() { }
     Node constructorMemberFunctionDefForB =
@@ -1072,18 +1170,16 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .isMemberFunctionDef("constructor")
         .hasLineno(5) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(21)
         .isIndexable(false);
-    assertType(constructorMemberFunctionDefForB.getJSType()).isEqualTo(classBConstructorType);
+    assertNode(constructorMemberFunctionDefForB).hasColorThat().isEqualTo(classBConstructorType);
 
     Node constructorFunctionForB = constructorMemberFunctionDefForB.getOnlyChild();
     assertNode(constructorFunctionForB)
         .hasToken(Token.FUNCTION)
         .hasLineno(5) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(21)
         .isIndexable(false);
-    assertType(constructorFunctionForB.getJSType()).isEqualTo(classBConstructorType);
+    assertNode(constructorFunctionForB).hasColorThat().isEqualTo(classBConstructorType);
 
     // super(...arguments)
     Node superConstructorCall =
@@ -1095,18 +1191,16 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .hasToken(Token.CALL)
         .hasLineno(5) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(21)
         .isIndexable(false);
-    assertType(superConstructorCall.getJSType()).isEqualTo(classBInstanceType);
+    assertNode(superConstructorCall).hasColorThat().isEqualTo(classBInstanceType);
 
     Node superNode = superConstructorCall.getFirstChild();
     assertNode(superNode)
         .hasToken(Token.SUPER)
         .hasLineno(5) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(21)
         .isIndexable(false);
-    assertType(superNode.getJSType()).isEqualTo(classAConstructorType);
+    assertNode(superNode).hasColorThat().isEqualTo(classAConstructorType);
 
     Node argumentsNode =
         superNode
@@ -1116,72 +1210,7 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .isName("arguments")
         .hasLineno(5) // synthetic constructor gets position and length of original class definition
         .hasCharno(0)
-        .hasLength(21)
         .isIndexable(false);
-    assertType(argumentsNode.getJSType()).isEqualTo(argumentsType);
-  }
-
-  @Test
-  public void testSynthesizingConstructorOfBaseClassInExtern() {
-    testExternChanges(
-        "class A { }",
-        "new A();", // Source to pin externs.
-        "class A { constructor() { } }");
-    // TODO(bradfordcsmith): Test addition of types in externs.
-    // Currently testExternChanges() doesn't set things up correctly for getting the last compiler
-    // and looking up type information in the registry to work.
-  }
-
-  @Test
-  public void testSynthesizingConstructorOfDerivedClassInExtern() {
-    testExternChanges(
-        lines(
-            "class A {", // Force wrapping.
-            "  constructor() { }",
-            "}",
-            "",
-            "class B extends A { }"),
-        "new B();", // Source to pin externs.
-        lines(
-            "class A {",
-            "  constructor() { }",
-            "}",
-            "",
-            "class B extends A {",
-            "  constructor() { }",
-            "}"));
-    // TODO(bradfordcsmith): Test addition of types in externs.
-    // Currently testExternChanges() doesn't set things up correctly for getting the last compiler
-    // and looking up type information in the registry to work.
-  }
-
-  @Test
-  public void testStrippingSuperCallFromConstructorOfDerivedClassInExtern() {
-    testExternChanges(
-        lines(
-            "const namespace = {};",
-            "",
-            "namespace.A = class {",
-            "  constructor() { }",
-            "}",
-            "",
-            "class B extends namespace.A {",
-            "  constructor() { super(); }",
-            "}"),
-        "new B();", // Source to pin externs.
-        lines(
-            "const namespace = {};",
-            "",
-            "namespace.A = class {",
-            "  constructor() { }",
-            "}",
-            "",
-            "class B extends namespace.A {",
-            "  constructor() { }",
-            "}"));
-    // TODO(bradfordcsmith): Test addition of types in externs.
-    // Currently testExternChanges() doesn't set things up correctly for getting the last compiler
-    // and looking up type information in the registry to work.
   }
 
   @Test
@@ -1191,18 +1220,9 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         srcs("/** @interface */ class A { }"),
         expected("/** @interface */ class A { constructor() { } }"));
 
-    // get the types we'll need to check
-    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
-    FunctionType classAConstructorType =
-        registry.getGlobalType("A").toObjectType().getConstructor();
-
     // class A { ... }
-    Node classANode =
-        getLastCompiler()
-            .getJsRoot() // root
-            .getFirstChild() // script
-            .getFirstChild();
-    assertType(classANode.getJSType()).isEqualTo(classAConstructorType);
+    Node classANode = findClassDefinition(getLastCompiler(), "A").getRootNode();
+    Color classAConstructorType = classANode.getColor();
 
     // constructor() { }
     Node constructorMemberFunctionDefForA =
@@ -1213,60 +1233,63 @@ public final class Es6ConvertSuperTest extends CompilerTestCase {
         .isMemberFunctionDef("constructor")
         .hasLineno(1) // synthetic constructor gets position and length of original class definition
         .hasCharno(18)
-        .hasLength(11)
         .isIndexable(false);
-    assertType(constructorMemberFunctionDefForA.getJSType()).isEqualTo(classAConstructorType);
+    assertNode(constructorMemberFunctionDefForA).hasColorThat().isEqualTo(classAConstructorType);
 
     Node constructorFunctionForA = constructorMemberFunctionDefForA.getOnlyChild();
     assertNode(constructorFunctionForA)
         .hasToken(Token.FUNCTION)
         .hasLineno(1) // synthetic constructor gets position and length of original class definition
         .hasCharno(18)
-        .hasLength(11)
         .isIndexable(false);
-    assertType(constructorFunctionForA.getJSType()).isEqualTo(classAConstructorType);
+    assertNode(constructorFunctionForA).hasColorThat().isEqualTo(classAConstructorType);
   }
 
   @Test
   public void testSynthesizingConstructorOfDerivedInterface() {
     test(
         externs(
-            lines(
-                "/** @interface */", // Force wrapping.
-                "class A {",
-                "  constructor() { }",
-                "}")),
+            """
+            /** @interface */ // Force wrapping.
+            class A {
+              constructor() { }
+            }
+            """),
         srcs("/** @interface */ class B extends A { }"),
         expected(
-            lines(
-                "/** @interface */", //
-                "class B extends A {",
-                "  constructor() { }",
-                "}")));
+            """
+            /** @interface */
+            class B extends A {
+              constructor() { }
+            }
+            """));
   }
 
   @Test
   public void testStrippingSuperCallFromConstructorOfDerivedInterface() {
     test(
         externs(
-            lines(
-                "const namespace = {};",
-                "",
-                "/** @interface */",
-                "namespace.A = class {",
-                "  constructor() { }",
-                "}")),
+            """
+            const namespace = {};
+
+            /** @interface */
+            namespace.A = class {
+              constructor() { }
+            }
+            """),
         srcs(
-            lines(
-                "/** @interface */",
-                "class B extends namespace.A {",
-                "  constructor() { super(); }",
-                "}")),
+            """
+            /** @interface */
+            class B extends namespace.A {
+              constructor() { super(); }
+            }
+            """),
         expected(
-            lines(
-                "/** @interface */", //
-                "class B extends namespace.A {",
-                "  constructor() { }",
-                "}")));
+            """
+            /** @interface */
+            class B extends namespace.A {
+              constructor() { }
+            }
+            """));
   }
 }

@@ -43,32 +43,31 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import java.util.Collections;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An object type which uses composition to delegate all calls.
  *
  * @see NamedType
  * @see TemplatizedType
- *
  */
 public class ProxyObjectType extends ObjectType {
-  private static final long serialVersionUID = 1L;
-
   private static final JSTypeClass TYPE_CLASS = JSTypeClass.PROXY_OBJECT;
 
   private JSType referencedType;
-  private ObjectType referencedObjType;
+  private @Nullable ObjectType referencedObjType;
 
   ProxyObjectType(JSTypeRegistry registry, JSType referencedType) {
     this(registry, referencedType, null);
   }
 
-  ProxyObjectType(JSTypeRegistry registry, JSType referencedType,
-                  TemplateTypeMap templateTypeMap) {
+  ProxyObjectType(
+      JSTypeRegistry registry, JSType referencedType, @Nullable TemplateTypeMap templateTypeMap) {
     super(registry, templateTypeMap);
     setReferencedType(checkNotNull(referencedType));
 
@@ -81,7 +80,7 @@ public class ProxyObjectType extends ObjectType {
   }
 
   @Override
-  public final HasPropertyKind getPropertyKind(String propertyName, boolean autobox) {
+  public final HasPropertyKind getPropertyKind(Property.Key propertyName, boolean autobox) {
     return referencedType.getPropertyKind(propertyName, autobox);
   }
 
@@ -102,8 +101,8 @@ public class ProxyObjectType extends ObjectType {
   final void setReferencedType(JSType referencedType) {
     checkNotNull(referencedType);
     this.referencedType = referencedType;
-    if (referencedType instanceof ObjectType) {
-      this.referencedObjType = (ObjectType) referencedType;
+    if (referencedType instanceof ObjectType objectType) {
+      this.referencedObjType = objectType;
     } else {
       this.referencedObjType = null;
     }
@@ -262,12 +261,17 @@ public class ProxyObjectType extends ObjectType {
   }
 
   @Override
-  public final TernaryValue testForEquality(JSType that) {
+  public final KnownSymbolType toMaybeKnownSymbolType() {
+    return referencedType.toMaybeKnownSymbolType();
+  }
+
+  @Override
+  public final Tri testForEquality(JSType that) {
     return referencedType.testForEquality(that);
   }
 
   @Override
-  public final FunctionType getOwnerFunction() {
+  public final @Nullable FunctionType getOwnerFunction() {
     return referencedObjType == null ? null : referencedObjType.getOwnerFunction();
   }
 
@@ -296,23 +300,19 @@ public class ProxyObjectType extends ObjectType {
   }
 
   @Override
-  public final ObjectType getImplicitPrototype() {
+  public final @Nullable ObjectType getImplicitPrototype() {
     return referencedObjType == null ? null : referencedObjType.getImplicitPrototype();
   }
 
   @Override
-  boolean defineProperty(String propertyName, JSType type, boolean inferred, Node propertyNode) {
+  boolean defineProperty(
+      Property.Key propertyName, JSType type, boolean inferred, Node propertyNode) {
     return referencedObjType == null
         || referencedObjType.defineProperty(propertyName, type, inferred, propertyNode);
   }
 
   @Override
-  public final boolean removeProperty(String name) {
-    return referencedObjType == null ? false : referencedObjType.removeProperty(name);
-  }
-
-  @Override
-  protected JSType findPropertyTypeWithoutConsideringTemplateTypes(String propertyName) {
+  protected JSType findPropertyTypeWithoutConsideringTemplateTypes(Property.Key propertyName) {
     return referencedType.findPropertyType(propertyName);
   }
 
@@ -329,19 +329,19 @@ public class ProxyObjectType extends ObjectType {
   }
 
   @Override
-  public final void setPropertyJSDocInfo(String propertyName, JSDocInfo info) {
+  public final void setPropertyJSDocInfo(Property.Key propertyName, JSDocInfo info) {
     if (referencedObjType != null) {
       referencedObjType.setPropertyJSDocInfo(propertyName, info);
     }
   }
 
   @Override
-  public final FunctionType getConstructor() {
+  public final @Nullable FunctionType getConstructor() {
     return referencedObjType == null ? null : referencedObjType.getConstructor();
   }
 
   @Override
-  public ImmutableList<JSType> getTemplateTypes() {
+  public @Nullable ImmutableList<JSType> getTemplateTypes() {
     return referencedObjType == null ? null : referencedObjType.getTemplateTypes();
   }
 
@@ -408,10 +408,5 @@ public class ProxyObjectType extends ObjectType {
   @Override
   public TemplateTypeMap getTemplateTypeMap() {
     return referencedType.getTemplateTypeMap();
-  }
-
-  @Override
-  JSType simplifyForOptimizations() {
-    return referencedType.simplifyForOptimizations();
   }
 }

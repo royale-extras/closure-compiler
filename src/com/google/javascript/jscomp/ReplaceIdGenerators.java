@@ -20,15 +20,17 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableBiMap;
-import com.google.common.primitives.Booleans;
+import com.google.common.collect.ImmutableSet;
 import com.google.debugging.sourcemap.Base64;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Replaces calls to id generators with ids.
@@ -46,12 +48,6 @@ class ReplaceIdGenerators implements CompilerPass {
           "JSC_CONDITIONAL_ID_GENERATOR_CALL",
           "Id generator call must be unconditional");
 
-  static final DiagnosticType CONFLICTING_GENERATOR_TYPE =
-      DiagnosticType.error(
-          "JSC_CONFLICTING_ID_GENERATOR_TYPE",
-          "Id generator can only be one of " +
-          "consistent, inconsistent, mapped, stable, or xid.");
-
   static final DiagnosticType INVALID_GENERATOR_ID_MAPPING =
       DiagnosticType.error(
           "JSC_INVALID_GENERATOR_ID_MAPPING",
@@ -67,6 +63,12 @@ class ReplaceIdGenerators implements CompilerPass {
           "JSC_INVALID_GENERATOR_PARAMETER",
           "An id generator must be called with a literal.");
 
+  static final DiagnosticType INVALID_TEMPLATE_LITERAL_PARAMETER =
+      DiagnosticType.warning(
+          "JSC_INVALID_GENERATOR_PARAMETER",
+          "An id generator must be called with a template literals with no invalid escape"
+              + " sequences.");
+
   static final DiagnosticType SHORTHAND_FUNCTION_NOT_SUPPORTED_IN_ID_GEN =
       DiagnosticType.error(
           "JSC_SHORTHAND_FUNCTION_NOT_SUPPORTED_IN_ID_GEN",
@@ -81,6 +83,7 @@ class ReplaceIdGenerators implements CompilerPass {
 
 
   private final AbstractCompiler compiler;
+  private final boolean templateLiteralsAreTranspiled;
   private final Map<String, NameSupplier> nameGenerators;
   private final Map<String, Map<String, String>> consistNameMap;
 
@@ -91,29 +94,42 @@ class ReplaceIdGenerators implements CompilerPass {
   private final Xid.HashFunction xidHashFunction;
 
   public ReplaceIdGenerators(
-      AbstractCompiler compiler, Map<String, RenamingMap> idGens,
+      AbstractCompiler compiler,
+      boolean templateLiteralsAreTranspiled,
+      Map<String, RenamingMap> idGens,
       boolean generatePseudoNames,
       String previousMapSerialized,
       Xid.HashFunction xidHashFunction) {
     this.compiler = compiler;
+    this.templateLiteralsAreTranspiled = templateLiteralsAreTranspiled;
     this.generatePseudoNames = generatePseudoNames;
     this.xidHashFunction = xidHashFunction;
     nameGenerators = new LinkedHashMap<>();
     idGeneratorMaps = new LinkedHashMap<>();
     consistNameMap = new LinkedHashMap<>();
 
-    Map<String, BiMap<String, String>> previousMap;
-    previousMap = IdMappingUtil.parseSerializedIdMappings(previousMapSerialized);
+    Map<String, BiMap<String, String>> previousMap =
+        IdMappingUtil.parseSerializedIdMappings(previousMapSerialized);
     this.previousMap = previousMap;
 
     if (idGens != null) {
       for (Entry<String, RenamingMap> gen : idGens.entrySet()) {
         String name = gen.getKey();
         RenamingMap map = gen.getValue();
-        if (map instanceof UniqueRenamingToken) {
-          nameGenerators.put(name,
-              createNameSupplier(
-                  RenameStrategy.INCONSISTENT, previousMap.get(name)));
+        if (map instanceof RenamingToken renamingToken) {
+          switch (renamingToken) {
+            case DISABLE -> {
+              nameGenerators.put(name, null);
+              continue;
+              // don't put an entry in idGeneratorsMap
+            }
+            case INCONSISTENT ->
+                nameGenerators.put(
+                    name, createNameSupplier(RenameStrategy.INCONSISTENT, previousMap.get(name)));
+            case STABLE ->
+                nameGenerators.put(
+                    name, createNameSupplier(RenameStrategy.STABLE, previousMap.get(name)));
+          }
         } else {
           nameGenerators.put(name,
               createNameSupplier(
@@ -146,7 +162,7 @@ class ReplaceIdGenerators implements CompilerPass {
         RenameStrategy renameStrategy, BiMap<String, String> previousMappings) {
       this.previousMappings = previousMappings.inverse();
       this.generator =
-          new DefaultNameGenerator(previousMappings.keySet(), "", null);
+          new DefaultNameGenerator(previousMappings.keySet(), "", ImmutableSet.<Character>of());
       this.renameStrategy = renameStrategy;
     }
 
@@ -255,26 +271,16 @@ class ReplaceIdGenerators implements CompilerPass {
     return new MappedNameSupplier(mappings);
   }
 
+  private static final QualifiedName CREATE_TEMPLATE_TAG_FIRST_ARG =
+      QualifiedName.of("$jscomp.createTemplateTagFirstArg");
+
   private class GatherGenerators extends AbstractPostOrderCallback {
 
     @Override
     public void visit(NodeTraversal unused, Node n, Node parent) {
       JSDocInfo doc = n.getJSDocInfo();
-      if (doc == null) {
+      if (doc == null || !doc.isAnyIdGenerator()) {
         return;
-      }
-
-      int numGeneratorAnnotations =
-          Booleans.countTrue(
-              doc.isConsistentIdGenerator(),
-              doc.isIdGenerator(),
-              doc.isStableIdGenerator(),
-              doc.isXidGenerator(),
-              doc.isMappedIdGenerator());
-      if (numGeneratorAnnotations == 0) {
-        return;
-      } else if (numGeneratorAnnotations > 1) {
-        compiler.report(JSError.make(n, CONFLICTING_GENERATOR_TYPE));
       }
 
       String name = null;
@@ -288,7 +294,11 @@ class ReplaceIdGenerators implements CompilerPass {
           return;
         }
       }
-
+      if (nameGenerators.containsKey(name)) {
+        // This generator is already registered from our constructor.
+        // Don't override it.
+        return;
+      }
       if (doc.isConsistentIdGenerator()) {
         consistNameMap.put(name, new LinkedHashMap<String, String>());
         nameGenerators.put(
@@ -333,11 +343,12 @@ class ReplaceIdGenerators implements CompilerPass {
   private class ReplaceGenerators extends AbstractPostOrderCallback {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      if (!n.isCall()) {
+      if (!n.isCall() && !n.isTaggedTemplateLit()) {
         return;
       }
 
-      String callName = n.getFirstChild().getQualifiedName();
+      Node qname = NodeUtil.getCallTargetResolvingIndirectCalls(n);
+      String callName = qname.getQualifiedName();
       NameSupplier nameGenerator = nameGenerators.get(callName);
       if (nameGenerator == null) {
         return;
@@ -360,16 +371,75 @@ class ReplaceIdGenerators implements CompilerPass {
         }
       }
 
+      if (n.isCall()) {
+        maybeReplaceCall(t, n, callName, nameGenerator);
+      } else {
+        maybeReplaceTaggedTemplateLit(t, n, callName, nameGenerator);
+      }
+    }
+
+    private void maybeReplaceTaggedTemplateLit(
+        NodeTraversal t, Node n, String callName, NameSupplier nameGenerator) {
+      Node arg = n.getLastChild();
+
+      if (arg == null || !arg.isTemplateLit()) {
+        throw new IllegalStateException();
+      } else if (arg.hasOneChild()) {
+        var cooked = arg.getFirstChild().getCookedString();
+        if (cooked == null) {
+          // We don't allow strings with odd escape sequences... We could but it doesn't seem
+          // necessary
+          compiler.report(JSError.make(n, INVALID_TEMPLATE_LITERAL_PARAMETER));
+          return;
+        }
+
+        String rename = getObfuscatedName(arg, callName, nameGenerator, cooked);
+        n.replaceWith(IR.string(rename));
+        t.reportCodeChange();
+      } else {
+        // There is an alternating sequence of template literals and expressions, in this case we
+        // need to preserve the function call but obfuscate the literals.
+        Node newTemplateLit = IR.templateLiteral();
+        for (Node child = arg.getFirstChild(); child != null; child = child.getNext()) {
+          if (child.isTemplateLitString()) {
+            var cooked = child.getCookedString();
+            if (cooked == null) {
+              compiler.report(JSError.make(n, INVALID_TEMPLATE_LITERAL_PARAMETER));
+              return;
+            }
+            String rename = getObfuscatedName(child, callName, nameGenerator, cooked);
+            newTemplateLit.addChildToBack(
+                IR.templateLiteralString(rename, rename).srcrefIfMissing(child));
+          } else {
+            newTemplateLit.addChildToBack(
+                IR.templateLiteralSubstitution(child.removeFirstChild()).srcrefIfMissing(child));
+          }
+        }
+        arg.replaceWith(newTemplateLit);
+        t.reportCodeChange(newTemplateLit);
+      }
+    }
+
+    private void maybeReplaceCall(
+        NodeTraversal t, Node n, String callName, NameSupplier nameGenerator) {
       Node arg = n.getSecondChild();
       if (arg == null) {
         compiler.report(JSError.make(n, INVALID_GENERATOR_PARAMETER));
-      } else if (arg.isString()) {
-        String rename = getObfuscatedName(
-            arg, callName, nameGenerator, arg.getString());
-        parent.replaceChild(n, IR.string(rename));
+      } else if (arg.isStringLit()) {
+        String rename = getObfuscatedName(arg, callName, nameGenerator, arg.getString());
+        n.replaceWith(IR.string(rename));
         t.reportCodeChange();
+      } else if (arg.isTemplateLit() && arg.hasOneChild()) {
+        var cooked = arg.getFirstChild().getCookedString();
+        if (cooked == null) {
+          compiler.report(JSError.make(n, INVALID_GENERATOR_PARAMETER));
+        } else {
+          String rename = getObfuscatedName(arg, callName, nameGenerator, cooked);
+          n.replaceWith(IR.string(rename));
+          t.reportCodeChange();
+        }
       } else if (arg.isObjectLit()) {
-        for (Node key : arg.children()) {
+        for (Node key = arg.getFirstChild(); key != null; key = key.getNext()) {
           if (key.isMemberFunctionDef()) {
             compiler.report(JSError.make(n, SHORTHAND_FUNCTION_NOT_SUPPORTED_IN_ID_GEN));
             return;
@@ -386,19 +456,84 @@ class ReplaceIdGenerators implements CompilerPass {
           key.putBooleanProp(Node.QUOTED_PROP, true);
         }
         arg.detach();
-        parent.replaceChild(n, arg);
+        n.replaceWith(arg);
         t.reportCodeChange();
+      } else if (templateLiteralsAreTranspiled && arg.isName()) {
+        // This might be a transpiled template literal.  Find the definition.
+        // The pass always injects it at the current script root, typically at the top, but not
+        // always.
+        Node ttlVar = findTtlVar(t, arg);
+        if (ttlVar == null) {
+          // This could be some other call to the ttl function not using ttl syntax.  These are
+          // weird but not illegal.
+          compiler.report(JSError.make(n, INVALID_GENERATOR_PARAMETER));
+          return;
+        }
+        var ttlFunctionCall = ttlVar.getFirstFirstChild();
+        var paramsArrayLiteral = ttlFunctionCall.getSecondChild();
+        if (paramsArrayLiteral == null || !paramsArrayLiteral.isArrayLit()) {
+          throw new IllegalStateException("bad transpiled structure");
+        }
+        // 2 cases, if there is exactly 1 element we can just replace everything
+        // otherwise we need to rewrite the array in place.
+        if (paramsArrayLiteral.getChildCount() == 1) {
+          String originalName = paramsArrayLiteral.getFirstChild().getString();
+          String rename = getObfuscatedName(arg, callName, nameGenerator, originalName);
+          n.replaceWith(IR.string(rename));
+          t.reportCodeChange();
+          t.reportCodeChange(ttlVar);
+          ttlVar.detach();
+        } else {
+          // We have parameters, so we need to rewrite the TTL array in place and leave the function
+          // call.
+          for (Node param = paramsArrayLiteral.getFirstChild();
+              param != null;
+              param = param.getNext()) {
+            String originalName = param.getString();
+            String rename = getObfuscatedName(arg, callName, nameGenerator, originalName);
+            param.setString(rename);
+          }
+          t.reportCodeChange(paramsArrayLiteral);
+        }
       } else {
         compiler.report(JSError.make(n, INVALID_GENERATOR_PARAMETER));
       }
+    }
+
+    private @Nullable Node findTtlVar(NodeTraversal t, Node arg) {
+      var name = arg.getString();
+      var ttlVarName = t.getScope().getVar(name).getNode();
+      var parent = ttlVarName.getParent();
+      // We are only interested in top level var definitions since that is what the transpiler
+      // creates
+      if (!parent.isVar() || !parent.getParent().isScript()) {
+        return null;
+      }
+      // Because the AST is normalized there is only one child
+      checkState(
+          ttlVarName.getParent().hasOneChild(),
+          "The AST is normalized so there should only be one name per var");
+      var callNode = ttlVarName.getFirstChild();
+      if (!callNode.isCall()) {
+        return null;
+      }
+      var callExpr = callNode.getFirstChild();
+      if (callExpr.matchesName("$jscomp$createTemplateTagFirstArg")
+          // The dot case is about our unit tests mostly.
+          || CREATE_TEMPLATE_TAG_FIRST_ARG.matches(callExpr)) {
+        return ttlVarName.getParent();
+      }
+
+      return null;
     }
 
     private String getObfuscatedName(
         Node id, String callName, NameSupplier nameGenerator, String name) {
       String rename = null;
       Map<String, String> idGeneratorMap = idGeneratorMaps.get(callName);
-      String instanceId = getIdForGeneratorNode(
-          nameGenerator.getRenameStrategy() != RenameStrategy.INCONSISTENT, id);
+      String instanceId =
+          getIdForGeneratorNode(
+              nameGenerator.getRenameStrategy() != RenameStrategy.INCONSISTENT, id, name);
       if (nameGenerator.getRenameStrategy() == RenameStrategy.CONSISTENT) {
         Map<String, String> entry = consistNameMap.get(callName);
         rename = entry.get(instanceId);
@@ -423,10 +558,9 @@ class ReplaceIdGenerators implements CompilerPass {
     return IdMappingUtil.generateSerializedIdMappings(idGeneratorMaps);
   }
 
-  static String getIdForGeneratorNode(boolean consistent, Node n) {
-    checkState(n.isString() || n.isStringKey(), n);
+  private static String getIdForGeneratorNode(boolean consistent, Node n, String name) {
     if (consistent) {
-      return n.getString();
+      return name;
     } else {
       return n.getSourceFileName() + ':' + n.getLineno() + ":" + n.getCharno();
     }

@@ -32,6 +32,7 @@ import com.google.javascript.jscomp.Result;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.SourceMap;
 import com.google.javascript.jscomp.VariableRenamingPolicy;
+import com.google.javascript.jscomp.annotations.LegacySetFeatureSetCaller;
 import com.google.javascript.jscomp.bundle.TranspilationException;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.deps.ModuleLoader.PathEscaper;
@@ -42,9 +43,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 
-/**
- * Basic Transpiler implementation for outputting ES5 code.
- */
+/** Basic Transpiler implementation for outputting ES5 code. */
 public final class BaseTranspiler implements Transpiler {
 
   private final CompilerSupplier compilerSupplier;
@@ -87,12 +86,10 @@ public final class BaseTranspiler implements Transpiler {
   }
 
   /**
-   * Wraps the Compiler into a more relevant interface, making it
-   * easy to test the Transpiler without depending on implementation
-   * details of the Compiler itself.  Also works around the fact
-   * that the Compiler is not thread-safe (since we may do multiple
-   * transpiles concurrently), so we supply a fresh instance each
-   * time when we're in single-file mode.
+   * Wraps the Compiler into a more relevant interface, making it easy to test the Transpiler
+   * without depending on implementation details of the Compiler itself. Also works around the fact
+   * that the Compiler is not thread-safe (since we may do multiple transpiles concurrently), so we
+   * supply a fresh instance each time when we're in single-file mode.
    */
   public static class CompilerSupplier {
     protected final ResolutionMode moduleResolution;
@@ -122,7 +119,7 @@ public final class BaseTranspiler implements Transpiler {
      */
     public CompilerSupplier(
         FeatureSet outputFeatureSet,
-        ModuleLoader.ResolutionMode moduleResolution,
+        ResolutionMode moduleResolution,
         ImmutableList<String> moduleRoots,
         ImmutableMap<String, String> prefixReplacements) {
       this.outputFeatureSet = outputFeatureSet;
@@ -145,14 +142,11 @@ public final class BaseTranspiler implements Transpiler {
           // impossible, and not a big deal even if it did happen.
         }
       }
-      boolean transpiled = !result.transpiledFiles.isEmpty();
+      boolean transpiled = result.transpiledFiles;
       if (!result.errors.isEmpty()) {
         throw new TranspilationException(compiler, result.errors, result.warnings);
       }
-      return new CompileResult(
-          source,
-          transpiled,
-          transpiled ? sourceMap.toString() : "");
+      return new CompileResult(source, transpiled, transpiled ? sourceMap.toString() : "");
     }
 
     public String runtime(String library) {
@@ -173,9 +167,10 @@ public final class BaseTranspiler implements Transpiler {
       return options;
     }
 
+    @LegacySetFeatureSetCaller
     protected void setOptions(CompilerOptions options) {
       options.setLanguageIn(LanguageMode.ECMASCRIPT_NEXT);
-      options.setOutputFeatureSet(outputFeatureSet.without(Feature.MODULES));
+      options.legacySetOutputFeatureSet(outputFeatureSet.without(Feature.MODULES));
       options.setEmitUseStrict(false);
       options.setQuoteKeywordProperties(true);
       options.setSkipNonTranspilationPasses(true);
@@ -194,23 +189,25 @@ public final class BaseTranspiler implements Transpiler {
 
       // Don't escape module paths when bundling in the event paths are URLs.
       options.setPathEscaper(PathEscaper.CANONICALIZE_ONLY);
-
+      options.setParseInlineSourceMaps(true);
+      options.setApplyInputSourceMaps(true);
       options.setSourceMapOutputPath("/dev/null");
       options.setSourceMapIncludeSourcesContent(true);
       // Make sourcemaps use absolute paths, so that the path is not duplicated if a build tool adds
       // a sourceurl. Exception: if the location has a scheme (like http:) then leave the path
       // intact. This makes this usable from web servers.
       options.setSourceMapLocationMappings(
-          ImmutableList.of((location) -> {
-            try {
-              if (new URI(location).getScheme() != null) {
-                return location;
-              }
-            } catch (URISyntaxException e) {
-              // Swallow, return the absolute version below.
-            }
-            return new SourceMap.PrefixLocationMapping("", "/").map(location);
-          }));
+          ImmutableList.of(
+              (location) -> {
+                try {
+                  if (new URI(location).getScheme() != null) {
+                    return location;
+                  }
+                } catch (URISyntaxException e) {
+                  // Swallow, return the absolute version below.
+                }
+                return new SourceMap.PrefixLocationMapping("", "/").map(location);
+              }));
     }
 
     protected SourceFile createTrivialExterns() {
@@ -222,13 +219,12 @@ public final class BaseTranspiler implements Transpiler {
     }
   }
 
-  /**
-   * The source together with the additional compilation results.
-   */
+  /** The source together with the additional compilation results. */
   public static class CompileResult {
     public final String source;
     public final boolean transpiled;
     public final String sourceMap;
+
     public CompileResult(String source, boolean transpiled, String sourceMap) {
       this.source = checkNotNull(source);
       this.transpiled = transpiled;

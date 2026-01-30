@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-
 package com.google.javascript.jscomp.deps;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.jscomp.testing.JSCompCorrespondences.DESCRIPTION_EQUALITY;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.ErrorManager;
 import com.google.javascript.jscomp.PrintStreamErrorManager;
@@ -37,7 +35,6 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class DepsGeneratorTest {
 
-  private static final Joiner LINE_JOINER = Joiner.on("\n");
   private ErrorManager errorManager;
 
   @Before
@@ -54,7 +51,7 @@ public final class DepsGeneratorTest {
     srcs.add(
         SourceFile.fromCode(
             "/base/javascript/foo/foo.js",
-                "goog.provide('my.namespace');\nimport '../closure/goog/es6.js';"));
+            "goog.provide('my.namespace');\nimport '../closure/goog/es6.js';"));
     srcs.add(SourceFile.fromCode("/base/javascript/closure/goog/es6.js", "export var es6;"));
     DepsGenerator depsGenerator =
         new DepsGenerator(
@@ -63,12 +60,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             "/base/javascript/closure",
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
     String output = depsGenerator.computeDependencyCalls();
 
     assertWarnings(
@@ -80,11 +78,10 @@ public final class DepsGeneratorTest {
 
     // Write the expected output.
     String expected =
-        LINE_JOINER.join(
-            "goog.addDependency('../foo/foo.js', ['my.namespace'], "
-                + "['goog/es6.js'], {'lang': 'es6', 'module': 'es6'});",
-            "goog.addDependency('goog/es6.js', [], " + "[], {'lang': 'es6', 'module': 'es6'});",
-            "");
+"""
+goog.addDependency('../foo/foo.js', ['my.namespace'], ['goog/es6.js'], {'lang': 'es6', 'module': 'es6'});
+goog.addDependency('goog/es6.js', [], [], {'lang': 'es6', 'module': 'es6'});
+""";
 
     assertThat(output).isEqualTo(expected);
   }
@@ -101,12 +98,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             "/base/javascript/closure",
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
     String output = depsGenerator.computeDependencyCalls();
 
     assertNoWarnings();
@@ -116,11 +114,10 @@ public final class DepsGeneratorTest {
 
     // Write the expected output.
     String expected =
-        LINE_JOINER.join(
-            "goog.addDependency('../foo/foo.js', [], "
-                + "['goog/es6.js'], {'lang': 'es6', 'module': 'es6'});",
-            "goog.addDependency('goog/es6.js', [], " + "[], {'lang': 'es6', 'module': 'es6'});",
-            "");
+        """
+        goog.addDependency('../foo/foo.js', [], ['goog/es6.js'], {'lang': 'es6', 'module': 'es6'});
+        goog.addDependency('goog/es6.js', [], [], {'lang': 'es6', 'module': 'es6'});
+        """;
 
     assertThat(output).isEqualTo(expected);
   }
@@ -134,9 +131,10 @@ public final class DepsGeneratorTest {
     srcs.add(
         SourceFile.fromCode(
             "/base/javascript/closure/goog/googmodule.js",
-            LINE_JOINER.join(
-                "goog.module('my.goog.module');",
-                "const namespace = goog.require('my.namespace');")));
+            """
+            goog.module('my.goog.module');
+            const namespace = goog.require('my.namespace');
+            """));
     DepsGenerator depsGenerator =
         new DepsGenerator(
             ImmutableList.of(),
@@ -144,12 +142,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             "/base/javascript/closure",
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
     String output = depsGenerator.computeDependencyCalls();
 
     assertNoWarnings();
@@ -159,12 +158,10 @@ public final class DepsGeneratorTest {
 
     // Write the expected output.
     String expected =
-        LINE_JOINER.join(
-            "goog.addDependency('../foo/foo.js', ['my.namespace'], "
-                + "[], {'lang': 'es6', 'module': 'es6'});",
-            "goog.addDependency('goog/googmodule.js', ['my.goog.module'], ['my.namespace'], "
-                + "{'lang': 'es6', 'module': 'goog'});",
-            "");
+"""
+goog.addDependency('../foo/foo.js', ['my.namespace'], [], {'lang': 'es6', 'module': 'es6'});
+goog.addDependency('goog/googmodule.js', ['my.goog.module'], ['my.namespace'], {'lang': 'es6', 'module': 'goog'});
+""";
 
     assertThat(output).isEqualTo(expected);
   }
@@ -187,12 +184,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             PathUtil.makeAbsolute("/base/javascript/closure"),
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("."),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("."))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
 
     String output = depsGenerator.computeDependencyCalls();
 
@@ -200,16 +198,10 @@ public final class DepsGeneratorTest {
     assertNoWarnings();
 
     String expected =
-        LINE_JOINER.join(
-            "goog.addDependency('../../../src/css-parse.js',"
-                + " [],"
-                + " [],"
-                + " {'lang': 'es6', 'module': 'es6'});",
-            "goog.addDependency('../../../src/apply-shim-utils.js',"
-                + " [],"
-                + " ['../../../src/css-parse.js'],"
-                + " {'lang': 'es6', 'module': 'es6'});",
-            "");
+"""
+goog.addDependency('../../../src/css-parse.js', [], [], {'lang': 'es6', 'module': 'es6'});
+goog.addDependency('../../../src/apply-shim-utils.js', [], ['../../../src/css-parse.js'], {'lang': 'es6', 'module': 'es6'});
+""";
     assertThat(output).isEqualTo(expected);
   }
 
@@ -222,66 +214,56 @@ public final class DepsGeneratorTest {
     final SourceFile depsFile1 =
         SourceFile.fromCode(
             "/base/my-project/deps1.js",
-            LINE_JOINER.join(
-                "goog.addDependency('../prescanned1/file1.js', ['dep.string'], []);",
-                "goog.addDependency('../prescanned1/file2.js', [], []);",
-                // Test that this appears only once in the output.
-                "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-                "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-                ""));
+            """
+            goog.addDependency('../prescanned1/file1.js', ['dep.string'], []);
+            goog.addDependency('../prescanned1/file2.js', [], []);
+            // Test that this appears only once in the output.
+            goog.addDependency('../this/is/defined/thrice.js', [], []);
+            goog.addDependency('../this/is/defined/thrice.js', [], []);
+            """);
     final SourceFile depsFile2 =
         SourceFile.fromCode(
             "/base/my-project/deps2.js",
-            LINE_JOINER.join(
-                "goog.addDependency("
-                    + "'../prescanned2/file1.js',"
-                    + " ['dep.bool', 'dep.number'],"
-                    + " ['dep.string']);",
-                "goog.addDependency('../prescanned2/file2.js', [], []);",
-                "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-                ""));
+"""
+goog.addDependency('../prescanned2/file1.js', ['dep.bool', 'dep.number'], ['dep.string']);
+goog.addDependency('../prescanned2/file2.js', [], []);
+goog.addDependency('../this/is/defined/thrice.js', [], []);
+""");
     final SourceFile srcFile1 =
         SourceFile.fromCode(
             "/base/my-project/src1.js",
-            LINE_JOINER.join(
-                "goog.provide('makejsdeps.file1');",
-                "goog.provide('makejsdeps.file1.Test');",
-                "",
-                // Ensure comments are stripped. These cause syntax errors if not stripped.
-                "/*",
-                "goog.require('failure1)",
-                "*/",
-                "// goog.require('failure2)",
-                "",
-                "goog.require('makejsdeps.file2');",
-                // 'goog' should be silently dropped.
-                "goog.require(\"goog\");",
-                "goog.require(\"dep.string\");",
-                "goog.require(\"dep.number\");",
-                ""));
+            """
+            goog.provide('makejsdeps.file1');
+            goog.provide('makejsdeps.file1.Test');
+
+            /*
+            goog.require('failure1)
+            */
+            // goog.require('failure2)
+
+            goog.require('makejsdeps.file2');
+            // 'goog' should be silently dropped.
+            goog.require("goog");
+            goog.require("dep.string");
+            goog.require("dep.number");
+            """);
     final SourceFile srcFile2 =
         SourceFile.fromCode("/base/my-project/src2.js", "goog.provide('makejsdeps.file2');");
 
     String expected =
-        LINE_JOINER.join(
-            "goog.addDependency("
-                + "'../../my-project/src1.js',"
-                + " ['makejsdeps.file1', 'makejsdeps.file1.Test'],"
-                + " ['makejsdeps.file2', 'dep.string', 'dep.number']);",
-            "goog.addDependency('../../my-project/src2.js', ['makejsdeps.file2'], []);",
-            "",
-            "// Included from: /base/my-project/deps1.js",
-            "goog.addDependency('../prescanned1/file1.js', ['dep.string'], []);",
-            "goog.addDependency('../prescanned1/file2.js', [], []);",
-            "",
-            "// Included from: /base/my-project/deps2.js",
-            "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-            "goog.addDependency("
-                + "'../prescanned2/file1.js',"
-                + " ['dep.bool', 'dep.number'],"
-                + " ['dep.string']);",
-            "goog.addDependency('../prescanned2/file2.js', [], []);",
-            "");
+"""
+goog.addDependency('../../my-project/src1.js', ['makejsdeps.file1', 'makejsdeps.file1.Test'], ['makejsdeps.file2', 'dep.string', 'dep.number']);
+goog.addDependency('../../my-project/src2.js', ['makejsdeps.file2'], []);
+
+// Included from: /base/my-project/deps1.js
+goog.addDependency('../prescanned1/file1.js', ['dep.string'], []);
+goog.addDependency('../prescanned1/file2.js', [], []);
+
+// Included from: /base/my-project/deps2.js
+goog.addDependency('../this/is/defined/thrice.js', [], []);
+goog.addDependency('../prescanned2/file1.js', ['dep.bool', 'dep.number'], ['dep.string']);
+goog.addDependency('../prescanned2/file2.js', [], []);
+""";
 
     DepsGenerator depsGenerator =
         new DepsGenerator(
@@ -290,12 +272,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             "/base/javascript/closure",
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
 
     String output = depsGenerator.computeDependencyCalls();
 
@@ -311,18 +294,20 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             "/base/javascript/closure",
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
 
     String expectedWithDepsAsSources =
-        LINE_JOINER.join(
-            "goog.addDependency('../../my-project/deps1.js', [], []);",
-            "goog.addDependency('../../my-project/deps2.js', [], []);",
-            expected);
+        """
+        goog.addDependency('../../my-project/deps1.js', [], []);
+        goog.addDependency('../../my-project/deps2.js', [], []);
+        """
+            + expected;
 
     output = depsGenerator.computeDependencyCalls();
 
@@ -339,27 +324,26 @@ public final class DepsGeneratorTest {
     final SourceFile depsFile1 =
         SourceFile.fromCode(
             "/base/deps1.js",
-            LINE_JOINER.join(
-                "// Test deps file 1.",
-                "",
-                "goog.addDependency('../prescanned1/file1.js', ['dep.string'], []);",
-                "goog.addDependency('../prescanned1/file2.js', [], []);",
-                "// Test that this appears only once in the output. It's also defined in deps2.js",
-                "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-                "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-                ""));
+            """
+            // Test deps file 1.
+
+            goog.addDependency('../prescanned1/file1.js', ['dep.string'], []);
+            goog.addDependency('../prescanned1/file2.js', [], []);
+            // Test that this appears only once in the output. It's also defined in deps2.js
+            goog.addDependency('../this/is/defined/thrice.js', [], []);
+            goog.addDependency('../this/is/defined/thrice.js', [], []);
+            """);
     final SourceFile depsFile2 =
         SourceFile.fromCode(
             "/base/deps2.js",
-            LINE_JOINER.join(
-                "// Test deps file 2.",
-                "",
-                "goog.addDependency("
-                    + "'../prescanned2/file1.js', ['dep.bool', 'dep.number'], ['dep.string']);",
-                "goog.addDependency('../prescanned2/file2.js', [], []);",
-                "goog.addDependency('../prescanned2/generated.js', ['dep.generated'], []);",
-                "goog.addDependency('../this/is/defined/thrice.js', [], []);",
-                ""));
+"""
+// Test deps file 2.
+
+goog.addDependency('../prescanned2/file1.js', ['dep.bool', 'dep.number'], ['dep.string']);
+goog.addDependency('../prescanned2/file2.js', [], []);
+goog.addDependency('../prescanned2/generated.js', ['dep.generated'], []);
+goog.addDependency('../this/is/defined/thrice.js', [], []);
+""");
     DepsGenerator depsGenerator =
         new DepsGenerator(
             ImmutableList.of(depsFile1),
@@ -367,17 +351,51 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             PathUtil.makeAbsolute("/base/javascript/closure"),
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/" + "/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base//"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
 
     String output = depsGenerator.computeDependencyCalls();
 
     assertWithMessage("There should be output").that(output).isNotEmpty();
     assertNoWarnings();
+  }
+
+  @Test
+  public void testExterns() throws Exception {
+    List<SourceFile> srcs = new ArrayList<>();
+    srcs.add(SourceFile.fromCode("/base/javascript/foo/externs.js", "/** @externs */"));
+    srcs.add(SourceFile.fromCode("/base/javascript/foo/nonexterns.js", ""));
+    DepsGenerator depsGenerator =
+        new DepsGenerator(
+            ImmutableList.of(),
+            srcs,
+            DepsGenerator.InclusionStrategy.ALWAYS,
+            "/base/javascript/closure",
+            errorManager,
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
+    String output = depsGenerator.computeDependencyCalls();
+
+    assertNoWarnings();
+
+    assertWithMessage("There should be output").that(output).isNotEmpty();
+
+    String expected =
+        """
+        goog.addDependency('../foo/nonexterns.js', [], []);
+        """;
+
+    assertThat(output).isEqualTo(expected);
   }
 
   @Test
@@ -412,14 +430,19 @@ public final class DepsGeneratorTest {
     SourceFile dep1 =
         SourceFile.fromCode(
             "dep1.js",
-            LINE_JOINER.join(
-                "goog.addDependency('../../a.js', ['a'], []);",
-                "goog.addDependency('../../src1.js', ['b'], []);",
-                "goog.addDependency('../../d.js', ['d'], []);\n"));
-    SourceFile src1 = SourceFile.fromCode("/base/" + "/src1.js", "goog.provide('b');\n");
+            """
+            goog.addDependency('../../a.js', ['a'], []);
+            goog.addDependency('../../src1.js', ['b'], []);
+            goog.addDependency('../../d.js', ['d'], []);
+            """);
+    SourceFile src1 = SourceFile.fromCode("/base//src1.js", "goog.provide('b');\n");
     SourceFile src2 =
         SourceFile.fromCode(
-            "/base/" + "/src2.js", LINE_JOINER.join("goog.provide('c');", "goog.require('d');"));
+            "/base//src2.js",
+            """
+            goog.provide('c');
+            goog.require('d');
+            """);
     DepsGenerator depsGenerator =
         new DepsGenerator(
             ImmutableList.of(dep1),
@@ -427,12 +450,13 @@ public final class DepsGeneratorTest {
             mergeStrategy,
             PathUtil.makeAbsolute("/base/javascript/closure"),
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("/base/"),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("/base/"))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
 
     String output = depsGenerator.computeDependencyCalls();
 
@@ -453,12 +477,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             "/javascript/closure",
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of(""),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of(""))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
     String output = depsGenerator.computeDependencyCalls();
 
     if (fatal) {
@@ -472,12 +497,13 @@ public final class DepsGeneratorTest {
 
   @Test
   public void testDuplicateProvides() throws Exception {
-    SourceFile dep1 = SourceFile.fromCode("dep1.js",
-        "goog.addDependency('a.js', ['a'], []);\n");
-    SourceFile src1 = SourceFile.fromCode("src1.js",
-        "goog.provide('a');\n");
+    SourceFile dep1 = SourceFile.fromCode("dep1.js", "goog.addDependency('a.js', ['a'], []);\n");
+    SourceFile src1 = SourceFile.fromCode("src1.js", "goog.provide('a');\n");
 
-    doErrorMessagesRun(ImmutableList.of(dep1), ImmutableList.of(src1), true /* fatal */,
+    doErrorMessagesRun(
+        ImmutableList.of(dep1),
+        ImmutableList.of(src1),
+        /* fatal= */ true,
         "Namespace \"a\" is already provided in other file dep1.js");
   }
 
@@ -491,14 +517,20 @@ public final class DepsGeneratorTest {
         SourceFile.fromCode("path/to/closure/foo/a.js", "goog.provide('a');\n");
     // Create a source file that depends on the stub Closure Library.
     SourceFile userSrc =
-        SourceFile.fromCode("my/package/script.js", "goog.require('a');\n"
-            + "goog.provide('my.package.script');\n");
+        SourceFile.fromCode(
+            "my/package/script.js",
+            """
+            goog.require('a');
+            goog.provide('my.package.script');
+            """);
 
     // doErrorMessagesRun uses closure_path //javascript/closure and therefore
     // fails to recognize and de-dupe the stub Closure Library at
     // //path/to/closure.
-    doErrorMessagesRun(ImmutableList.of(fauxClosureDeps),
-        ImmutableList.of(fauxClosureSrc, userSrc), true /* fatal */,
+    doErrorMessagesRun(
+        ImmutableList.of(fauxClosureDeps),
+        ImmutableList.of(fauxClosureSrc, userSrc),
+        /* fatal= */ true,
         "Namespace \"a\" is already provided in other file dep1.js");
   }
 
@@ -512,8 +544,12 @@ public final class DepsGeneratorTest {
         SourceFile.fromCode("path/to/closure/foo/a.js", "goog.provide('a');\n");
     // Create a source file that depends on the stub Closure Library.
     SourceFile userSrc =
-        SourceFile.fromCode("my/package/script.js", "goog.require('a');\n"
-            + "goog.provide('my.package.script');\n");
+        SourceFile.fromCode(
+            "my/package/script.js",
+            """
+            goog.require('a');
+            goog.provide('my.package.script');
+            """);
     DepsGenerator worker =
         new DepsGenerator(
             ImmutableList.of(fauxClosureDeps),
@@ -521,12 +557,13 @@ public final class DepsGeneratorTest {
             DepsGenerator.InclusionStrategy.ALWAYS,
             PathUtil.makeAbsolute("./path/to/closure"),
             errorManager,
-            new ModuleLoader(
-                null,
-                ImmutableList.of("."),
-                ImmutableList.of(),
-                BrowserModuleResolver.FACTORY,
-                ModuleLoader.PathResolver.ABSOLUTE));
+            ModuleLoader.builder()
+                .setErrorHandler(null)
+                .setModuleRoots(ImmutableList.of("."))
+                .setInputs(ImmutableList.of())
+                .setFactory(BrowserModuleResolver.FACTORY)
+                .setPathResolver(ModuleLoader.PathResolver.ABSOLUTE)
+                .build());
 
     String output = worker.computeDependencyCalls();
 
@@ -536,60 +573,63 @@ public final class DepsGeneratorTest {
 
   @Test
   public void testDuplicateProvidesSameFile() throws Exception {
-    SourceFile dep1 = SourceFile.fromCode("dep1.js",
-        "goog.addDependency('a.js', ['a'], []);\n");
+    SourceFile dep1 = SourceFile.fromCode("dep1.js", "goog.addDependency('a.js', ['a'], []);\n");
     SourceFile src1 =
         SourceFile.fromCode(
-            "src1.js", LINE_JOINER.join("goog.provide('b');", "goog.provide('b');\n"));
+            "src1.js",
+            """
+            goog.provide('b');
+            goog.provide('b');
+            """);
 
-    doErrorMessagesRun(ImmutableList.of(dep1), ImmutableList.of(src1), false /* fatal */,
+    doErrorMessagesRun(
+        ImmutableList.of(dep1),
+        ImmutableList.of(src1),
+        /* fatal= */ false,
         "Multiple calls to goog.provide(\"b\")");
   }
 
   @Test
-  public void testDuplicateRequire() throws Exception {
-    SourceFile dep1 = SourceFile.fromCode("dep1.js",
-        "goog.addDependency('a.js', ['a'], []);\n");
-    SourceFile src1 =
-        SourceFile.fromCode(
-            "src1.js", LINE_JOINER.join("goog.require('a');", "goog.require('a');", ""));
-
-    doErrorMessagesRun(ImmutableList.of(dep1), ImmutableList.of(src1), false /* fatal */,
-        "Namespace \"a\" is required multiple times");
-  }
-
-  @Test
   public void testSameFileProvideRequire() throws Exception {
-    SourceFile dep1 = SourceFile.fromCode("dep1.js",
-        "goog.addDependency('a.js', ['a'], []);\n");
+    SourceFile dep1 = SourceFile.fromCode("dep1.js", "goog.addDependency('a.js', ['a'], []);\n");
     SourceFile src1 =
         SourceFile.fromCode(
-            "src1.js", LINE_JOINER.join("goog.provide('b');", "goog.require('b');", ""));
+            "src1.js",
+            """
+            goog.provide('b');
+            goog.require('b');
+            """);
 
-    doErrorMessagesRun(ImmutableList.of(dep1), ImmutableList.of(src1), false /* fatal */,
+    doErrorMessagesRun(
+        ImmutableList.of(dep1),
+        ImmutableList.of(src1),
+        /* fatal= */ false,
         "Namespace \"b\" is both required and provided in the same file.");
   }
 
   @Test
   public void testUnknownNamespace() throws Exception {
-    SourceFile dep1 = SourceFile.fromCode("dep1.js",
-        "goog.addDependency('a.js', ['a'], []);\n");
-    SourceFile src1 = SourceFile.fromCode("src1.js",
-        "goog.require('b');\n");
+    SourceFile dep1 = SourceFile.fromCode("dep1.js", "goog.addDependency('a.js', ['a'], []);\n");
+    SourceFile src1 = SourceFile.fromCode("src1.js", "goog.require('b');\n");
 
     doErrorMessagesRun(
         ImmutableList.of(dep1),
         ImmutableList.of(src1),
-        true /* fatal */,
-        "Namespace \"b\" is required but never provided.\n"
-            + "You need to pass a library that has it in srcs or exports to your target's deps.");
+        /* fatal= */ true,
+        """
+        Namespace "b" is required but never provided.
+        You need to pass a library that has it in srcs or exports to your target's deps.\
+        """);
   }
 
   @Test
   public void testNoDepsInDepsFile() throws Exception {
     SourceFile dep1 = SourceFile.fromCode("dep1.js", "");
 
-    doErrorMessagesRun(ImmutableList.of(dep1), ImmutableList.<SourceFile>of(), false /* fatal */,
+    doErrorMessagesRun(
+        ImmutableList.of(dep1),
+        ImmutableList.<SourceFile>of(),
+        /* fatal= */ false,
         "No dependencies found in file");
   }
 
@@ -600,7 +640,7 @@ public final class DepsGeneratorTest {
     doErrorMessagesRun(
         ImmutableList.of(),
         ImmutableList.of(src1),
-        true /* fatal */,
+        /* fatal= */ true,
         "Could not find file \"./missing.js\".");
   }
 

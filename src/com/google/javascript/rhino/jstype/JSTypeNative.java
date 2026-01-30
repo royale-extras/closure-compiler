@@ -47,6 +47,9 @@ package com.google.javascript.rhino.jstype;
 public enum JSTypeNative {
   // Built-in types (please keep alphabetized)
 
+  ARGUMENTS_TYPE,
+  ARGUMENTS_FUNCTION_TYPE,
+
   ARRAY_TYPE,
   ARRAY_FUNCTION_TYPE,
 
@@ -55,6 +58,9 @@ public enum JSTypeNative {
 
   ASYNC_ITERATOR_FUNCTION_TYPE,
   ASYNC_ITERATOR_TYPE,
+
+  ASYNC_ITERATOR_ITERABLE_FUNCTION_TYPE,
+  ASYNC_ITERATOR_ITERABLE_TYPE,
 
   ASYNC_GENERATOR_FUNCTION_TYPE,
   ASYNC_GENERATOR_TYPE,
@@ -97,16 +103,22 @@ public enum JSTypeNative {
   FUNCTION_TYPE,
   FUNCTION_FUNCTION_TYPE,
   FUNCTION_PROTOTYPE,
+  FUNCTION_INSTANCE_PROTOTYPE,
 
   GENERATOR_FUNCTION_TYPE,
   GENERATOR_TYPE,
 
   I_ITERABLE_RESULT_FUNCTION_TYPE,
   I_ITERABLE_RESULT_TYPE,
+
   ITERABLE_FUNCTION_TYPE,
   ITERABLE_TYPE,
+
   ITERATOR_FUNCTION_TYPE,
   ITERATOR_TYPE,
+
+  ITERATOR_ITERABLE_FUNCTION_TYPE,
+  ITERATOR_ITERABLE_TYPE,
 
   I_ARRAY_LIKE_FUNCTION_TYPE,
   I_ARRAY_LIKE_TYPE,
@@ -132,6 +144,15 @@ public enum JSTypeNative {
   OBJECT_FUNCTION_TYPE, // The Object constructor
   OBJECT_PROTOTYPE,
 
+  READONLY_ARRAY_TYPE,
+  READONLY_ARRAY_FUNCTION_TYPE,
+
+  READONLY_MAP_TYPE,
+  READONLY_MAP_FUNCTION_TYPE,
+
+  MAP_TYPE,
+  MAP_FUNCTION_TYPE,
+
   REGEXP_TYPE,
   REGEXP_FUNCTION_TYPE,
 
@@ -153,7 +174,6 @@ public enum JSTypeNative {
   ALL_TYPE,
   NO_TYPE,
   NO_OBJECT_TYPE,
-  NO_RESOLVED_TYPE,
   GLOBAL_THIS,
 
   LEAST_FUNCTION_TYPE,
@@ -190,6 +210,18 @@ public enum JSTypeNative {
   /** (number,string,symbol) */
   NUMBER_STRING_SYMBOL,
 
-  /** (bigint, number) */
-  BIGINT_NUMBER;
+  /** (bigint,number) */
+  BIGINT_NUMBER,
+
+  /** (BigInt,Number) */
+  BIGINT_NUMBER_OBJECT,
+
+  /** (bigint,number,string) */
+  BIGINT_NUMBER_STRING,
+
+  /** (Bigint,Number,String) */
+  BIGINT_NUMBER_STRING_OBJECT,
+
+  /** (boolean,Boolean,number,Number,null,undefined) */
+  NUMBER_ADDITION_SUPERTYPE;
 }

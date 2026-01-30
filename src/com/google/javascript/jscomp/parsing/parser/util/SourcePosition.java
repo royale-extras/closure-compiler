@@ -19,7 +19,6 @@ package com.google.javascript.jscomp.parsing.parser.util;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Iterables;
 import com.google.javascript.jscomp.parsing.parser.SourceFile;
-import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 import java.io.Serializable;
 
 /** A position in a source string - includes offset, line and column. */
@@ -44,7 +43,7 @@ public class SourcePosition implements Serializable {
 
   @Override
   public String toString() {
-    return SimpleFormat.format("%s(%d, %d)", shortSourceName(), line + 1, column + 1);
+    return String.format("%s(%d, %d)", shortSourceName(), line + 1, column + 1);
   }
 
   private String shortSourceName() {

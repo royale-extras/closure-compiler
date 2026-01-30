@@ -16,23 +16,15 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.rhino.testing.BaseJSTypeTestCase.ALL_NATIVE_EXTERN_TYPES;
 
-import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.FunctionType;
-import com.google.javascript.rhino.jstype.ObjectType;
-import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for {@link FunctionTypeBuilder}.
- *
- */
+/** Unit tests for {@link FunctionTypeBuilder}. */
 @RunWith(JUnit4.class)
 public final class FunctionTypeBuilderTest extends CompilerTestCase {
 
@@ -48,9 +40,9 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
   protected CompilerPass getProcessor(Compiler compiler) {
     // By turning on type checking, the FunctionTypeBuilder will be invoked.
     return new CompilerPass() {
-          @Override
-          public void process(Node externs, Node js) {}
-        };
+      @Override
+      public void process(Node externs, Node js) {}
+    };
   }
 
   @Test
@@ -62,69 +54,85 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
   public void testBuiltInTypeDifferentReturnType() {
     test(
         externs(
-            "/**\n"
-                + " * @constructor\n"
-                + " * @param {*} opt_str\n"
-                + " * @return {number}\n"
-                + " */\n"
-                + "function String(opt_str) {}\n"),
+            """
+            /**
+             * @constructor
+             * @param {*} opt_str
+             * @return {number}
+             */
+            function String(opt_str) {}
+            """),
         srcs(""),
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
-                "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                """
+                attempted re-definition of type String
+                found   : (typeof String)
+                expected: (typeof String)
+                """));
   }
 
   @Test
   public void testBuiltInTypeDifferentNumParams() {
     test(
         externs(
-            "/**\n"
-                + " * @constructor\n"
-                + " * @return {string}\n"
-                + " */\n"
-                + "function String() {}\n"),
+            """
+            /**
+             * @constructor
+             * @return {string}
+             */
+            function String() {}
+            """),
         srcs(""),
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
-                "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                """
+                attempted re-definition of type String
+                found   : (typeof String)
+                expected: (typeof String)
+                """));
   }
 
   @Test
   public void testBuiltInTypeDifferentNumParams2() {
     test(
         externs(
-            "/**\n"
-                + " * @constructor\n"
-                + " * @return {string}\n"
-                + " */\n"
-                + "function String(opt_str, opt_nothing) {}\n"),
+            """
+            /**
+             * @constructor
+             * @return {string}
+             */
+            function String(opt_str, opt_nothing) {}
+            """),
         srcs(""),
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
-                "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                """
+                attempted re-definition of type String
+                found   : (typeof String)
+                expected: (typeof String)
+                """));
   }
 
   @Test
   public void testBuiltInTypeDifferentParamType() {
     test(
         externs(
-            "/**\n"
-                + " * @constructor\n"
-                + " * @return {string}\n"
-                + " */\n"
-                + "function String(opt_str) {}\n"),
+            """
+            /**
+             * @constructor
+             * @return {string}
+             */
+            function String(opt_str) {}
+            """),
         srcs(""),
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
-                "attempted re-definition of type String\n"
-                    + "found   : (typeof String)\n"
-                    + "expected: (typeof String)"));
+                """
+                attempted re-definition of type String
+                found   : (typeof String)
+                expected: (typeof String)
+                """));
   }
 
   @Test
@@ -134,9 +142,11 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         srcs(""),
         warning(FunctionTypeBuilder.TYPE_REDEFINITION)
             .withMessage(
-                "attempted re-definition of type Function\n"
-                    + "found   : (typeof Function)\n"
-                    + "expected: (typeof Function)"));
+                """
+                attempted re-definition of type Function
+                found   : (typeof Function)
+                expected: (typeof Function)
+                """));
   }
 
   @Test
@@ -145,34 +155,31 @@ public final class FunctionTypeBuilderTest extends CompilerTestCase {
         externs("/** @return {number} */ function f(/** string */ x) { return x; }"),
         srcs(""),
         warning(TypeValidator.TYPE_MISMATCH_WARNING)
-            .withMessage("inconsistent return type\n" + "found   : string\n" + "required: number"));
+            .withMessage(
+                """
+                inconsistent return type
+                found   : string
+                required: number
+                """));
   }
 
   @Test
   public void testInlineJsDoc2() {
     test(
         externs(
-            "/** @return {T} \n @template T */ "
-                + "function f(/** T */ x) { return x; }"
-                + "/** @type {string} */ var x = f(1);"),
+            """
+            /** @return {T}\s
+             @template T */
+            function f(/** T */ x) { return x; }
+            /** @type {string} */ var x = f(1);
+            """),
         srcs(""),
         warning(TypeValidator.TYPE_MISMATCH_WARNING)
-            .withMessage("initializing variable\n" + "found   : number\n" + "required: string"));
-  }
-
-  @Test
-  public void testExternSubTypes() {
-    testSame(externs(ALL_NATIVE_EXTERN_TYPES), srcs(""));
-
-    List<FunctionType> subtypes =
-        ImmutableList.copyOf(
-            ((ObjectType) getLastCompiler().getTypeRegistry().getGlobalType("Error"))
-                .getConstructor().getDirectSubTypes());
-    for (FunctionType type : subtypes) {
-      String typeName = type.getInstanceType().toString();
-      FunctionType typeInRegistry = ((ObjectType) getLastCompiler()
-          .getTypeRegistry().getGlobalType(typeName)).getConstructor();
-      assertThat(typeInRegistry).isSameInstanceAs(type);
-    }
+            .withMessage(
+                """
+                initializing variable
+                found   : number
+                required: string
+                """));
   }
 }

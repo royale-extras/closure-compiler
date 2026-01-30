@@ -17,6 +17,7 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.AccessorSummary.PropertyAccessKind;
 import org.junit.Test;
@@ -111,27 +112,30 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectDefinePropertyQuotedKeys() {
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    'get': function() {},",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            'get': function() {},
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    'set': function(v) {}",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            'set': function(v) {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.SETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {",
-            "    'get': function() {},",
-            "    'set': function(v) {}",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            'get': function() {},
+            'set': function(v) {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop"))
         .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
@@ -140,27 +144,30 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectDefinePropertyUnquotedKeys() {
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    get: function() {},",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            get: function() {},
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    set: function(v) {}",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            set: function(v) {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.SETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {",
-            "    get: function() {},",
-            "    set: function(v) {}",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            get: function() {},
+            set: function(v) {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop"))
         .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
@@ -169,27 +176,30 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectDefinePropertyMemberFunctions() {
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    get() {},",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            get() {},
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    set(v) {}",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            set(v) {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.SETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperty(something, 'prop', {", //
-            "    get() {},",
-            "    set(v) {}",
-            "});"));
+        """
+        Object.defineProperty(something, 'prop', {
+            get() {},
+            set(v) {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop"))
         .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
@@ -198,33 +208,36 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectDefinePropertiesQuotedKeys() {
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  'prop': {",
-            "    'get': function() {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          'prop': {
+            'get': function() {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  'prop': {",
-            "    'set': function(v) {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          'prop': {
+            'set': function(v) {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.SETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  'prop': {",
-            "    'get': function() {},",
-            "    'set': function(v) {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          'prop': {
+            'get': function() {},
+            'set': function(v) {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop"))
         .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
@@ -233,33 +246,36 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectDefinePropertiesUnquotedKeys() {
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  prop: {",
-            "    get: function() {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          prop: {
+            get: function() {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  prop: {",
-            "    set: function(v) {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          prop: {
+            set: function(v) {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.SETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  prop: {",
-            "    get: function() {},",
-            "    set: function(v) {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          prop: {
+            get: function() {},
+            set: function(v) {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop"))
         .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
@@ -268,33 +284,36 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectDefinePropertiesMemberFunctions() {
     testSame(
-        lines(
-            "Object.defineProperties(something, {", //
-            "  prop: {",
-            "    get() {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          prop: {
+            get() {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperties(something, {", //
-            "  'prop': {",
-            "    set(v) {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          'prop': {
+            set(v) {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.SETTER_ONLY);
 
     testSame(
-        lines(
-            "Object.defineProperties(something, {",
-            "  prop: {",
-            "    get() {},",
-            "    set(v) {},",
-            "  }",
-            "});"));
+        """
+        Object.defineProperties(something, {
+          prop: {
+            get() {},
+            set(v) {},
+          }
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop"))
         .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
@@ -303,28 +322,45 @@ public class GatherGetterAndSetterPropertiesTest extends CompilerTestCase {
   @Test
   public void detectJscompGlobalObject() {
     testSame(
-        lines(
-            "$jscomp.global.Object.defineProperty(something, 'prop', {", //
-            "    get: function() {},",
-            "});"));
+        """
+        $jscomp.global.Object.defineProperty(something, 'prop', {
+            get: function() {},
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "$jscomp$global.Object.defineProperty(something, 'prop', {", //
-            "    get: function() {}",
-            "});"));
+        """
+        $jscomp$global.Object.defineProperty(something, 'prop', {
+            get: function() {}
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.GETTER_ONLY);
 
     testSame(
-        lines(
-            "other.Object.defineProperty(something, 'prop', {", //
-            "    get: function() {},",
-            "});"));
+        """
+        other.Object.defineProperty(something, 'prop', {
+            get: function() {},
+        });
+        """);
 
     assertThat(getLastAccessorSummary().getKind("prop")).isEqualTo(PropertyAccessKind.NORMAL);
+  }
+
+  @Test
+  public void noAssumePropertiesAreStaticallyAnalyzable() {
+    CompilerOptions options = new CompilerOptions();
+    options.setAssumePropertiesAreStaticallyAnalyzable(false);
+    Compiler compiler = new Compiler();
+    compiler.init(ImmutableList.of(), ImmutableList.of(), options);
+
+    new GatherGetterAndSetterProperties(compiler)
+        .process(compiler.getExternsRoot(), compiler.getJsRoot());
+
+    assertThat(compiler.getAccessorSummary().getKind("dne"))
+        .isEqualTo(PropertyAccessKind.GETTER_AND_SETTER);
   }
 
   private AccessorSummary getLastAccessorSummary() {

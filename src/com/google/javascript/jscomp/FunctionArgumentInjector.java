@@ -20,32 +20,29 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Predicate;
-import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.NodeUtil.Visitor;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
- * A nifty set of functions to deal with the issues of replacing function
- * parameters with a set of call argument expressions.
+ * A nifty set of functions to deal with the issues of replacing function parameters with a set of
+ * call argument expressions.
  */
 class FunctionArgumentInjector {
 
   // A string to use to represent "this".  Anything that is not a valid
   // identifier can be used, so we use "this".
   static final String THIS_MARKER = "this";
+  static final Node THIS_MARKER_NODE = IR.name(THIS_MARKER);
 
   static final String REST_MARKER = "rest param";
-
-  static final String DEFAULT_MARKER = "Default Value";
-
-  static final String OBJECT_PATTERN_MARKER = "object pattern";
 
   private final AstAnalyzer astAnalyzer;
 
@@ -63,7 +60,7 @@ class FunctionArgumentInjector {
    * @return The root node or its replacement.
    */
   Node inject(AbstractCompiler compiler, Node node, Node parent, Map<String, Node> replacements) {
-    return inject(compiler, node, parent, replacements, /* replaceThis */ true);
+    return inject(compiler, node, parent, replacements, /* replaceThis= */ true);
   }
 
   private Node inject(
@@ -80,7 +77,7 @@ class FunctionArgumentInjector {
         // The name may need to be replaced more than once,
         // so we need to clone the node.
         Node replacement = replacementTemplate.cloneTree();
-        parent.replaceChild(node, replacement);
+        node.replaceWith(replacement);
         return replacement;
       }
     } else if (replaceThis && node.isThis()) {
@@ -90,7 +87,7 @@ class FunctionArgumentInjector {
         // The name may need to be replaced more than once,
         // so we need to clone the node.
         Node replacement = replacementTemplate.cloneTree();
-        parent.replaceChild(node, replacement);
+        node.replaceWith(replacement);
 
         // Remove the value.  This isn't required but it ensures that we won't
         // inject side-effects multiple times as it will trigger the null
@@ -117,50 +114,59 @@ class FunctionArgumentInjector {
   }
 
   /** Get a mapping for function parameter names to call arguments. */
-  ImmutableMap<String, Node> getFunctionCallParameterMap(
+  ImmutableMap<String, ParamArgPair> getFunctionCallParameterMap(
       final Node fnNode, Node callNode, Supplier<String> safeNameIdSupplier) {
     checkNotNull(fnNode);
-    // Create an argName -> expression map
-    ImmutableMap.Builder<String, Node> argMap = ImmutableMap.builder();
+    // Create an parameterName -> expression map
+    ImmutableMap.Builder<String, ParamArgPair> argMap = ImmutableMap.builder();
 
     // CALL NODE: [ NAME, ARG1, ARG2, ... ]
     Node cArg = callNode.getSecondChild();
     if (cArg != null && NodeUtil.isFunctionObjectCall(callNode)) {
-      argMap.put(THIS_MARKER, cArg);
+      argMap.put(THIS_MARKER, new ParamArgPair(THIS_MARKER_NODE, cArg));
       cArg = cArg.getNext();
     } else {
       // 'apply' isn't supported yet.
       checkState(!NodeUtil.isFunctionObjectApply(callNode), callNode);
-      argMap.put(THIS_MARKER, NodeUtil.newUndefinedNode(callNode));
+      argMap.put(
+          THIS_MARKER, new ParamArgPair(THIS_MARKER_NODE, NodeUtil.newUndefinedNode(callNode)));
     }
 
-    for (Node fnParam : NodeUtil.getFunctionParameters(fnNode).children()) {
+    for (Node fnParam = NodeUtil.getFunctionParameters(fnNode).getFirstChild();
+        fnParam != null;
+        fnParam = fnParam.getNext()) {
       if (cArg != null) {
         if (fnParam.isRest()) {
           checkState(fnParam.getOnlyChild().isName(), fnParam.getOnlyChild());
           Node array = IR.arraylit();
-          array.useSourceInfoIfMissingFromForTree(cArg);
+          array.srcrefTreeIfMissing(cArg);
           while (cArg != null) {
             array.addChildToBack(cArg.cloneTree());
             cArg = cArg.getNext();
           }
-          argMap.put(fnParam.getOnlyChild().getString(), array);
-          return argMap.build();
+          return argMap
+              .put(
+                  fnParam.getOnlyChild().getString(),
+                  new ParamArgPair(fnParam.getOnlyChild(), array))
+              .buildOrThrow();
         } else {
           checkState(fnParam.isName(), fnParam);
-          argMap.put(fnParam.getString(), cArg);
+          argMap.put(fnParam.getString(), new ParamArgPair(fnParam, cArg));
         }
         cArg = cArg.getNext();
-      } else { // cArg != null
+      } else { // cArg == null
         if (fnParam.isRest()) {
           checkState(fnParam.getOnlyChild().isName(), fnParam);
-          //No arguments for REST parameters
-          Node array = IR.arraylit();
-          argMap.put(fnParam.getOnlyChild().getString(), array);
+          // No arguments for REST parameters
+          Node array = IR.arraylit().srcref(fnParam);
+          argMap.put(
+              fnParam.getOnlyChild().getString(), new ParamArgPair(fnParam.getOnlyChild(), array));
         } else {
           checkState(fnParam.isName(), fnParam);
           Node srcLocation = callNode;
-          argMap.put(fnParam.getString(), NodeUtil.newUndefinedNode(srcLocation));
+          argMap.put(
+              fnParam.getString(),
+              new ParamArgPair(fnParam, NodeUtil.newUndefinedNode(srcLocation)));
         }
       }
     }
@@ -169,18 +175,15 @@ class FunctionArgumentInjector {
     // called function.
     while (cArg != null) {
       String uniquePlaceholder = getUniqueAnonymousParameterName(safeNameIdSupplier);
-      argMap.put(uniquePlaceholder, cArg);
+      argMap.put(uniquePlaceholder, new ParamArgPair(IR.name(uniquePlaceholder), cArg));
       cArg = cArg.getNext();
     }
 
-    return argMap.build();
+    return argMap.buildOrThrow();
   }
 
-  /**
-   * Parameter names will be name unique when at a later time.
-   */
-  private static String getUniqueAnonymousParameterName(
-      Supplier<String> safeNameIdSupplier) {
+  /** Parameter names will be name unique when at a later time. */
+  private static String getUniqueAnonymousParameterName(Supplier<String> safeNameIdSupplier) {
     return "JSCompiler_inline_anon_param_" + safeNameIdSupplier.get();
   }
 
@@ -197,33 +200,26 @@ class FunctionArgumentInjector {
    * <p>Inlining this without taking precautions would cause the call site value to be modified
    * (bad).
    */
-  Set<String> findModifiedParameters(Node fnNode) {
+  ImmutableSet<String> findModifiedParameters(Node fnNode) {
     ImmutableSet<String> names = getFunctionParameterSet(fnNode);
-    Set<String> unsafeNames = new HashSet<>();
-    return findModifiedParameters(fnNode.getLastChild(), names, unsafeNames, false);
+    return ImmutableSet.copyOf(findModifiedParameters(fnNode.getLastChild(), names, false));
   }
 
   /**
-   * Check for uses of the named value that imply a pass-by-value
-   * parameter is expected.  This is used to prevent cases like:
+   * Check for uses of the named value that imply a pass-by-value parameter is expected. This is
+   * used to prevent cases like:
    *
-   *   function (x) {
-   *     x=2;
-   *     return x;
-   *   }
+   * <p>function (x) { x=2; return x; }
    *
-   * We don't want "undefined" to be substituted for "x", and get
-   *   undefined=2
+   * <p>We don't want "undefined" to be substituted for "x", and get undefined=2
    *
    * @param n The node in question.
-   * @param parent The parent of the node.
    * @param names The set of names to check.
-   * @param unsafe The set of names that require aliases.
    * @param inInnerFunction Whether the inspection is occurring on a inner function.
    */
   private static Set<String> findModifiedParameters(
-      Node n, ImmutableSet<String> names, Set<String> unsafe, boolean inInnerFunction) {
-    checkArgument(unsafe != null);
+      Node n, ImmutableSet<String> names, boolean inInnerFunction) {
+    LinkedHashSet<String> unsafe = new LinkedHashSet<>();
     if (n.isName()) {
       if (names.contains(n.getString()) && (inInnerFunction || canNameValueChange(n))) {
         unsafe.add(n.getString());
@@ -237,23 +233,21 @@ class FunctionArgumentInjector {
       inInnerFunction = true;
     }
 
-    for (Node c : n.children()) {
-      findModifiedParameters(c, names, unsafe, inInnerFunction);
+    for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
+      unsafe.addAll(findModifiedParameters(c, names, inInnerFunction));
     }
 
     return unsafe;
   }
 
   /**
-   * This is similar to NodeUtil.isLValue except that object properties and
-   * array member modification aren't important ("o" in "o.a = 2" is still "o"
-   * after assignment, where in as "o = x", "o" is now "x").
+   * This is similar to NodeUtil.isLValue except that object properties and array member
+   * modification aren't important ("o" in "o.a = 2" is still "o" after assignment, where in as "o =
+   * x", "o" is now "x").
    *
-   * This also looks for the redefinition of a name.
-   *   function (x) {var x;}
+   * <p>This also looks for the redefinition of a name. function (x) {var x;}
    *
    * @param n The NAME node in question.
-   * @param parent The parent of the node.
    */
   private static boolean canNameValueChange(Node n) {
     return NodeUtil.isLValue(n)
@@ -262,61 +256,97 @@ class FunctionArgumentInjector {
   }
 
   /**
-   * Updates the set of parameter names in set unsafe to include any arguments from the call site
-   * that require aliases.
+   * Updates the set of parameter names that correspond to arguments from the call site that require
+   * aliases.
+   *
+   * <p>If an argument requires a temp (e.g. it is side-effectful, affects mutable state or due to
+   * other reasons), we need to evaluate it into a temporary at the callsite before inlining the
+   * function block into that callsite. However, that argument's early evaluation could also change
+   * the values of previous arguments. Hence, in this function we decide to hoist all those previous
+   * args and evaluate them before this side-effectful argument, even if they are not actually
+   * affected by that side-effectful argument. This simplifies the implementation and doesn't hurt
+   * performance.
+   *
+   * <p>This method populates the given namesNeedingTemps set with all the parameter names that
+   * require hoisting with a temp.
    *
    * @param fnNode The FUNCTION node to be inlined.
    * @param argMap The argument list for the call to fnNode.
-   * @param namesNeedingTemps The set of names to update.
+   * @param modifiedParameters The set of parameters known to be modified, which automatically need
+   *     temps.
    */
-  void maybeAddTempsForCallArguments(
+  ImmutableSet<String> gatherCallArgumentsNeedingTemps(
       AbstractCompiler compiler,
       Node fnNode,
-      ImmutableMap<String, Node> argMap,
-      Set<String> namesNeedingTemps,
+      ImmutableMap<String, ParamArgPair> argMap,
+      ImmutableSet<String> modifiedParameters,
       CodingConvention convention) {
+    checkArgument(fnNode.isFunction(), fnNode);
     if (argMap.isEmpty()) {
       // No arguments to check, we are done.
-      return;
+      return modifiedParameters;
     }
-
-    checkArgument(fnNode.isFunction(), fnNode);
+    Set<String> namesNeedingTemps = new LinkedHashSet<>(modifiedParameters);
     Node block = fnNode.getLastChild();
+
+    /*
+     * This field holds the parameter name corresponding to the last side-effectful argument. Args
+     * corresponding to all parameters before and including this parameter name would get hoisted
+     * using temps.
+     */
+    String requiresTempsUpToThisParameterName = "";
 
     int argCount = argMap.size();
     // We limit the "trivial" bodies to those where there is a single expression or
     // return, the expression is
-    boolean isTrivialBody = (!block.hasChildren()
-        || (block.hasOneChild() && !bodyMayHaveConditionalCode(block.getLastChild())));
-    boolean hasMinimalParameters = NodeUtil.isUndefined(argMap.get(THIS_MARKER))
-        && argCount <= 2; // this + one parameter
+    boolean isTrivialBody =
+        (!block.hasChildren()
+            || (block.hasOneChild() && !bodyMayHaveConditionalCode(block.getLastChild())));
+    boolean hasMinimalParameters =
+        NodeUtil.isUndefined(argMap.get(THIS_MARKER).arg())
+            && argCount <= 2; // this + one parameter
 
     // Get the list of parameters that may need temporaries due to side-effects.
-    ImmutableSet<String> namesAfterSideEffects = findParametersReferencedAfterSideEffect(
-        argMap.keySet(), block);
+    SetContainer parametersThatMayNeedTemps =
+        findParametersReferencedAfterSideEffect(argMap.keySet(), block);
+    ImmutableSet<String> namesAfterSideEffects =
+        parametersThatMayNeedTemps.parametersReferencedAfterSideEffect();
+    ImmutableSet<String> parametersWithNamesReferencedBefore =
+        parametersThatMayNeedTemps.parametersWithNamesReferencedBeforeParameter();
 
     // Check for arguments that are evaluated more than once.
-    for (Map.Entry<String, Node> entry : argMap.entrySet()) {
-      String argName = entry.getKey();
-      if (namesNeedingTemps.contains(argName)) {
+    for (Map.Entry<String, ParamArgPair> entry : argMap.entrySet()) {
+      String parameterName = entry.getKey();
+      Node cArg = entry.getValue().arg();
+      if (namesNeedingTemps.contains(parameterName)) {
+        requiresTempsUpToThisParameterName = parameterName;
         continue;
       }
-      Node cArg = entry.getValue();
-      boolean safe = true;
-      int references = NodeUtil.getNameReferenceCount(block, argName);
+      // Stores whether this arg need to get hoisted using a temporary
+      boolean requiresTemporary = false;
+      final int references = NodeUtil.getNameReferenceCount(block, parameterName);
 
       boolean argSideEffects = compiler.getAstAnalyzer().mayHaveSideEffects(cArg);
       if (!argSideEffects && references == 0) {
-        safe = true;
-      } else if (isTrivialBody && hasMinimalParameters
+        requiresTemporary = false;
+      } else if (isTrivialBody
+          && hasMinimalParameters
           && references == 1
-          && !(NodeUtil.canBeSideEffected(cArg) && namesAfterSideEffects.contains(argName))) {
+          // The below line is checking: Can this be affected by side-effects in the function body?
+          && !(NodeUtil.canBeSideEffected(cArg) && namesAfterSideEffects.contains(parameterName))
+          // The below line is checking: Can the function body be affected by the side effects of
+          // the argument? If the argument has side effects and the function body contains names
+          // that are referenced before the argument, then we need to inline using temporaries. If
+          // not, then we can enter this condition's else-if block.
+          && (!argSideEffects || !parametersWithNamesReferencedBefore.contains(parameterName))) {
         // For functions with a trivial body, and where the parameter evaluation order
         // can't change, and there aren't any side-effect before the parameter, we can
         // avoid creating a temporary.
         //
         // This is done to help inline common trivial functions
-        safe = true;
+        // TODO: b/407603216 - return `true` when return expressions don't have
+        // references that can be side-effected
+        requiresTemporary = false;
       } else if (compiler.getAstAnalyzer().mayEffectMutableState(cArg) && references > 0) {
         // Note: Mutable arguments should be assigned to temps, as the
         // may be within in a loop:
@@ -325,38 +355,68 @@ class FunctionArgumentInjector {
         //       foo(a);
         //     }
         //   x( [] );
-        //
-        //   The parameter in the call to foo should not become "[]".
-          safe = false;
+        // The parameter in the call to foo should not become "[]".
+        requiresTemporary = true;
       } else if (argSideEffects) {
-        // Even if there are no references, we still need to evaluate the
+        // even if there are no references, we still need to evaluate the
         // expression if it has side-effects.
-        safe = false;
-      } else if (NodeUtil.canBeSideEffected(cArg) && namesAfterSideEffects.contains(argName)) {
-        safe = false;
+        requiresTemporary = true;
+      } else if (NodeUtil.canBeSideEffected(cArg)
+          && namesAfterSideEffects.contains(parameterName)) {
+        requiresTemporary = true;
       } else if (references > 1) {
         // Safe is a misnomer, this is a check for "large".
         switch (cArg.getToken()) {
-          case NAME:
+          case NAME -> {
             String name = cArg.getString();
-            safe = !(convention.isExported(name));
-            break;
-          case THIS:
-            safe = true;
-            break;
-          case STRING:
-            safe = (cArg.getString().length() < 2);
-            break;
-          default:
-            safe = NodeUtil.isImmutableValue(cArg);
-            break;
+            // Don't worry about whether this is global or local, just check if it is
+            // "exported" in either case.
+            requiresTemporary =
+                (convention.isExported(name, true) || convention.isExported(name, false));
+          }
+          case THIS -> requiresTemporary = false;
+          case STRINGLIT -> requiresTemporary = (cArg.getString().length() >= 2);
+          default -> requiresTemporary = !NodeUtil.isImmutableValue(cArg);
         }
       }
 
-      if (!safe) {
-        namesNeedingTemps.add(argName);
+      if (requiresTemporary) {
+        requiresTempsUpToThisParameterName = parameterName;
       }
     }
+
+    if (!requiresTempsUpToThisParameterName.isEmpty()) {
+      // mark all names upto requiresTempsUptoParameterName as namesNeedingTemps
+      for (Map.Entry<String, ParamArgPair> entry : argMap.entrySet()) {
+        String parameterName = entry.getKey();
+        if (parameterName.equals(THIS_MARKER)
+            && NodeUtil.isUndefined(argMap.get(THIS_MARKER).arg())) {
+          /* When there is no explicit this arg passed into the call, the argMap contains an entry
+           * <"this", undefined Node>. See the `getFunctionCallParameterMap` method.
+           *
+           *  We do not want to add an unnecessary temp for "this", when there wasn't an explicit
+           * "this" passed in at the callsite. That is, we want to transform a call-site like:
+           *  {@code `foo(a,b)`}
+           * to
+           * {@code `let a$inline$0 = a; foo(a$inline$0 ,b)`}
+           * and not
+           * {@code `let this$inline$0 = this; let a$inline$0=a; foo(a$inline$0, b)`}.
+           * Hence we skip generating a temporary for an implicit "this" arg
+           */
+          continue;
+        }
+        // TODO: b/298828688 Use `NodeUtil.isImmutableValue` to detect some simple immutable cases
+        // and skip generating temps for those as well.
+
+        if (parameterName.equals(requiresTempsUpToThisParameterName)) {
+          namesNeedingTemps.add(parameterName);
+          break;
+        } else {
+          namesNeedingTemps.add(parameterName);
+        }
+      }
+    }
+    return ImmutableSet.copyOf(namesNeedingTemps);
   }
 
   /**
@@ -376,14 +436,17 @@ class FunctionArgumentInjector {
   boolean mayHaveConditionalCode(Node n) {
     for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
       switch (c.getToken()) {
-        case FUNCTION:
-        case AND:
-        case OR:
-        case HOOK:
-        case COALESCE:
+        case FUNCTION,
+            AND,
+            OR,
+            HOOK,
+            COALESCE,
+            OPTCHAIN_CALL,
+            OPTCHAIN_GETELEM,
+            OPTCHAIN_GETPROP -> {
           return true;
-        default:
-          break;
+        }
+        default -> {}
       }
       if (mayHaveConditionalCode(c)) {
         return true;
@@ -393,29 +456,35 @@ class FunctionArgumentInjector {
   }
 
   /**
-   * Bootstrap a traversal to look for parameters referenced after a non-local side-effect.
+   * Bootstrap a traversal to look for parameters referenced after a non-local side-effect, and
+   * parameters with names referenced before the parameter is referenced.
    *
    * <p>NOTE: This assumes no-inner functions.
    *
    * @param parameters The set of parameter names.
    * @param root The function code block.
-   * @return The subset of parameters referenced after the first seen non-local side-effect.
+   * @return Two sets: Set #1 is the subset of parameters referenced after the first seen non-local
+   *     side-effect. Set #2 is the subset of parameters with names referenced before the parameter
+   *     is referenced.
    */
-  private ImmutableSet<String> findParametersReferencedAfterSideEffect(
+  private SetContainer findParametersReferencedAfterSideEffect(
       ImmutableSet<String> parameters, Node root) {
 
     // TODO(johnlenz): Consider using scope for this.
-    Set<String> locals = new HashSet<>(parameters);
+    Set<String> locals = new LinkedHashSet<>(parameters);
     gatherLocalNames(root, locals);
 
-    ReferencedAfterSideEffect collector = new ReferencedAfterSideEffect(
-        parameters, ImmutableSet.copyOf(locals));
-    NodeUtil.visitPostOrder(
-        root,
-        collector,
-        collector);
-    return collector.getResults();
+    ReferencedAfterSideEffect collector =
+        new ReferencedAfterSideEffect(parameters, ImmutableSet.copyOf(locals));
+    NodeUtil.visitPostOrder(root, collector, collector);
+    return new SetContainer(
+        collector.getParametersReferencedAfterSideEffect(),
+        collector.getParametersWithNamesReferencedBeforeParameter());
   }
+
+  static record SetContainer(
+      ImmutableSet<String> parametersReferencedAfterSideEffect,
+      ImmutableSet<String> parametersWithNamesReferencedBeforeParameter) {}
 
   /**
    * Collect parameter names referenced after a non-local side-effect.
@@ -441,7 +510,11 @@ class FunctionArgumentInjector {
     private final ImmutableSet<String> parameters;
     private final ImmutableSet<String> locals;
     private boolean sideEffectSeen = false;
-    private final Set<String> parametersReferenced = new HashSet<>();
+    private final Set<String> parametersReferenced = new LinkedHashSet<>();
+
+    private boolean nameNodeHasBeenSeen = false;
+    private final Set<String> parametersWithNamesReferencedBeforeParameter = new LinkedHashSet<>();
+
     private int loopsEntered = 0;
 
     ReferencedAfterSideEffect(ImmutableSet<String> parameters, ImmutableSet<String> locals) {
@@ -449,8 +522,12 @@ class FunctionArgumentInjector {
       this.locals = locals;
     }
 
-    ImmutableSet<String> getResults() {
+    ImmutableSet<String> getParametersReferencedAfterSideEffect() {
       return ImmutableSet.copyOf(parametersReferenced);
+    }
+
+    ImmutableSet<String> getParametersWithNamesReferencedBeforeParameter() {
+      return ImmutableSet.copyOf(parametersWithNamesReferencedBeforeParameter);
     }
 
     @Override
@@ -471,6 +548,16 @@ class FunctionArgumentInjector {
 
     @Override
     public void visit(Node n) {
+      if (n.isName()) {
+        String name = n.getString();
+        if (parameters.contains(name) && nameNodeHasBeenSeen) {
+          // We have seen a name node before this parameter. If this parameter has side effects, it
+          // is not safe to inline.
+          parametersWithNamesReferencedBeforeParameter.add(name);
+        }
+        nameNodeHasBeenSeen = true;
+      }
+
       // If we are exiting a loop.
       if (NodeUtil.isLoopStructure(n)) {
         loopsEntered--;
@@ -512,9 +599,7 @@ class FunctionArgumentInjector {
       Token type = n.getToken();
       // Note: Only care about changes to non-local names, specifically
       // ignore VAR declaration assignments.
-      if (NodeUtil.isAssignmentOp(n)
-          || type == Token.INC
-          || type == Token.DEC) {
+      if (NodeUtil.isAssignmentOp(n) || type == Token.INC || type == Token.DEC) {
         Node lhs = n.getFirstChild();
         // Ignore changes to local names.
         if (!isLocalName(lhs)) {
@@ -543,9 +628,7 @@ class FunctionArgumentInjector {
     }
   }
 
-  /**
-   * Gather any names declared in the local scope.
-   */
+  /** Gather any names declared in the local scope. */
   private static void gatherLocalNames(Node n, Set<String> names) {
     if (n.isFunction()) {
       if (NodeUtil.isFunctionDeclaration(n)) {
@@ -555,14 +638,8 @@ class FunctionArgumentInjector {
       return;
     } else if (n.isName()) {
       switch (n.getParent().getToken()) {
-        case VAR:
-        case LET:
-        case CONST:
-        case CATCH:
-          names.add(n.getString());
-          break;
-        default:
-          break;
+        case VAR, LET, CONST, CATCH -> names.add(n.getString());
+        default -> {}
       }
     }
 
@@ -571,13 +648,13 @@ class FunctionArgumentInjector {
     }
   }
 
-  /**
-   * Get a set of function parameter names.
-   */
+  /** Get a set of function parameter names. */
   private static ImmutableSet<String> getFunctionParameterSet(Node fnNode) {
     ImmutableSet.Builder<String> builder = ImmutableSet.builder();
-    for (Node n : NodeUtil.getFunctionParameters(fnNode).children()) {
-      if (n.isRest()){
+    for (Node n = NodeUtil.getFunctionParameters(fnNode).getFirstChild();
+        n != null;
+        n = n.getNext()) {
+      if (n.isRest()) {
         builder.add(REST_MARKER);
       } else if (n.isDefaultValue() || n.isObjectPattern() || n.isArrayPattern()) {
         throw new IllegalStateException("Not supported: " + n);
@@ -588,4 +665,19 @@ class FunctionArgumentInjector {
     return builder.build();
   }
 
+  /**
+   * Stores a pair of function formal parameter + argument value at a specific call site.
+   *
+   * @param paramNode the original formal parameter name, such as {@code x} in {@code function
+   *     foo(x) { ... }} or, when injecting a value for {@code this}, {@link
+   *     FunctionArgumentInjector#THIS_MARKER_NODE}.
+   * @param arg the argument passed as `paramNode` at some call site, such as {@code 500} in {@code
+   *     f(500);}.
+   */
+  record ParamArgPair(Node paramNode, Node arg) {
+    ParamArgPair {
+      checkNotNull(paramNode);
+      checkNotNull(arg);
+    }
+  }
 }

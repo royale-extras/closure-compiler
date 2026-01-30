@@ -47,17 +47,19 @@ public abstract class Config {
     // most features, and _STRICT versions should be supplied after unspecified strictness.
     ECMASCRIPT3(FeatureSet.ES3),
     ECMASCRIPT5(FeatureSet.ES5),
-    ECMASCRIPT6(FeatureSet.ES6_MODULES),
-    ECMASCRIPT7(FeatureSet.ES7_MODULES),
-    ECMASCRIPT8(FeatureSet.ES8_MODULES),
+    ECMASCRIPT_2015(FeatureSet.ES2015_MODULES),
+    ECMASCRIPT_2016(FeatureSet.ES2016_MODULES),
+    ECMASCRIPT_2017(FeatureSet.ES2017_MODULES),
     ECMASCRIPT_2018(FeatureSet.ES2018_MODULES),
     ECMASCRIPT_2019(FeatureSet.ES2019_MODULES),
     ECMASCRIPT_2020(FeatureSet.ES2020_MODULES),
+    ECMASCRIPT_2021(FeatureSet.ES2021_MODULES),
+    ECMASCRIPT_2022(FeatureSet.ES2022_MODULES),
+    // NOTE: When adding a new language level here, also update latestEcmaScript() below to return
+    // it.
     ES_NEXT(FeatureSet.ES_NEXT),
-    ES_NEXT_IN(FeatureSet.ES_NEXT_IN),
-    UNSUPPORTED(FeatureSet.ES_UNSUPPORTED),
-    TYPESCRIPT(FeatureSet.TYPESCRIPT),
-    ;
+    UNSTABLE(FeatureSet.ES_UNSTABLE),
+    UNSUPPORTED(FeatureSet.ES_UNSUPPORTED);
 
     public final FeatureSet featureSet;
 
@@ -89,7 +91,7 @@ public abstract class Config {
     }
 
     public static LanguageMode latestEcmaScript() {
-      return ECMASCRIPT8;
+      return ECMASCRIPT_2021;
     }
   }
 
@@ -100,14 +102,17 @@ public abstract class Config {
     TYPES_ONLY,
     INCLUDE_DESCRIPTIONS_NO_WHITESPACE,
     INCLUDE_DESCRIPTIONS_WITH_WHITESPACE,
-    INCLUDE_ALL_COMMENTS;
+    INCLUDE_ALL_COMMENTS,
+    LICENSE_COMMENTS_ONLY;
 
     boolean shouldParseDescriptions() {
       return this != TYPES_ONLY;
     }
 
     boolean shouldPreserveWhitespace() {
-      return this == INCLUDE_DESCRIPTIONS_WITH_WHITESPACE || this == INCLUDE_ALL_COMMENTS;
+      return this == INCLUDE_DESCRIPTIONS_WITH_WHITESPACE
+          || this == INCLUDE_ALL_COMMENTS
+          || this == LICENSE_COMMENTS_ONLY;
     }
   }
 
@@ -147,9 +152,11 @@ public abstract class Config {
     return annotations().keySet();
   }
 
+  public abstract Builder toBuilder();
+
   public static Builder builder() {
     return new AutoValue_Config.Builder()
-        .setLanguageMode(LanguageMode.TYPESCRIPT)
+        .setLanguageMode(LanguageMode.UNSUPPORTED)
         .setStrictMode(StrictMode.STRICT)
         .setJsDocParsingMode(JsDocParsing.TYPES_ONLY)
         .setRunMode(RunMode.STOP_AFTER_ERROR)
@@ -196,6 +203,6 @@ public abstract class Config {
         annotationsBuilder.put(unrecognizedAnnotation, Annotation.NOT_IMPLEMENTED);
       }
     }
-    return annotationsBuilder.build();
+    return annotationsBuilder.buildOrThrow();
   }
 }

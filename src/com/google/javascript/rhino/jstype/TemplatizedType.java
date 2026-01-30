@@ -40,12 +40,13 @@
 package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.javascript.jscomp.base.JSCompObjects.identical;
 
-import com.google.common.annotations.GwtIncompatible;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.ErrorReporter;
 import java.util.LinkedHashSet;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An object type with declared template types, such as
@@ -53,8 +54,6 @@ import java.util.Objects;
  *
  */
 public final class TemplatizedType extends ProxyObjectType {
-  private static final long serialVersionUID = 1L;
-
   private static final JSTypeClass TYPE_CLASS = JSTypeClass.TEMPLATIZED;
 
   /** A cache of the type parameter values for this specialization. */
@@ -62,7 +61,7 @@ public final class TemplatizedType extends ProxyObjectType {
   /** Whether all type parameter values for this specialization are `?`. */
   private final boolean isSpecializedOnlyWithUnknown;
 
-  private transient TemplateTypeReplacer replacer;
+  private final TemplateTypeReplacer replacer;
 
   TemplatizedType(
       JSTypeRegistry registry, ObjectType objectType,
@@ -76,8 +75,10 @@ public final class TemplatizedType extends ProxyObjectType {
       JSType resolvedType = getTemplateTypeMap().getResolvedTemplateType(newlyFilledTemplateKey);
 
       builder.add(resolvedType);
-      maybeIsSpecializedOnlyWithUnknown =
-          maybeIsSpecializedOnlyWithUnknown && resolvedType.isUnknownType();
+      if (maybeIsSpecializedOnlyWithUnknown) {
+        maybeIsSpecializedOnlyWithUnknown =
+            this.getNativeType(JSTypeNative.UNKNOWN_TYPE).equals(resolvedType);
+      }
     }
     this.templateTypes = builder.build();
     this.isSpecializedOnlyWithUnknown = maybeIsSpecializedOnlyWithUnknown;
@@ -128,7 +129,7 @@ public final class TemplatizedType extends ProxyObjectType {
     int baseHash = super.recursionUnsafeHashCode();
 
     // TODO(b/110224889): This case can probably be removed if `equals()` is updated.
-    if (isSpecializedOnlyWithUnknown) {
+    if (this.isSpecializedOnlyWithUnknown) {
       return baseHash;
     }
     return Objects.hash(templateTypes, baseHash);
@@ -154,7 +155,7 @@ public final class TemplatizedType extends ProxyObjectType {
   }
 
   @Override
-  public JSType getPropertyType(String propertyName) {
+  public @Nullable JSType getPropertyType(Property.Key propertyName) {
     JSType result = super.getPropertyType(propertyName);
     return result == null ? null : result.visit(replacer);
   }
@@ -177,7 +178,7 @@ public final class TemplatizedType extends ProxyObjectType {
         if (this.isSubtype(rawThat)) {
           return this;
         } else if (rawThat.isSubtypeOf(this)) {
-          return filterNoResolvedType(rawThat);
+          return rawThat;
         }
       }
       if (this.isObject() && rawThat.isObject()) {
@@ -216,13 +217,6 @@ public final class TemplatizedType extends ProxyObjectType {
     return getReferencedObjTypeInternal();
   }
 
-  @GwtIncompatible("ObjectInputStream")
-  private void readObject(java.io.ObjectInputStream in) throws Exception {
-    in.defaultReadObject();
-    replacer = TemplateTypeReplacer.forPartialReplacement(registry, templateTypeMap);
-  }
-
-  @SuppressWarnings("ReferenceEquality")
   @Override
   JSType resolveInternal(ErrorReporter reporter) {
     JSType baseTypeBefore = getReferencedType();
@@ -232,7 +226,7 @@ public final class TemplatizedType extends ProxyObjectType {
     ImmutableList.Builder<JSType> builder = ImmutableList.builder();
     for (JSType type : templateTypes) {
       JSType resolved = type.resolve(reporter);
-      rebuild |= resolved != type;
+      rebuild |= !identical(resolved, type);
       builder.add(resolved);
     }
 

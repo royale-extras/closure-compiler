@@ -18,8 +18,10 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.jscomp.GatherModuleMetadata.INVALID_NAMESPACE_OR_MODULE_ID;
 
 import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.deps.ModuleLoader.ResolutionMode;
 import com.google.javascript.jscomp.modules.ModuleMetadataMap;
 import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
@@ -41,6 +43,7 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
     entryPoints = ImmutableList.of();
     rewriteScriptsToModules = false;
     sortOnly = false;
+    setLanguageOut(LanguageMode.ECMASCRIPT5);
   }
 
   @Override
@@ -61,8 +64,7 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
       if (rewriteScriptsToModules) {
         new Es6RewriteScriptsToModules(compiler).process(externs, root);
       }
-      new GatherModuleMetadata(
-              compiler, /* processCommonJsModules= */ true, ResolutionMode.BROWSER)
+      new GatherModuleMetadata(compiler, /* processCommonJsModules= */ true, ResolutionMode.BROWSER)
           .process(externs, root);
     };
   }
@@ -85,7 +87,7 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   public void testGoogProvideWithGoogDeclaredInOtherFile() {
     // Closure's base.js declare the global goog. It should be ignored when scanning the provide'd
     // file. Only local variables named goog should cause the pass to back off.
-    testSame(new String[] {"var goog;", "goog.provide('my.provide');"});
+    testSame(srcs("var goog;", "goog.provide('my.provide');"));
     assertThat(metadataMap().getModulesByGoogNamespace().keySet()).containsExactly("my.provide");
     ModuleMetadata m = metadataMap().getModulesByGoogNamespace().get("my.provide");
     assertThat(m.googNamespaces()).containsExactly("my.provide");
@@ -119,6 +121,23 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   }
 
   @Test
+  public void testProvideNamespaceValidation() {
+    test(srcs("goog.provide('');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.provide(' ');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.provide('a..b');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+
+    test(srcs("goog.provide('ā');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    testSame(srcs("goog.provide('a');"));
+
+    testSame(srcs("goog.provide('a.class');"));
+    test(srcs("goog.provide('class.a');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT3);
+    testError(srcs("goog.provide('a.class');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    testError(srcs("goog.provide('class.a');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+  }
+
+  @Test
   public void testGoogModule() {
     testSame("goog.module('my.module');");
     assertThat(metadataMap().getModulesByGoogNamespace().keySet()).containsExactly("my.module");
@@ -128,6 +147,23 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
     assertThat(m.isGoogModule()).isTrue();
     assertThat(m.isNonLegacyGoogModule()).isTrue();
     assertThat(m.isLegacyGoogModule()).isFalse();
+  }
+
+  @Test
+  public void testModuleIdValidation() {
+    test(srcs("goog.module();"), error(ClosureRewriteModule.INVALID_MODULE_ID_ARG));
+    test(srcs("goog.module('');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.module(' ');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.module('a..b');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.module('a. .b');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.module('a.-.b');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+
+    test(srcs("goog.module('0');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+    test(srcs("goog.module('ā');"), error(INVALID_NAMESPACE_OR_MODULE_ID));
+
+    testSame(srcs("goog.module('a');"));
+    testSame(srcs("goog.module('a0');"));
+    testSame(srcs("goog.module('$');"));
   }
 
   @Test
@@ -158,14 +194,14 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testLoadModule() {
     testSame(
-        lines(
-            "goog.loadModule(function(exports) {", //
-            "  goog.module('my.module');",
-            "  return exports;",
-            "});"));
+        """
+        goog.loadModule(function(exports) {
+          goog.module('my.module');
+          return exports;
+        });
+        """);
 
-    assertThat(metadataMap().getModulesByGoogNamespace().keySet())
-        .containsExactly("my.module");
+    assertThat(metadataMap().getModulesByGoogNamespace().keySet()).containsExactly("my.module");
 
     ModuleMetadata m = metadataMap().getModulesByGoogNamespace().get("my.module");
     assertThat(m.googNamespaces()).containsExactly("my.module");
@@ -180,15 +216,15 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testLoadModuleLegacyNamespace() {
     testSame(
-        lines(
-            "goog.loadModule(function(exports) {", //
-            "  goog.module('my.module');",
-            "  goog.module.declareLegacyNamespace();",
-            "  return exports;",
-            "});"));
+        """
+        goog.loadModule(function(exports) {
+          goog.module('my.module');
+          goog.module.declareLegacyNamespace();
+          return exports;
+        });
+        """);
 
-    assertThat(metadataMap().getModulesByGoogNamespace().keySet())
-        .containsExactly("my.module");
+    assertThat(metadataMap().getModulesByGoogNamespace().keySet()).containsExactly("my.module");
 
     ModuleMetadata m = metadataMap().getModulesByGoogNamespace().get("my.module");
     assertThat(m.googNamespaces()).containsExactly("my.module");
@@ -203,15 +239,15 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testLoadModuleUseStrict() {
     testSame(
-        lines(
-            "goog.loadModule(function(exports) {", //
-            "  'use strict';",
-            "  goog.module('with.strict');",
-            "  return exports;",
-            "});"));
+        """
+        goog.loadModule(function(exports) {
+          'use strict';
+          goog.module('with.strict');
+          return exports;
+        });
+        """);
 
-    assertThat(metadataMap().getModulesByGoogNamespace().keySet())
-        .containsExactly("with.strict");
+    assertThat(metadataMap().getModulesByGoogNamespace().keySet()).containsExactly("with.strict");
 
     ModuleMetadata m = metadataMap().getModulesByGoogNamespace().get("with.strict");
     assertThat(m.googNamespaces()).containsExactly("with.strict");
@@ -226,13 +262,13 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testMultipleGoogModuleCallsInLoadModule() {
     testSame(
-        lines(
-            // Technically an error but this pass shouldn't report it.
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c0');",
-            "  goog.module('multiple.calls.c1');",
-            "  return exports;",
-            "});"));
+        """
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c0');
+          goog.module('multiple.calls.c1');
+          return exports;
+        });
+        """);
 
     assertThat(metadataMap().getModulesByGoogNamespace().keySet())
         .containsExactly("multiple.calls.c0", "multiple.calls.c1");
@@ -252,16 +288,17 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testMultipleGoogLoadModules() {
     testSame(
-        lines(
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c0');",
-            "  return exports;",
-            "});",
-            "",
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c1');",
-            "  return exports;",
-            "});"));
+        """
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c0');
+          return exports;
+        });
+
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c1');
+          return exports;
+        });
+        """);
 
     assertThat(metadataMap().getModulesByGoogNamespace().keySet())
         .containsExactly("multiple.calls.c0", "multiple.calls.c1");
@@ -284,20 +321,21 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testBundleGoogLoadModuleAndProvides() {
     testSame(
-        lines(
-            "goog.provide('some.provide');",
-            "",
-            "goog.provide('some.other.provide');",
-            "",
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c0');",
-            "  return exports;",
-            "});",
-            "",
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c1');",
-            "  return exports;",
-            "});"));
+        """
+        goog.provide('some.provide');
+
+        goog.provide('some.other.provide');
+
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c0');
+          return exports;
+        });
+
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c1');
+          return exports;
+        });
+        """);
 
     assertThat(metadataMap().getModulesByGoogNamespace().keySet())
         .containsExactly(
@@ -324,23 +362,24 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testBundleGoogLoadModuleAndProvidesWithGoogDefined() {
     testSame(
-        lines(
-            "/** @provideGoog */",
-            "var goog = {};",
-            "",
-            "goog.provide('some.provide');",
-            "",
-            "goog.provide('some.other.provide');",
-            "",
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c0');",
-            "  return exports;",
-            "});",
-            "",
-            "goog.loadModule(function(exports) {",
-            "  goog.module('multiple.calls.c1');",
-            "  return exports;",
-            "});"));
+        """
+        /** @provideGoog */
+        var goog = {};
+
+        goog.provide('some.provide');
+
+        goog.provide('some.other.provide');
+
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c0');
+          return exports;
+        });
+
+        goog.loadModule(function(exports) {
+          goog.module('multiple.calls.c1');
+          return exports;
+        });
+        """);
 
     assertThat(metadataMap().getModulesByGoogNamespace().keySet())
         .containsExactly(
@@ -387,14 +426,15 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testEs6ModuleDeclareModuleIdImportedGoog() {
     testSame(
-        ImmutableList.of(
+        srcs(
             SourceFile.fromCode("goog.js", ""),
             SourceFile.fromCode(
                 "testcode",
-                lines(
-                    "import * as goog from './goog.js';",
-                    "export var x;",
-                    "goog.declareModuleId('my.module');"))));
+                """
+                import * as goog from './goog.js';
+                export var x;
+                goog.declareModuleId('my.module');
+                """)));
     assertThat(metadataMap().getModulesByGoogNamespace().keySet()).containsExactly("my.module");
     ModuleMetadata m = metadataMap().getModulesByGoogNamespace().get("my.module");
     assertThat(m.googNamespaces()).containsExactly("my.module");
@@ -413,7 +453,7 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testDuplicateProvides() {
     testError(
-        new String[] {"goog.provide('duplciated');", "goog.provide('duplciated');"},
+        srcs("goog.provide('duplciated');", "goog.provide('duplciated');"),
         ClosurePrimitiveErrors.DUPLICATE_NAMESPACE);
   }
 
@@ -427,61 +467,51 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testDuplicateProvideAndGoogModule() {
     testError(
-        new String[] {"goog.provide('duplciated');", "goog.module('duplciated');"},
-        ClosurePrimitiveErrors.DUPLICATE_NAMESPACE);
+        srcs("goog.provide('duplciated');", "goog.module('duplciated');"),
+        ClosurePrimitiveErrors.DUPLICATE_NAMESPACE_AND_MODULE);
     testError(
-        new String[] {"goog.module('duplciated');", "goog.provide('duplciated');"},
-        ClosurePrimitiveErrors.DUPLICATE_MODULE);
+        srcs("goog.module('duplciated');", "goog.provide('duplciated');"),
+        ClosurePrimitiveErrors.DUPLICATE_NAMESPACE_AND_MODULE);
   }
 
   @Test
   public void testDuplicateProvideAndEs6Module() {
     testError(
-        new String[] {
-          "goog.provide('duplciated');", "export {}; goog.declareModuleId('duplciated');"
-        },
-        ClosurePrimitiveErrors.DUPLICATE_NAMESPACE);
+        srcs("goog.provide('duplciated');", "export {}; goog.declareModuleId('duplciated');"),
+        ClosurePrimitiveErrors.DUPLICATE_NAMESPACE_AND_MODULE);
     testError(
-        new String[] {
-          "export {}; goog.declareModuleId('duplciated');", "goog.provide('duplciated');"
-        },
-        ClosurePrimitiveErrors.DUPLICATE_MODULE);
+        srcs("export {}; goog.declareModuleId('duplciated');", "goog.provide('duplciated');"),
+        ClosurePrimitiveErrors.DUPLICATE_NAMESPACE_AND_MODULE);
   }
 
   @Test
   public void testDuplicateGoogModules() {
     testError(
-        new String[] {"goog.module('duplciated');", "goog.module('duplciated');"},
+        srcs("goog.module('duplciated');", "goog.module('duplciated');"),
         ClosurePrimitiveErrors.DUPLICATE_MODULE);
   }
 
   @Test
   public void testDuplicateGoogAndEs6Module() {
     testError(
-        new String[] {
-          "goog.module('duplciated');", "export {}; goog.declareModuleId('duplciated');"
-        },
+        srcs("goog.module('duplciated');", "export {}; goog.declareModuleId('duplciated');"),
         ClosurePrimitiveErrors.DUPLICATE_MODULE);
     testError(
-        new String[] {
-          "export {}; goog.declareModuleId('duplciated');", "goog.module('duplciated');"
-        },
+        srcs("export {}; goog.declareModuleId('duplciated');", "goog.module('duplciated');"),
         ClosurePrimitiveErrors.DUPLICATE_MODULE);
   }
 
   @Test
   public void testDuplicatEs6Modules() {
     testError(
-        new String[] {
-          "export {}; goog.declareModuleId('duplciated');",
-          "export {}; goog.declareModuleId('duplciated');"
-        },
+        srcs(
+            "export {}; goog.declareModuleId('duplciated');",
+            "export {}; goog.declareModuleId('duplciated');"),
         ClosurePrimitiveErrors.DUPLICATE_MODULE);
     testError(
-        new String[] {
-          "export {}; goog.declareModuleId('duplciated');",
-          "export {}; goog.declareModuleId('duplciated');"
-        },
+        srcs(
+            "export {}; goog.declareModuleId('duplciated');",
+            "export {}; goog.declareModuleId('duplciated');"),
         ClosurePrimitiveErrors.DUPLICATE_MODULE);
   }
 
@@ -494,11 +524,12 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
     // duplicate of provide in earlier file
     test(
         srcs("goog.provide('duplicated');", "goog.module('duplicated')"),
-        error(ClosurePrimitiveErrors.DUPLICATE_NAMESPACE).withMessageContaining("input0"));
+        error(ClosurePrimitiveErrors.DUPLICATE_NAMESPACE_AND_MODULE)
+            .withMessageContaining("testcode0"));
     // duplicate of module in earlier file
     test(
         srcs("goog.module('duplicated');", "goog.module('duplicated')"),
-        error(ClosurePrimitiveErrors.DUPLICATE_MODULE).withMessageContaining("input0"));
+        error(ClosurePrimitiveErrors.DUPLICATE_MODULE).withMessageContaining("testcode0"));
   }
 
   @Test
@@ -510,7 +541,7 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
 
   @Test
   public void testUsesGlobalClosureNoFunctionCall() {
-    testSame("var b = goog.nullFunction;");
+    testSame("var b = goog.isArray;");
     ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
     assertThat(m.usesClosure()).isTrue();
   }
@@ -532,7 +563,7 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
   @Test
   public void testGoogInOtherScriptGoogIsClosure() {
     testSame(srcs("/** @provideGoog */ var goog = {};", "goog.isArray(foo);"));
-    ModuleMetadata m = metadataMap().getModulesByPath().get("input1");
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode1");
     assertThat(m.usesClosure()).isTrue();
   }
 
@@ -548,6 +579,40 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
     testSame("goog.requireType('my.Type');");
     ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
     assertThat(m.weaklyRequiredGoogNamespaces()).containsExactly("my.Type");
+  }
+
+  @Test
+  public void testRequireDynamic() {
+    testSame("async function test() {await goog.requireDynamic('my.Type');}");
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.dynamicallyRequiredGoogNamespaces()).containsExactly("my.Type");
+  }
+
+  @Test
+  public void testRequireDynamicWithIllegalArg() {
+    testError(
+        "async function test() {await goog.requireDynamic('my.Type','extra.Type');}",
+        GatherModuleMetadata.INVALID_REQUIRE_DYNAMIC);
+    testError(
+        "async function test() {await goog.requireDynamic(42);}",
+        GatherModuleMetadata.INVALID_REQUIRE_DYNAMIC);
+  }
+
+  @Test
+  public void testMaybeRequire() {
+    testSame("goog.maybeRequireFrameworkInternalOnlyDoNotCallOrElse('my.Type')");
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.maybeRequiredGoogNamespaces()).containsExactly("my.Type");
+  }
+
+  @Test
+  public void testMaybeRequireWithIllegalArg() {
+    testError(
+        "goog.maybeRequireFrameworkInternalOnlyDoNotCallOrElse('my.Type','extra.Type');",
+        GatherModuleMetadata.INVALID_MAYBE_REQUIRE);
+    testError(
+        "goog.maybeRequireFrameworkInternalOnlyDoNotCallOrElse(42);",
+        GatherModuleMetadata.INVALID_MAYBE_REQUIRE);
   }
 
   @Test
@@ -680,5 +745,139 @@ public final class GatherModuleMetadataTest extends CompilerTestCase {
         .isEqualTo(ModuleType.ES6_MODULE);
     assertThat(metadataMap().getModulesByPath().get("notimported.js").moduleType())
         .isEqualTo(ModuleType.SCRIPT);
+  }
+
+  @Test
+  public void testDynamicImport() {
+    test(
+        srcs(
+            SourceFile.fromCode("imported.js", "export default function() {};"),
+            SourceFile.fromCode("script.js", "import('./imported.js')")));
+
+    ModuleMetadata m = metadataMap().getModulesByPath().get("script.js");
+    assertThat(m.isNonProvideScript()).isTrue();
+    assertThat(m.es6ImportSpecifiers()).containsExactly("./imported.js");
+  }
+
+  @Test
+  public void testReadToggle() {
+    test(
+        srcs(
+            SourceFile.fromCode(
+                "foo$2etoggles.js",
+                """
+                goog.module('foo$2etoggles');
+                exports.TOGGLE_foo = goog.readToggleInternalDoNotCallDirectly('foo');
+                exports.TOGGLE_bar = goog.readToggleInternalDoNotCallDirectly('bar');
+                exports.TOGGLE_b_a_z = goog.readToggleInternalDoNotCallDirectly('b_a_z');
+                """)));
+    ModuleMetadata m = metadataMap().getModulesByPath().get("foo$2etoggles.js");
+    assertThat(m.readToggles()).isEmpty();
+  }
+
+  @Test
+  public void testToggleModuleImportDestructured() {
+    testSame("const {TOGGLE_foo, TOGGLE_b_a_z} = goog.require('foo$2etoggles');");
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.readToggles()).containsExactly("foo", "b_a_z");
+  }
+
+  @Test
+  public void testToggleModuleImportDestructuredAliased() {
+    testSame("const {TOGGLE_bar: baz} = goog.require('foo$2etoggles');");
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.readToggles()).containsExactly("bar");
+  }
+
+  @Test
+  public void testToggleModuleImportAsModule() {
+    testSame(
+        """
+        const toggles = goog.require('foo$2etoggles');
+        function foo() {
+          console.log(toggles.TOGGLE_foo);
+          console.log(toggles.TOGGLE_b_a_z);
+        }
+        """);
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.readToggles()).containsExactly("foo", "b_a_z");
+  }
+
+  @Test
+  public void testToggleModuleGoogModuleGet() {
+    testSame(
+        """
+        goog.provide('foo.soy.gencode');
+        goog.require('foo$2etoggles');
+        function foo() {
+          console.log(goog.module.get('foo$2etoggles').TOGGLE_foo);
+          console.log(goog.module.get('bar').TOGGLE_bar);
+        }
+        """);
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.readToggles()).containsExactly("foo");
+  }
+
+  @Test
+  public void testToggleModulegoogModuleGetInvalidUsage() {
+    test(
+        srcs(
+            """
+            goog.provide('foo.soy.gencode');
+            goog.require('foo$2etoggles');
+            const toggles = goog.module.get('foo$2etoggles');
+            """),
+        error(GatherModuleMetadata.INVALID_TOGGLE_USAGE));
+  }
+
+  @Test
+  public void testToggleModuleImportAsSideEffect() {
+    test(
+        srcs("goog.require('foo$2etoggles');"), //
+        error(GatherModuleMetadata.INVALID_TOGGLE_USAGE));
+  }
+
+  @Test
+  public void testToggleModuleImportDestructuredWithInvalidName() {
+    test(
+        srcs("const {foo} = goog.require('foo$2etoggles');"),
+        error(GatherModuleMetadata.INVALID_TOGGLE_USAGE));
+  }
+
+  @Test
+  public void testToggleModuleImportAsModuleWithInvalidPropertyName() {
+    test(
+        srcs(
+            """
+            const foo = goog.require('foo$2etoggles');
+            console.log(foo.bar);
+            """),
+        error(GatherModuleMetadata.INVALID_TOGGLE_USAGE));
+  }
+
+  @Test
+  public void testToggleModuleInvalidModuleUsage() {
+    test(
+        srcs(
+            """
+            const foo = goog.require('foo$2etoggles');
+            console.log(foo);
+            """),
+        error(GatherModuleMetadata.INVALID_TOGGLE_USAGE));
+  }
+
+  @Test
+  public void testToggleModuleIgnoreShadowedUsage() {
+    testSame(
+        """
+        const toggles = goog.require('foo$2etoggles');
+        function foo() {
+          const toggles = {};
+          console.log(toggles.foo)
+          console.log(toggles.TOGGLE_bar)
+        }
+        """);
+    ModuleMetadata m = metadataMap().getModulesByPath().get("testcode");
+    assertThat(m.readToggles()).isEmpty();
   }
 }

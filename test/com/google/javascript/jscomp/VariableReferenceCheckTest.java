@@ -24,7 +24,7 @@ import static com.google.javascript.jscomp.VariableReferenceCheck.REASSIGNED_CON
 import static com.google.javascript.jscomp.VariableReferenceCheck.REDECLARED_VARIABLE;
 import static com.google.javascript.jscomp.VariableReferenceCheck.REDECLARED_VARIABLE_ERROR;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.deps.ModuleLoader;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -32,16 +32,13 @@ import org.junit.runners.JUnit4;
 /**
  * Test that warnings are generated in appropriate cases and appropriate cases only by
  * VariableReferenceCheck
- *
  */
 @RunWith(JUnit4.class)
 public final class VariableReferenceCheckTest extends CompilerTestCase {
 
-  private static final String LET_RUN =
-      "let a = 1; let b = 2; let c = a + b, d = c;";
+  private static final String LET_RUN = "let a = 1; let b = 2; let c = a + b, d = c;";
 
-  private static final String VARIABLE_RUN =
-      "var a = 1; var b = 2; var c = a + b, d = c;";
+  private static final String VARIABLE_RUN = "var a = 1; var b = 2; var c = a + b, d = c;";
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
@@ -52,7 +49,6 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testWithImportMeta() {
     // just to confirm that presence of import.meta does not cause a compiler crash
-    setLanguage(LanguageMode.UNSUPPORTED, LanguageMode.UNSUPPORTED);
 
     testSame("export function g() { return import.meta; }");
   }
@@ -60,42 +56,44 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testDoubleTryCatch() {
     testSame(
-        lines(
-            "function g() {",
-            "  return f;",
-            "",
-            "  function f() {",
-            "    try {",
-            "    } catch (e) {",
-            "      alert(e);",
-            "    }",
-            "    try {",
-            "    } catch (e) {",
-            "      alert(e);",
-            "    }",
-            "  }",
-            "}"));
+        """
+        function g() {
+          return f;
+
+          function f() {
+            try {
+            } catch (e) {
+              alert(e);
+            }
+            try {
+            } catch (e) {
+              alert(e);
+            }
+          }
+        }
+        """);
   }
 
   @Test
   public void testDoubleTryCatch_withES6Modules() {
     testSame(
-        lines(
-            "export",
-            "function g() {",
-            "  return f;",
-            "",
-            "  function f() {",
-            "    try {",
-            "    } catch (e) {",
-            "      alert(e);",
-            "    }",
-            "    try {",
-            "    } catch (e) {",
-            "      alert(e);",
-            "    }",
-            "  }",
-            "}"));
+        """
+        export
+        function g() {
+          return f;
+
+          function f() {
+            try {
+            } catch (e) {
+              alert(e);
+            }
+            try {
+            } catch (e) {
+              alert(e);
+            }
+          }
+        }
+        """);
   }
 
   @Test
@@ -129,8 +127,7 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
   @Test
   public void testCorrectRedeclare() {
-    assertNoWarning(
-        "function f() { if (1) { var a = 2; } else { var a = 3; } }");
+    assertNoWarning("function f() { if (1) { var a = 2; } else { var a = 3; } }");
   }
 
   @Test
@@ -183,8 +180,7 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
   @Test
   public void testIssue166a() {
-    assertRedeclareError(
-        "try { throw 1 } catch(e) { /** @suppress {duplicate} */ var e=2 }");
+    assertRedeclareError("try { throw 1 } catch(e) { /** @suppress {duplicate} */ var e=2 }");
   }
 
   @Test
@@ -196,15 +192,16 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testIssue166b_withES6Modules() {
     assertRedeclareError(
-        lines(
-            "export function a() {",
-            "  try {",
-            "    throw 1",
-            "  } catch (e) {",
-            "      /** @suppress {duplicate} */",
-            "      var e = 2",
-            "  }",
-            "};"));
+        """
+        export function a() {
+          try {
+            throw 1
+          } catch (e) {
+              /** @suppress {duplicate} */
+              var e = 2
+          }
+        };
+        """);
   }
 
   @Test
@@ -216,12 +213,13 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testIssue166d() {
     assertRedeclareError(
-        lines(
-            "function a() {",
-            "  var e = 0; try { throw 1 } catch(e) {",
-            "    /** @suppress {duplicate} */ var e = 2;",
-            "  }",
-            "};"));
+        """
+        function a() {
+          var e = 0; try { throw 1 } catch(e) {
+            /** @suppress {duplicate} */ var e = 2;
+          }
+        };
+        """);
   }
 
   @Test
@@ -237,11 +235,12 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testIssue166f() {
     testSame(
-        lines(
-            "function a() {",
-            "  var e = 2;",
-            "  try { throw 1 } catch(e) {}",
-            "}"));
+        """
+        function a() {
+          var e = 2;
+          try { throw 1 } catch(e) {}
+        }
+        """);
   }
 
   @Test
@@ -259,6 +258,14 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
     assertNoWarning("var goog = goog || {}");
     assertNoWarning("var google = google || window['google'] || {}");
     assertNoWarning("function f() { a = 2; } var a = 2;");
+  }
+
+  @Test
+  public void testCorrectEarlyReferenceLogicalAssignment() {
+    // These patterns are normalized away
+    assertNoWarning("function f() { a ||= {}; } let a;");
+    assertNoWarning("function f() { a &&= {}; } let a;");
+    assertNoWarning("function f() { a ??= {}; } let a;");
   }
 
   @Test
@@ -426,9 +433,11 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testSuppressDuplicate_fileoverview() {
     String code =
-        "/** @fileoverview @suppress {duplicate} */\n"
-            + "/** @type {?} */ var google;\n"
-            + " var google";
+        """
+        /** @fileoverview @suppress {duplicate} */
+        /** @type {?} */ var google;
+         var google
+        """;
     testSame(code);
   }
 
@@ -449,17 +458,21 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
   @Test
   public void testImportStar() {
-    testSame("import * as ns from './foo.js'");
+    testSame(
+        srcs(
+            SourceFile.fromCode("foo.js", ""),
+            SourceFile.fromCode("bar.js", "import * as ns from './foo.js'")));
   }
 
   @Test
   public void testUnusedCompoundAssign_withES6Modules() {
     assertNoWarning(
-        lines(
-            "export function f(elapsed) {",
-            "  let fakeMs = 0;",
-            "  stubs.replace(goog, 'now', () => fakeMs -= elapsed);",
-            "}"));
+        """
+        export function f(elapsed) {
+          let fakeMs = 0;
+          stubs.replace(Date, 'now', () => fakeMs -= elapsed);
+        }
+        """);
   }
 
   @Test
@@ -475,21 +488,38 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   }
 
   @Test
+  public void testGoogProvide_ok() {
+    assertNoWarning("goog.provide('foo');");
+    assertNoWarning("goog.provide('foo'); foo = 0;");
+    assertNoWarning("goog.provide('foo'); var foo = 0;");
+    assertNoWarning("goog.provide('foo.bar');");
+    assertNoWarning("goog.provide('foo.bar'); foo.bar = 0;");
+  }
+
+  @Test
   public void testUndeclaredLet() {
     assertEarlyReferenceError("if (a) { x = 3; let x;}");
 
-    assertEarlyReferenceError(lines(
-        "var x = 1;",
-        "if (true) {",
-        "  x++;",
-        "  let x = 3;",
-        "}"));
+    assertEarlyReferenceError(
+        """
+        var x = 1;
+        if (true) {
+          x++;
+          let x = 3;
+        }
+        """);
   }
 
   @Test
   public void testUndeclaredLet_withES6Modules() {
     assertEarlyReferenceError(
-        lines("export var x = 1;", "if (true) {", "  x++;", "  let x = 3;", "}"));
+        """
+        export var x = 1;
+        if (true) {
+          x++;
+          let x = 3;
+        }
+        """);
   }
 
   @Test
@@ -498,12 +528,14 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
     // For the following, IE 11 gives "Assignment to const", but technically
     // they are also undeclared references, which get caught in the first place.
-    assertEarlyReferenceError(lines(
-        "var x = 1;",
-        "if (true) {",
-        "  x++;",
-        "  const x = 3;",
-        "}"));
+    assertEarlyReferenceError(
+        """
+        var x = 1;
+        if (true) {
+          x++;
+          const x = 3;
+        }
+        """);
 
     assertEarlyReferenceError("a = 1; const a = 0;");
     assertEarlyReferenceError("a++; const a = 0;");
@@ -515,19 +547,33 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
     assertRedeclareError("if (a) { let x; let x;}");
 
-    assertRedeclareError(lines(
-        "function f() {",
-        "  let x;",
-        "  if (a) {",
-        "    var x;",
-        "  }",
-        "}"));
+    assertRedeclareError(
+        """
+        function f() {
+          let x;
+          if (a) {
+            var x;
+          }
+        }
+        """);
 
     assertNoWarning(
-        lines("function f() {", "  if (a) {", "    let x;", "  }", "  var x;", "}"));
+        """
+        function f() {
+          if (a) {
+            let x;
+          }
+          var x;
+        }
+        """);
 
     assertNoWarning(
-        lines("function f() {", "  if (a) { let x; }", "  if (b) { var x; }", "}"));
+        """
+        function f() {
+          if (a) { let x; }
+          if (b) { var x; }
+        }
+        """);
 
     assertRedeclareError("let x; var x;");
     assertRedeclareError("var x; let x;");
@@ -537,12 +583,24 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testIllegalLetShadowing_withES6Modules() {
     assertRedeclareError(
-        lines(
-            "export function f() {", "  let x;", "  if (a) {", "    var x;", "  }", "}"));
+        """
+        export function f() {
+          let x;
+          if (a) {
+            var x;
+          }
+        }
+        """);
 
     assertNoWarning(
-        lines(
-            "export function f() {", "  if (a) {", "    let x;", "  }", "  var x;", "}"));
+        """
+        export function f() {
+          if (a) {
+            let x;
+          }
+          var x;
+        }
+        """);
 
     assertRedeclareError("export let x; var x;");
   }
@@ -575,20 +633,28 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   public void testIllegalConstShadowing() {
     assertRedeclareError("if (a) { const x = 3; var x;}");
 
-    assertRedeclareError(lines(
-        "function f() {",
-        "  const x = 3;",
-        "  if (a) {",
-        "    var x;",
-        "  }",
-        "}"));
+    assertRedeclareError(
+        """
+        function f() {
+          const x = 3;
+          if (a) {
+            var x;
+          }
+        }
+        """);
   }
 
   @Test
   public void testIllegalConstShadowing_withES6Modules() {
     assertRedeclareError(
-        lines(
-            "export function f() {", "  const x = 3;", "  if (a) {", "    var x;", "  }", "}"));
+        """
+        export function f() {
+          const x = 3;
+          if (a) {
+            var x;
+          }
+        }
+        """);
   }
 
   @Test
@@ -601,7 +667,12 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
     assertNoWarning("function f() { var x; if (a) { let x; }}");
 
     assertNoWarning(
-        lines("function f() {", "  if (a) { var x; }", "  if (b) { let x; }", "}"));
+        """
+        function f() {
+          if (a) { var x; }
+          if (b) { let x; }
+        }
+        """);
   }
 
   @Test
@@ -622,11 +693,12 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testVarShadowing_withES6Modules04() {
     assertNoWarning(
-        lines(
-            "function f() {",
-            "  if (a) { var x; }",
-            "  if (b) { let x; }",
-            "}"));
+        """
+        function f() {
+          if (a) { var x; }
+          if (b) { let x; }
+        }
+        """);
   }
 
   @Test
@@ -644,14 +716,21 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
     assertRedeclare("function f(x=3) { function x() {} }");
     assertNoWarning("function f(x) { if (true) { let x; } }");
     assertNoWarning(
-        lines(
-            "function outer(x) {", "  function inner() {", "    let x = 1;", "  }", "}"));
-    assertNoWarning(lines(
-        "function outer(x) {",
-        "  function inner() {",
-        "    var x = 1;",
-        "  }",
-        "}"));
+        """
+        function outer(x) {
+          function inner() {
+            let x = 1;
+          }
+        }
+        """);
+    assertNoWarning(
+        """
+        function outer(x) {
+          function inner() {
+            var x = 1;
+          }
+        }
+        """);
 
     assertRedeclare("function f({a, b}) { var a = 2 }");
     assertRedeclare("function f({a, b}) { if (!a) var a = 6; }");
@@ -668,14 +747,27 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
     assertNoWarning("export function f(...x) {}");
 
     assertNoWarning(
-        lines(
-            "export function outer(x) {", "  function inner() {", "    var x = 1;", "  }", "}"));
+        """
+        export function outer(x) {
+          function inner() {
+            var x = 1;
+          }
+        }
+        """);
   }
 
   @Test
   public void testReassignedConst() {
     assertReassign("const a = 0; a = 1;");
     assertReassign("const a = 0; a++;");
+  }
+
+  @Test
+  public void testLogicalReassignedConst() {
+    // These patterns are normalized away
+    assertReassign("const a = 0; a ||= 1;");
+    assertReassign("const a = 1; a &&= 1;");
+    assertReassign("const a = null; a ??= 1;");
   }
 
   @Test
@@ -695,20 +787,18 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testFunctionHoistingRedeclaration1() {
     String[] js = {
-      "var x;",
-      "function x() {}",
+      "var x;", "function x() {}",
     };
-    String message = "Variable x declared more than once. First occurrence: input0";
+    String message = "Variable x declared more than once. First occurrence: testcode0:1:4";
     testError(srcs(js), error(VarCheck.VAR_MULTIPLY_DECLARED_ERROR).withMessage(message));
   }
 
   @Test
   public void testFunctionHoistingRedeclaration2() {
     String[] js = {
-      "function x() {}",
-      "var x;",
+      "function x() {}", "var x;",
     };
-    String message = "Variable x declared more than once. First occurrence: input0";
+    String message = "Variable x declared more than once. First occurrence: testcode0:1:9";
     testError(srcs(js), error(VarCheck.VAR_MULTIPLY_DECLARED_ERROR).withMessage(message));
   }
 
@@ -730,61 +820,65 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testTryCatch() {
     assertRedeclareError(
-        lines(
-            "function f() {",
-            "  try {",
-            "    let e = 0;",
-            "    if (true) {",
-            "      let e = 1;",
-            "    }",
-            "  } catch (e) {",
-            "    let e;",
-            "  }",
-            "}"));
+        """
+        function f() {
+          try {
+            let e = 0;
+            if (true) {
+              let e = 1;
+            }
+          } catch (e) {
+            let e;
+          }
+        }
+        """);
 
     assertRedeclareError(
-        lines(
-            "function f() {",
-            "  try {",
-            "    let e = 0;",
-            "    if (true) {",
-            "      let e = 1;",
-            "    }",
-            "  } catch (e) {",
-            "      var e;",
-            "  }",
-            "}"));
+        """
+        function f() {
+          try {
+            let e = 0;
+            if (true) {
+              let e = 1;
+            }
+          } catch (e) {
+              var e;
+          }
+        }
+        """);
 
     assertRedeclareError(
-        lines(
-            "function f() {",
-            "  try {",
-            "    let e = 0;",
-            "    if (true) {",
-            "      let e = 1;",
-            "    }",
-            "  } catch (e) {",
-            "    function e() {",
-            "      var e;",
-            "    }",
-            "  }",
-            "}"));
+        """
+        function f() {
+          try {
+            let e = 0;
+            if (true) {
+              let e = 1;
+            }
+          } catch (e) {
+            function e() {
+              var e;
+            }
+          }
+        }
+        """);
   }
 
   @Test
   public void testTryCatch_withES6Modules() {
     assertRedeclareError(
-        lines(
-            "export function f() {",
-            "  try {",
-            "    let e = 0;",
-            "    if (true) {",
-            "      let e = 1;",
-            "    }",
-            "  } catch (e) {",
-            "    let e;",
-            "  }",
-            "}"));
+        """
+        export function f() {
+          try {
+            let e = 0;
+            if (true) {
+              let e = 1;
+            }
+          } catch (e) {
+            let e;
+          }
+        }
+        """);
   }
 
   @Test
@@ -815,6 +909,21 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testClassExtend_withES6Modules() {
     assertNoWarning("export class A {} class C extends A {} C = class extends A {}");
+  }
+
+  /** Variable reference before declaration error should not appear for non-static public fields */
+  @Test
+  public void testNonStaticPublicFields() {
+    assertNoWarning("class Foo { x = bar;} let bar = 1;");
+    assertNoWarning("class Foo { x = Enum.X; } const Enum = { X: 1 }");
+    assertNoWarning("class Foo { x = new Bar(); } class Bar {}");
+  }
+
+  @Test
+  public void testStaticPublicFields() {
+    assertEarlyReferenceError("class Bar { static x = y; } const y = 3;");
+    assertEarlyReferenceError("class Foo { static x = new Bar(); } class Bar {}");
+    assertEarlyReferenceError("class Bar { static x = Enum.A; } let Enum = { A: 'str' }");
   }
 
   @Test
@@ -868,7 +977,6 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
   @Test
   public void testObjectPatternRest() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2018);
     assertNoWarning("var {a: b, ...r} = {a: 1};");
     assertNoWarning("var {a: b, ...r} = {};");
     assertNoWarning("var {a, ...r} = {a: 1};");
@@ -904,9 +1012,11 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
   @Test
   public void testDefaultParam() {
     assertEarlyReferenceError("function f(x=a) { let a; }");
-    assertEarlyReferenceError(lines(
-        "function f(x=a) { let a; }",
-        "function g(x=1) { var a; }"));
+    assertEarlyReferenceError(
+        """
+        function f(x=a) { let a; }
+        function g(x=1) { var a; }
+        """);
     assertEarlyReferenceError("function f(x=a) { var a; }");
     assertEarlyReferenceError("function f(x=a()) { function a() {} }");
     assertEarlyReferenceError("function f(x=[a]) { var a; }");
@@ -933,49 +1043,79 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
   @Test
   public void testDestructuring() {
-    testSame(lines(
-        "function f() { ",
-        "  var obj = {a:1, b:2}; ",
-        "  var {a:c, b:d} = obj; ",
-        "}"));
-    testSame(lines(
-        "function f() { ",
-        "  var obj = {a:1, b:2}; ",
-        "  var {a, b} = obj; ",
-        "}"));
+    testSame(
+        """
+        function f() {
+          var obj = {a:1, b:2};
+          var {a:c, b:d} = obj;
+        }
+        """);
+    testSame(
+        """
+        function f() {
+          var obj = {a:1, b:2};
+          var {a, b} = obj;
+        }
+        """);
 
     assertRedeclare(
-        lines(
-            "function f() { ",
-            "  var obj = {a:1, b:2}; ",
-            "  var {a:c, b:d} = obj; ",
-            "  var c = b;",
-            "}"));
+        """
+        function f() {
+          var obj = {a:1, b:2};
+          var {a:c, b:d} = obj;
+          var c = b;
+        }
+        """);
 
     assertEarlyReferenceWarning(
-        lines("function f() { ", "  var {a:c, b:d} = obj;", "  var obj = {a:1, b:2};", "}"));
+        """
+        function f() {
+          var {a:c, b:d} = obj;
+          var obj = {a:1, b:2};
+        }
+        """);
     assertEarlyReferenceWarning(
-        lines("function f() { ", "  var {a, b} = obj;", "  var obj = {a:1, b:2};", "}"));
+        """
+        function f() {
+          var {a, b} = obj;
+          var obj = {a:1, b:2};
+        }
+        """);
     assertEarlyReferenceWarning(
-        lines("function f() { ", "  var e = c;", "  var {a:c, b:d} = {a:1, b:2};", "}"));
+        """
+        function f() {
+          var e = c;
+          var {a:c, b:d} = {a:1, b:2};
+        }
+        """);
   }
 
   @Test
   public void testDestructuring_withES6Modules() {
     testSame(
-        lines(
-            "export function f() { ", "  var obj = {a:1, b:2}; ", "  var {a:c, b:d} = obj; ", "}"));
+        """
+        export function f() {
+          var obj = {a:1, b:2};
+          var {a:c, b:d} = obj;
+        }
+        """);
 
     assertRedeclare(
-        lines(
-            "export function f() { ",
-            "  var obj = {a:1, b:2}; ",
-            "  var {a:c, b:d} = obj; ",
-            "  var c = b;",
-            "}"));
+        """
+        export function f() {
+          var obj = {a:1, b:2};
+          var {a:c, b:d} = obj;
+          var c = b;
+        }
+        """);
 
     assertEarlyReferenceWarning(
-        lines("export function f() { ", "  var {a:c, b:d} = obj;", "  var obj = {a:1, b:2};", "}"));
+        """
+        export function f() {
+          var {a:c, b:d} = obj;
+          var obj = {a:1, b:2};
+        }
+        """);
   }
 
   @Test
@@ -1027,6 +1167,7 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
 
   @Test
   public void testRedeclareVariableFromImport() {
+    ignoreWarnings(ModuleLoader.INVALID_MODULE_PATH);
     assertRedeclareError("import {x} from 'whatever'; let x = 0;");
     assertRedeclareError("import {x} from 'whatever'; const x = 0;");
     assertRedeclareError("import {x} from 'whatever'; var x = 0;");
@@ -1075,9 +1216,21 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
         EARLY_EXPORTS_REFERENCE);
   }
 
-  /**
-   * Expects the JS to generate one bad-read error.
-   */
+  @Test
+  public void testReferenceInSwitchCondition_shadowedInSwitchBody() {
+    assertNoWarning(
+        """
+        const x = 0;
+        switch (x) {
+          case 0:
+          let x;
+          break;
+          default: break;
+        }
+        """);
+  }
+
+  /** Expects the JS to generate one bad-read error. */
   private void assertRedeclare(String js) {
     testWarning(js, REDECLARED_VARIABLE);
   }
@@ -1103,9 +1256,7 @@ public final class VariableReferenceCheckTest extends CompilerTestCase {
     testError(js, EARLY_REFERENCE_ERROR);
   }
 
-  /**
-   * Expects the JS to generate no errors or warnings.
-   */
+  /** Expects the JS to generate no errors or warnings. */
   private void assertNoWarning(String js) {
     testSame(js);
   }

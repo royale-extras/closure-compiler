@@ -16,8 +16,10 @@
 
 package com.google.javascript.jscomp;
 
+import org.jspecify.annotations.Nullable;
+
 /** A warnings guard that suppresses some warnings incompatible with J2CL. */
-public class J2clSuppressWarningsGuard extends DiagnosticGroupWarningsGuard {
+public final class J2clSuppressWarningsGuard extends WarningsGuard {
 
   // TODO(b/128554878): Cleanup and document all file level suppressions for J2CL generated code.
   private static final DiagnosticGroup DEFAULT_J2CL_SUPRRESIONS =
@@ -27,9 +29,19 @@ public class J2clSuppressWarningsGuard extends DiagnosticGroupWarningsGuard {
           // code directly points to declaration and this is also required with collapse properties
           // pass, which does not support dynamic dispatch for static methods.
           DiagnosticGroups.CHECK_STATIC_OVERRIDES,
+          // Do not warn on valid Java constructs like "if(false) {...}" and other situations that
+          // may arise from transormation of complex Kotlin constructs.
           DiagnosticGroups.CHECK_USELESS_CODE,
           DiagnosticGroups.CONST,
           DiagnosticGroups.EXTRA_REQUIRE,
+          // Kotlin allows provably invalid casts so long as it's via a safe cast. This causes J2CL
+          // to generate code of the form:
+          //   Foo.$isInstance(value) ? /**@type {!Foo}*/ (value) : null
+          // However, if value is obviously never a instance of Foo then this will cause invalid
+          // cast error. At runtime it's guarded so it would be safe regardless.
+          // This also suppresses casts from non-lambda JsFunction implementations to functions.
+          // This particular feature is deprecated and will be removed (b/159954752).
+          DiagnosticGroups.INVALID_CASTS,
           DiagnosticGroups.LATE_PROVIDE,
           DiagnosticGroups.MISSING_OVERRIDE,
           DiagnosticGroups.MISSING_REQUIRE,
@@ -40,21 +52,13 @@ public class J2clSuppressWarningsGuard extends DiagnosticGroupWarningsGuard {
           DiagnosticGroups.STRICT_MISSING_PROPERTIES,
           DiagnosticGroups.forName("transitionalSuspiciousCodeWarnings"));
 
-  public J2clSuppressWarningsGuard() {
-    super(DEFAULT_J2CL_SUPRRESIONS, CheckLevel.OFF);
-  }
-
   @Override
-  public boolean disables(DiagnosticGroup type) {
-    // Do not suppress all warnings of any type.
-    return false;
-  }
+  public @Nullable CheckLevel level(JSError error) {
+    if (error.sourceName() == null || !error.sourceName().endsWith(".java.js")) {
+      return null;
+    }
 
-  @Override
-  public CheckLevel level(JSError error) {
-    boolean isJ2clSource =
-        error.getSourceName() != null && error.getSourceName().endsWith(".java.js");
-    return isJ2clSource ? super.level(error) /* suppress */ : null /* proceed */;
+    return DEFAULT_J2CL_SUPRRESIONS.matches(error) ? CheckLevel.OFF : null;
   }
 
   @Override

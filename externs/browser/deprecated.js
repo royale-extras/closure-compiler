@@ -34,14 +34,36 @@ function XSLTProcessor() {}
  * @return {undefined}
  * @deprecated
  */
-XSLTProcessor.importStylesheet = function(styleSheet) {};
+XSLTProcessor.prototype.importStylesheet = function(styleSheet) {};
 
 /**
  * @param {Node} source
  * @return {Document}
  * @deprecated
  */
-XSLTProcessor.transformToDocument = function(source) {};
+XSLTProcessor.prototype.transformToDocument = function(source) {};
+
+/**
+ * @param {Node} source
+ * @param {Document} document
+ * @return {DocumentFragment}
+ * @deprecated
+ */
+XSLTProcessor.prototype.transformToFragment = function(source, document) {};
+
+/**
+ * @return {undefined}
+ */
+XSLTProcessor.prototype.clearParameters = function() {};
+
+
+/**
+ * @param {string|null} namespaceURI
+ * @param {string} localName
+ * @param {*} value
+ * @return {undefined}
+ */
+XSLTProcessor.prototype.setParameter = function(namespaceURI, localName, value) {};
 
 // The "methods" object is a place to hang arbitrary external
 // properties. It is a throwback to pre-typed days, and should

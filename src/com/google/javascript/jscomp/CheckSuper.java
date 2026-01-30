@@ -19,10 +19,10 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayDeque;
-import java.util.Deque;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Check for errors related to the `super` keyword.
@@ -38,7 +38,7 @@ import javax.annotation.Nullable;
  * <p>Unfortunately, this class is used with {@code CombinedCompilerPass}, which will pass instances
  * of it directly to {@code NodeTraversal.traverse()}.
  */
-final class CheckSuper implements HotSwapCompilerPass, NodeTraversal.Callback {
+final class CheckSuper implements CompilerPass, NodeTraversal.Callback {
   static final DiagnosticType MISSING_CALL_TO_SUPER =
       DiagnosticType.error("JSC_MISSING_CALL_TO_SUPER", "constructor is missing a call to super()");
 
@@ -87,31 +87,46 @@ final class CheckSuper implements HotSwapCompilerPass, NodeTraversal.Callback {
 
   @Override
   public void process(Node externs, Node root) {
+
     NodeTraversal.traverse(compiler, root, this);
+    checkState(this.contextStack.isEmpty(), ImmutableList.of(this.contextStack));
   }
 
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
-  }
-
-  private final Deque<Context> contextStack = new ArrayDeque<>();
+  private final ArrayDeque<Context> contextStack = new ArrayDeque<>();
 
   @Override
-  public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
-    if (contextStack.isEmpty()) {
-      // should only happen on very first call to shouldTraverse on root node or hotswapped
-      // script.
-      checkState(n.isRoot() || n.isScript(), n);
-      contextStack.push(new SuperNotAllowedContext(n));
+  public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
+    switch (n.getToken()) {
+      case ROOT:
+        checkState(this.contextStack.isEmpty());
+        this.contextStack.push(new SuperNotAllowedContext(n));
+        break;
+
+      case FUNCTION:
+        {
+          Context currentContext = contextStack.peek();
+          Context newContext = getContextForFunctionNode(currentContext, n);
+          if (newContext != currentContext) {
+            this.contextStack.push(newContext);
+          }
+        }
+        break;
+      case MEMBER_FIELD_DEF:
+        Context fieldContext = createMemberFieldDefContext(n);
+        this.contextStack.push(fieldContext);
+        break;
+      case BLOCK: // For class static blocks
+        if (NodeUtil.isClassStaticBlock(n)) {
+          Context newContext = createStaticBlockContext(n);
+          this.contextStack.push(newContext);
+        }
+        break;
+
+      case CLASS: // TODO (user): For class fields
+      default:
+        break;
     }
-    if (n.isFunction()) {
-      Context currentContext = contextStack.peek();
-      Context newContext = getContextForFunctionNode(currentContext, n);
-      if (newContext != currentContext) {
-        contextStack.push(newContext);
-      }
-    }
+
     return true;
   }
 
@@ -134,23 +149,35 @@ final class CheckSuper implements HotSwapCompilerPass, NodeTraversal.Callback {
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     Context currentContext = checkNotNull(contextStack.peek());
-    if (n.isSuper()) {
-      if (isSuperConstructorCall(n)) {
-        currentContext.visitSuperConstructorCall(t, n);
-      } else if (isSuperPropertyAccess(n)) {
-        currentContext.visitSuperPropertyAccess(t, n);
-      } else {
-        // super used some way other than `super()`, `super.prop`, or `super[expr]`.
-        t.report(n, INVALID_SUPER_USAGE);
+
+    switch (n.getToken()) {
+      case SUPER -> {
+        if (isSuperConstructorCall(n)) {
+          // Note: defer recording the call in `currentContext.visitSuperConstructorCall` until
+          // visitng the parent CALL node. This ensures any this/super references in the
+          // call arguments are treated as invalid, pre-super() call, references.
+        } else if (isSuperPropertyAccess(n)) {
+          currentContext.visitSuperPropertyAccess(t, n);
+        } else {
+          // super used some way other than `super()`, `super.prop`, or `super[expr]`.
+          t.report(n, INVALID_SUPER_USAGE);
+        }
       }
-    } else if (n.isThis()) {
-      currentContext.visitThis(t, n);
-    } else if (n.isReturn()) {
-      currentContext.visitReturn(t, n);
+      case CALL -> {
+        Node callee = n.getFirstChild();
+        if (callee.isSuper()) {
+          currentContext.visitSuperConstructorCall(t, callee);
+        }
+      }
+      case THIS -> currentContext.visitThis(t, n);
+      case RETURN -> currentContext.visitReturn(t, n);
+      case ROOT -> checkState(this.contextStack.size() == 1);
+      default -> {}
     }
+
     if (n == currentContext.getContextNode()) {
       currentContext.visitContextNode(t);
-      contextStack.pop();
+      this.contextStack.pop();
     }
   }
 
@@ -200,6 +227,36 @@ final class CheckSuper implements HotSwapCompilerPass, NodeTraversal.Callback {
       // Called when visiting the root node of this context after all of its children have been
       // visited.
     }
+  }
+
+  private static class SuperPropertyAccessAllowedContext extends Context {
+    SuperPropertyAccessAllowedContext(Node contextNode) {
+      super(contextNode);
+    }
+
+    @Override
+    void visitSuperPropertyAccess(NodeTraversal t, Node superNode) {
+      // Super property should be allowed on a public field and inside static blocks.
+    }
+
+    @Override
+    void visitSuperConstructorCall(NodeTraversal t, Node superNode) {
+      // Super constructor calls are only allowed in constructor() methods.
+      t.report(superNode, INVALID_SUPER_CALL);
+    }
+
+    @Override
+    Context getContextForArrowFunctionNode(Node arrowFn) {
+      return this;
+    }
+  }
+
+  private Context createMemberFieldDefContext(Node fieldNode) {
+    return new SuperPropertyAccessAllowedContext(fieldNode);
+  }
+
+  private Context createStaticBlockContext(Node staticBlock) {
+    return new SuperPropertyAccessAllowedContext(staticBlock);
   }
 
   /** Lexical context when not within a method, class, or object literal. */
@@ -300,11 +357,11 @@ final class CheckSuper implements HotSwapCompilerPass, NodeTraversal.Callback {
     final boolean hasParentClass;
 
     // Will be set to the first `super()` call that appears lexically, if any.
-    Node firstSuperCall = null;
+    @Nullable Node firstSuperCall = null;
     // Call to super() isn't required if the constructor returns a value.
     boolean returnsAValue = false;
-    Node thisAccessedBeforeSuper = null;
-    Node superPropertyAccessedBeforeSuperCall = null;
+    @Nullable Node thisAccessedBeforeSuper = null;
+    @Nullable Node superPropertyAccessedBeforeSuperCall = null;
 
     ConstructorContext(Node contextNode) {
       super(contextNode);

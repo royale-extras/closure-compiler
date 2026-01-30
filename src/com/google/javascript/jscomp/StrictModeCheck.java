@@ -19,229 +19,224 @@ import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.LinkedHashSet;
 
 /**
  * Checks that the code obeys the static restrictions of strict mode:
+ *
  * <ol>
- * <li> No use of "with".
- * <li> No deleting variables, functions, or arguments.
- * <li> No re-declarations or assignments of "eval" or arguments.
- * <li> No use of arguments.callee
- * <li> No use of arguments.caller
- * <li> Class: Always under strict mode
- * <li>   In addition, no duplicate class method names
+ *   <li>No use of "with".
+ *   <li>No deleting variables, functions, or arguments.
+ *   <li>No re-declarations or assignments of "eval" or arguments.
+ *   <li>No use of arguments.callee
+ *   <li>No use of arguments.caller
+ *   <li>Class: Always under strict mode
+ *   <li>In addition, no duplicate class method names
  * </ol>
  */
-class StrictModeCheck extends AbstractPostOrderCallback
-    implements CompilerPass {
+class StrictModeCheck extends AbstractPostOrderCallback implements CompilerPass {
 
-  static final DiagnosticType USE_OF_WITH = DiagnosticType.warning(
-      "JSC_USE_OF_WITH",
-      "The 'with' statement cannot be used in strict mode.");
+  static final DiagnosticType USE_OF_WITH =
+      DiagnosticType.error(
+          "JSC_USE_OF_WITH", "The 'with' statement cannot be used in strict mode.");
 
-  static final DiagnosticType EVAL_DECLARATION = DiagnosticType.warning(
-      "JSC_EVAL_DECLARATION",
-      "\"eval\" cannot be redeclared in strict mode");
+  static final DiagnosticType EVAL_DECLARATION =
+      DiagnosticType.error("JSC_EVAL_DECLARATION", "\"eval\" cannot be redeclared in strict mode");
 
-  static final DiagnosticType EVAL_ASSIGNMENT = DiagnosticType.warning(
-      "JSC_EVAL_ASSIGNMENT",
-      "the \"eval\" object cannot be reassigned in strict mode");
+  static final DiagnosticType EVAL_ASSIGNMENT =
+      DiagnosticType.error(
+          "JSC_EVAL_ASSIGNMENT", "the \"eval\" object cannot be reassigned in strict mode");
 
-  static final DiagnosticType ARGUMENTS_DECLARATION = DiagnosticType.warning(
-      "JSC_ARGUMENTS_DECLARATION",
-      "\"arguments\" cannot be redeclared in strict mode");
+  static final DiagnosticType ARGUMENTS_DECLARATION =
+      DiagnosticType.error(
+          "JSC_ARGUMENTS_DECLARATION", "\"arguments\" cannot be redeclared in strict mode");
 
-  static final DiagnosticType ARGUMENTS_ASSIGNMENT = DiagnosticType.warning(
-      "JSC_ARGUMENTS_ASSIGNMENT",
-      "the \"arguments\" object cannot be reassigned in strict mode");
+  static final DiagnosticType ARGUMENTS_ASSIGNMENT =
+      DiagnosticType.error(
+          "JSC_ARGUMENTS_ASSIGNMENT",
+          "the \"arguments\" object cannot be reassigned in strict mode");
 
-  static final DiagnosticType ARGUMENTS_CALLEE_FORBIDDEN = DiagnosticType.warning(
-      "JSC_ARGUMENTS_CALLEE_FORBIDDEN",
-      "\"arguments.callee\" cannot be used in strict mode");
+  static final DiagnosticType ARGUMENTS_CALLEE_FORBIDDEN =
+      DiagnosticType.error(
+          "JSC_ARGUMENTS_CALLEE_FORBIDDEN", "\"arguments.callee\" cannot be used in strict mode");
 
-  static final DiagnosticType ARGUMENTS_CALLER_FORBIDDEN = DiagnosticType.warning(
-      "JSC_ARGUMENTS_CALLER_FORBIDDEN",
-      "\"arguments.caller\" cannot be used in strict mode");
+  static final DiagnosticType ARGUMENTS_CALLER_FORBIDDEN =
+      DiagnosticType.error(
+          "JSC_ARGUMENTS_CALLER_FORBIDDEN", "\"arguments.caller\" cannot be used in strict mode");
 
-  static final DiagnosticType FUNCTION_CALLER_FORBIDDEN = DiagnosticType.warning(
-      "JSC_FUNCTION_CALLER_FORBIDDEN",
-      "A function''s \"caller\" property cannot be used in strict mode");
+  static final DiagnosticType FUNCTION_CALLER_FORBIDDEN =
+      DiagnosticType.error(
+          "JSC_FUNCTION_CALLER_FORBIDDEN",
+          "A function''s \"caller\" property cannot be used in strict mode");
 
-  static final DiagnosticType FUNCTION_ARGUMENTS_PROP_FORBIDDEN = DiagnosticType.warning(
-      "JSC_FUNCTION_ARGUMENTS_PROP_FORBIDDEN",
-      "A function''s \"arguments\" property cannot be used in strict mode");
+  static final DiagnosticType FUNCTION_ARGUMENTS_PROP_FORBIDDEN =
+      DiagnosticType.error(
+          "JSC_FUNCTION_ARGUMENTS_PROP_FORBIDDEN",
+          "A function''s \"arguments\" property cannot be used in strict mode");
 
-  static final DiagnosticType DELETE_VARIABLE = DiagnosticType.warning(
-      "JSC_DELETE_VARIABLE",
-      "variables, functions, and arguments cannot be deleted in strict mode");
+  static final DiagnosticType DELETE_VARIABLE =
+      DiagnosticType.error(
+          "JSC_DELETE_VARIABLE",
+          "variables, functions, and arguments cannot be deleted in strict mode");
 
-  static final DiagnosticType DUPLICATE_OBJECT_KEY = DiagnosticType.error(
-      "JSC_DUPLICATE_OBJECT_KEY",
-      "Object literal contains illegal duplicate key \"{0}\", disallowed in strict mode");
-
-  static final DiagnosticType DUPLICATE_CLASS_METHODS = DiagnosticType.error(
-      "JSC_DUPLICATE_CLASS_METHODS",
-      "Class contains duplicate method name \"{0}\"");
+  static final DiagnosticType DUPLICATE_MEMBER =
+      DiagnosticType.warning(
+          "JSC_DUPLICATE_MEMBER",
+          "Class or object literal contains duplicate member \"{0}\". In non-strict code, the last"
+              + " duplicate will overwrite the others.");
 
   private final AbstractCompiler compiler;
+  private final CheckLevel defaultLevel;
 
-  StrictModeCheck(AbstractCompiler compiler) {
+  StrictModeCheck(AbstractCompiler compiler, CheckLevel defaultLevel) {
     this.compiler = compiler;
+    this.defaultLevel = defaultLevel;
   }
 
-  @Override public void process(Node externs, Node root) {
+  @Override
+  public void process(Node externs, Node root) {
     NodeTraversal.traverseRoots(compiler, this, externs, root);
     NodeTraversal.traverse(compiler, root, new NonExternChecks());
   }
 
-  @Override public void visit(NodeTraversal t, Node n, Node parent) {
+  @Override
+  public void visit(NodeTraversal t, Node n, Node parent) {
     if (n.isAssign()) {
-      checkAssignment(t, n);
+      checkAssignment(n);
     } else if (n.isDelProp()) {
       checkDelete(t, n);
     } else if (n.isObjectLit()) {
-      checkObjectLiteralOrClass(t, n);
+      checkObjectLiteralOrClass(n);
     } else if (n.isClass()) {
-      checkObjectLiteralOrClass(t, n.getLastChild());
+      checkObjectLiteralOrClass(n.getLastChild());
     } else if (n.isWith()) {
-      checkWith(t, n);
+      checkWith(n);
     }
   }
 
   /** Reports a warning for with statements. */
-  private static void checkWith(NodeTraversal t, Node n) {
+  private void checkWith(Node n) {
     JSDocInfo info = n.getJSDocInfo();
-    boolean allowWith =
-        info != null && info.getSuppressions().contains("with");
+    boolean allowWith = info != null && info.getSuppressions().contains("with");
     if (!allowWith) {
-      t.report(n, USE_OF_WITH);
+      this.report(n, USE_OF_WITH);
     }
   }
 
   /**
-   * Determines if the given name is a declaration, which can be a declaration
-   * of a variable, function, or argument.
+   * Determines if the given name is a declaration, which can be a declaration of a variable,
+   * function, or argument.
    */
   private static boolean isDeclaration(Node n) {
-    switch (n.getParent().getToken()) {
-      case LET:
-      case CONST:
-      case VAR:
-      case CATCH:
-        return true;
-      case FUNCTION:
-        return n == n.getParent().getFirstChild();
-
-      case PARAM_LIST:
-        return n.getGrandparent().isFunction();
-
-      default:
-        return false;
-    }
+    return switch (n.getParent().getToken()) {
+      case LET, CONST, VAR, CATCH -> true;
+      case FUNCTION -> n == n.getParent().getFirstChild();
+      case PARAM_LIST -> n.getGrandparent().isFunction();
+      default -> false;
+    };
   }
 
   /** Checks that an assignment is not to the "arguments" object. */
-  private static void checkAssignment(NodeTraversal t, Node n) {
+  private void checkAssignment(Node n) {
     if (n.getFirstChild().isName()) {
       if ("arguments".equals(n.getFirstChild().getString())) {
-        t.report(n, ARGUMENTS_ASSIGNMENT);
+        this.report(n, ARGUMENTS_ASSIGNMENT);
       } else if ("eval".equals(n.getFirstChild().getString())) {
         // Note that assignment to eval is already illegal because any use of
         // that name is illegal.
-        t.report(n, EVAL_ASSIGNMENT);
+        this.report(n, EVAL_ASSIGNMENT);
       }
     }
   }
 
   /** Checks that variables, functions, and arguments are not deleted. */
-  private static void checkDelete(NodeTraversal t, Node n) {
+  private void checkDelete(NodeTraversal t, Node n) {
     if (n.getFirstChild().isName()) {
       Var v = t.getScope().getVar(n.getFirstChild().getString());
       if (v != null) {
-        t.report(n, DELETE_VARIABLE);
+        this.report(n, DELETE_VARIABLE);
       }
     }
   }
 
   /** Checks that object literal keys or class method names are valid. */
-  private static void checkObjectLiteralOrClass(NodeTraversal t, Node n) {
-    Set<String> getters = new HashSet<>();
-    Set<String> setters = new HashSet<>();
-    Set<String> staticGetters = new HashSet<>();
-    Set<String> staticSetters = new HashSet<>();
-    for (Node key = n.getFirstChild();
-         key != null;
-         key = key.getNext()) {
-      if (key.isEmpty() || key.isComputedProp()) {
+  private void checkObjectLiteralOrClass(Node n) {
+    LinkedHashSet<String> getters = new LinkedHashSet<>();
+    LinkedHashSet<String> setters = new LinkedHashSet<>();
+    LinkedHashSet<String> staticGetters = new LinkedHashSet<>();
+    LinkedHashSet<String> staticSetters = new LinkedHashSet<>();
+
+    /*
+     * Iterate backwards because the last duplicate is the one that will be used in sloppy or ES6
+     * code. The earlier duplicates are the ones that should be removed.
+     */
+    for (Node key = n.getLastChild(); key != null; key = key.getPrevious()) {
+      if (key.isEmpty()
+          || key.isComputedProp()
+          || key.isSpread()
+          || key.isComputedFieldDef()
+          // Computed properties cannot be computed at compile time
+          || NodeUtil.isClassStaticBlock(key)
+      // Will not check since whether duplicates are declared/assigned cannot be determined at
+      // compile time since we do not know which code will be run
+      ) {
         continue;
       }
-      if (key.isSpread()) {
-        continue;
-      }
+
       String keyName = key.getString();
       if (!key.isSetterDef()) {
         // normal property and getter cases
-        Set<String> set = key.isStaticMember() ? staticGetters : getters;
+        LinkedHashSet<String> set = key.isStaticMember() ? staticGetters : getters;
         if (!set.add(keyName)) {
-          if (n.isClassMembers()) {
-            t.report(key, DUPLICATE_CLASS_METHODS, keyName);
-          } else {
-            t.report(key, DUPLICATE_OBJECT_KEY, keyName);
-          }
+          this.report(key, DUPLICATE_MEMBER, keyName);
         }
       }
       if (!key.isGetterDef()) {
         // normal property and setter cases
-        Set<String> set = key.isStaticMember() ? staticSetters : setters;
+        LinkedHashSet<String> set = key.isStaticMember() ? staticSetters : setters;
         if (!set.add(keyName)) {
-          if (n.isClassMembers()) {
-            t.report(key, DUPLICATE_CLASS_METHODS, keyName);
-          } else {
-            t.report(key, DUPLICATE_OBJECT_KEY, keyName);
-          }
+          this.report(key, DUPLICATE_MEMBER, keyName);
         }
       }
     }
   }
 
   /** Checks that are performed on non-extern code only. */
-  private static class NonExternChecks extends AbstractPostOrderCallback {
-    @Override public void visit(NodeTraversal t, Node n, Node parent) {
+  private class NonExternChecks extends AbstractPostOrderCallback {
+    @Override
+    public void visit(NodeTraversal t, Node n, Node parent) {
       if (n.isName() && isDeclaration(n)) {
-        checkDeclaration(t, n);
+        checkDeclaration(n);
       } else if (n.isGetProp()) {
-        checkGetProp(t, n);
+        checkGetProp(n);
       }
     }
 
     /** Checks for illegal declarations. */
-    private void checkDeclaration(NodeTraversal t, Node n) {
+    private void checkDeclaration(Node n) {
       if ("eval".equals(n.getString())) {
-        t.report(n, EVAL_DECLARATION);
+        report(n, EVAL_DECLARATION);
       } else if ("arguments".equals(n.getString())) {
-        t.report(n, ARGUMENTS_DECLARATION);
+        report(n, ARGUMENTS_DECLARATION);
       }
     }
 
     /** Checks that the arguments.callee is not used. */
-    private void checkGetProp(NodeTraversal t, Node n) {
+    private void checkGetProp(Node n) {
       Node target = n.getFirstChild();
-      Node prop = n.getLastChild();
-      if (prop.getString().equals("callee")) {
+      String name = n.getString();
+      if (name.equals("callee")) {
         if (target.isName() && target.getString().equals("arguments")) {
-          t.report(n, ARGUMENTS_CALLEE_FORBIDDEN);
+          report(n, ARGUMENTS_CALLEE_FORBIDDEN);
         }
-      } else if (prop.getString().equals("caller")) {
+      } else if (name.equals("caller")) {
         if (target.isName() && target.getString().equals("arguments")) {
-          t.report(n, ARGUMENTS_CALLER_FORBIDDEN);
+          report(n, ARGUMENTS_CALLER_FORBIDDEN);
         } else if (isFunctionType(target)) {
-          t.report(n, FUNCTION_CALLER_FORBIDDEN);
+          report(n, FUNCTION_CALLER_FORBIDDEN);
         }
-      } else if (prop.getString().equals("arguments")
-          && isFunctionType(target)) {
-        t.report(n, FUNCTION_ARGUMENTS_PROP_FORBIDDEN);
+      } else if (name.equals("arguments") && isFunctionType(target)) {
+        report(n, FUNCTION_ARGUMENTS_PROP_FORBIDDEN);
       }
     }
   }
@@ -249,5 +244,10 @@ class StrictModeCheck extends AbstractPostOrderCallback
   private static boolean isFunctionType(Node n) {
     JSType type = n.getJSType();
     return (type != null && type.isFunctionType());
+  }
+
+  private void report(Node n, DiagnosticType diagnostic, String... args) {
+    this.compiler.report(
+        JSError.builder(diagnostic, args).setLevel(this.defaultLevel).setNode(n).build());
   }
 }

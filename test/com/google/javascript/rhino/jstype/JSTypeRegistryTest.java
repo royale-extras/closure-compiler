@@ -39,7 +39,6 @@
 package com.google.javascript.rhino.jstype;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.rhino.jstype.JSTypeNative.ALL_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.ASYNC_GENERATOR_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.ASYNC_ITERABLE_TYPE;
@@ -56,8 +55,8 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.NULL_VOID;
 import static com.google.javascript.rhino.jstype.JSTypeNative.NUMBER_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.STRING_TYPE;
 import static com.google.javascript.rhino.testing.TypeSubject.assertType;
-import static com.google.javascript.rhino.testing.TypeSubject.types;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.rhino.IR;
@@ -68,9 +67,9 @@ import com.google.javascript.rhino.testing.AbstractStaticScope;
 import com.google.javascript.rhino.testing.MapBasedScope;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -86,12 +85,11 @@ public class JSTypeRegistryTest {
   // now much larger
 
   private final JSTypeRegistry registry = new JSTypeRegistry(null, null);
-  private JSTypeResolver.Closer closer;
 
   @Before
   @SuppressWarnings({"MustBeClosedChecker"})
   public void setUp() throws Exception {
-    this.closer = registry.getResolver().openForDefinition();
+    JSTypeResolver.Closer unused = registry.getResolver().openForDefinition();
   }
 
   @Test
@@ -108,14 +106,12 @@ public class JSTypeRegistryTest {
 
   @Test
   public void testGetBuiltInType_iterable() {
-    assertType(registry.getGlobalType("Iterable"))
-        .isEqualTo(registry.getNativeType(ITERABLE_TYPE));
+    assertType(registry.getGlobalType("Iterable")).isEqualTo(registry.getNativeType(ITERABLE_TYPE));
   }
 
   @Test
   public void testGetBuiltInType_iterator() {
-    assertType(registry.getGlobalType("Iterator"))
-        .isEqualTo(registry.getNativeType(ITERATOR_TYPE));
+    assertType(registry.getGlobalType("Iterator")).isEqualTo(registry.getNativeType(ITERATOR_TYPE));
   }
 
   @Test
@@ -156,7 +152,7 @@ public class JSTypeRegistryTest {
     // Test that it takes one parameter of type
     // function(function((IThenable<TYPE>|TYPE|null|{then: ?})=): ?, function(*=): ?): ?
     FunctionType promiseCtor = promiseType.getConstructor();
-    List<FunctionType.Parameter> paramList = promiseCtor.getParameters();
+    ImmutableList<FunctionType.Parameter> paramList = promiseCtor.getParameters();
     assertThat(paramList).hasSize(1);
     FunctionType.Parameter firstParameter = paramList.get(0);
     FunctionType paramType = firstParameter.getJSType().toMaybeFunctionType();
@@ -174,30 +170,8 @@ public class JSTypeRegistryTest {
 
     // Ensure different instances are independent.
     JSTypeRegistry typeRegistry2 = new JSTypeRegistry(null);
-    assertThat(typeRegistry2.getType(null, name)).isEqualTo(null);
+    assertThat(typeRegistry2.getType(null, name)).isNull();
     assertType(registry.getType(null, name)).isEqualTo(type);
-  }
-
-  @Test
-  public void testPropertyOnManyTypes() {
-    this.closer.close(); // Force resolution to happen on the union.
-    // Given
-
-    // By default the UnionType.Builder will treat a union of more than 30
-    // types as an unknown type. We don't want that for property checking
-    // so test that the limit is higher.
-    for (int i = 0; i < 100; i++) {
-      JSType type = registry.createObjectType("type: " + i, null);
-
-      // When
-      registry.registerPropertyOnType("foo", type);
-
-      // Then
-      assertWithMessage("Registered property `foo` on <%s> types.", i + 1)
-          .about(types())
-          .that(registry.getGreatestSubtypeWithProperty(type, "foo"))
-          .isNotUnknown();
-    }
   }
 
   @Test
@@ -336,10 +310,36 @@ public class JSTypeRegistryTest {
     assertThat(type).isInstanceOf(NamedType.class);
   }
 
+  @Test
+  public void testGetBuiltInType_ReadonlyMap() {
+    ObjectType readonlyMapType = registry.getNativeObjectType(JSTypeNative.READONLY_MAP_TYPE);
+    assertType(registry.getGlobalType("ReadonlyMap")).isEqualTo(readonlyMapType);
+  }
+
+  @Test
+  public void testGetBuiltInType_Map() {
+    // Ensure we have a Map.
+    ObjectType mapType = registry.getNativeObjectType(JSTypeNative.MAP_TYPE);
+    assertType(registry.getGlobalType("Map")).isEqualTo(mapType);
+
+    // Ensure it implements ReadonlyMap.
+    ObjectType readonlyMapType = registry.getNativeObjectType(JSTypeNative.READONLY_MAP_TYPE);
+    assertThat(mapType.getCtorImplementedInterfaces()).hasSize(1);
+    assertThat(ImmutableList.copyOf(mapType.getCtorImplementedInterfaces()).get(0).getRawType())
+        .isEqualTo(readonlyMapType);
+
+    // Ensure it takes one optional parameter of the appropriate type.
+    ImmutableList<FunctionType.Parameter> paramList = mapType.getConstructor().getParameters();
+    assertThat(paramList).hasSize(1);
+    assertThat(paramList.get(0).isOptional()).isTrue();
+    assertThat(paramList.get(0).getJSType().toString())
+        .isEqualTo("(Array<Array<(K|V)>>|Iterable<Array<(K|V)>,?,?>|null|undefined)");
+  }
+
   /** Returns a scope that overrides a few methods from {@link AbstractStaticScope} */
   private StaticTypedScope createStaticTypedScope(
       Node root,
-      StaticTypedScope parentScope,
+      @Nullable StaticTypedScope parentScope,
       Map<String, StaticTypedSlot> slots,
       Set<String> reservedNames) {
     return new AbstractStaticScope() {

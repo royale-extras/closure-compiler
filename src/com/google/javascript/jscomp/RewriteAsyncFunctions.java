@@ -18,20 +18,21 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.AstFactory.type;
 
+import com.google.javascript.jscomp.colors.Color;
+import com.google.javascript.jscomp.colors.StandardColors;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.FunctionType;
-import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import com.google.javascript.rhino.StaticScope;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Converts async functions to valid ES6 generator functions code.
@@ -41,7 +42,7 @@ import javax.annotation.Nullable;
  *
  * <p>An async function, foo(a, b), will be rewritten as:
  *
- * <pre> {@code
+ * <pre>{@code
  * function foo(a, b) {
  *   let $jscomp$async$this = this;
  *   let $jscomp$async$arguments = arguments;
@@ -55,13 +56,15 @@ import javax.annotation.Nullable;
  *         // - super.x replaced with $jscomp$async$super$get$x()
  *         // - super.x(5) replaced with $jscomp$async$super$get$x().call($jscomp$async$this, 5)
  *       });
- * }}</pre>
+ * }
+ * }</pre>
  */
-public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotSwapCompilerPass {
+public final class RewriteAsyncFunctions implements NodeTraversal.Callback, CompilerPass {
 
-  private static final String ASYNC_ARGUMENTS = "$jscomp$async$arguments";
-  private static final String ASYNC_THIS = "$jscomp$async$this";
+  private static final String ASYNC_ARGUMENTS = "$jscomp$async$arguments$";
+  private static final String ASYNC_THIS = "$jscomp$async$this$";
   private static final String ASYNC_SUPER_PROP_GETTER_PREFIX = "$jscomp$async$super$get$";
+  private final StaticScope namespace;
 
   /**
    * Information needed to replace a reference to `super.propertyName` with a call to a wrapper
@@ -74,26 +77,27 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     private final String wrapperFunctionName;
     // The type to use for the wrapper function.
     // Will be null if type checking has not run.
-    @Nullable private final JSType wrapperFunctionType;
+    private final AstFactory.@Nullable Type wrapperFunctionReturnType;
 
     private SuperPropertyWrapperInfo(
-        Node firstSuperDotPropertyNode, String wrapperFunctionName, JSType wrapperFunctionType) {
+        Node firstSuperDotPropertyNode,
+        String wrapperFunctionName,
+        AstFactory.Type wrapperFunctionReturnType) {
       this.firstInstanceOfSuperDotProperty = firstSuperDotPropertyNode;
       this.wrapperFunctionName = wrapperFunctionName;
-      this.wrapperFunctionType = wrapperFunctionType;
+      this.wrapperFunctionReturnType = wrapperFunctionReturnType;
     }
 
-    @Nullable
-    private JSType getPropertyType() {
-      return firstInstanceOfSuperDotProperty.getJSType();
+    private @Nullable Color getPropertyType() {
+      return firstInstanceOfSuperDotProperty.getColor();
     }
 
     private Node createWrapperFunctionNameNode() {
-      return astFactory.createName(wrapperFunctionName, wrapperFunctionType);
+      return astFactory.createName(wrapperFunctionName, type(StandardColors.TOP_OBJECT));
     }
 
     private Node createWrapperFunctionCallNode() {
-      return astFactory.createCall(createWrapperFunctionNameNode());
+      return astFactory.createCall(createWrapperFunctionNameNode(), wrapperFunctionReturnType);
     }
   }
 
@@ -106,7 +110,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   private final class SuperPropertyWrappers {
     // Use LinkedHashMap in order to ensure the ordering is the same on every compile of the same
     // source code.
-    // Note that the JSTypes will be null if type checking hasn't run.
+    // Note that the Colors will be null if type checking hasn't run.
     private final Map<String, SuperPropertyWrapperInfo> propertyNameToTypeMap =
         new LinkedHashMap<>();
 
@@ -115,21 +119,19 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
       checkArgument(superDotPropertyNode.isGetProp(), superDotPropertyNode);
       Node superNode = superDotPropertyNode.getFirstChild();
       checkArgument(superNode.isSuper(), superNode);
-      Node propertyNameNode = superDotPropertyNode.getLastChild();
-      checkArgument(propertyNameNode.isString(), propertyNameNode);
 
-      String propertyName = propertyNameNode.getString();
-      JSType propertyType = superDotPropertyNode.getJSType();
+      String propertyName = superDotPropertyNode.getString();
+      Color propertyType = superDotPropertyNode.getColor();
       final SuperPropertyWrapperInfo superPropertyWrapperInfo;
       if (propertyNameToTypeMap.containsKey(propertyName)) {
         superPropertyWrapperInfo = propertyNameToTypeMap.get(propertyName);
         // Every reference to `super.propertyName` within a single lexical context should
         // have the same type.  Make sure this is true.
-        JSType existingJSType = superPropertyWrapperInfo.getPropertyType();
+        Color existingColor = superPropertyWrapperInfo.getPropertyType();
         checkState(
-            Objects.equals(existingJSType, propertyType),
+            Objects.equals(existingColor, propertyType),
             "Previous reference type: %s differs from current reference type: %s",
-            existingJSType,
+            existingColor,
             propertyType);
       } else {
         superPropertyWrapperInfo = createNewInfo(superDotPropertyNode);
@@ -140,19 +142,16 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
 
     private SuperPropertyWrapperInfo createNewInfo(Node firstSuperDotPropertyNode) {
       checkArgument(firstSuperDotPropertyNode.isGetProp(), firstSuperDotPropertyNode);
-      String propertyName = firstSuperDotPropertyNode.getLastChild().getString();
-      JSType propertyType = firstSuperDotPropertyNode.getJSType();
-      final String wrapperFunctionName = ASYNC_SUPER_PROP_GETTER_PREFIX + propertyName;
-      final JSType wrapperFunctionType;
-      if (propertyType == null) {
-        // type checking hasn't run, so we don't need type information.
-        wrapperFunctionType = null;
-      } else {
-        wrapperFunctionType =
-            FunctionType.builder(registry).withReturnType(propertyType).buildAndResolve();
-      }
+      String propertyName = firstSuperDotPropertyNode.getString();
+      final String wrapperFunctionName =
+          ASYNC_SUPER_PROP_GETTER_PREFIX
+              + compiler
+                  .getUniqueIdSupplier()
+                  .getUniqueId(compiler.getInput(NodeUtil.getInputId(firstSuperDotPropertyNode)))
+              + "$"
+              + propertyName;
       return new SuperPropertyWrapperInfo(
-          firstSuperDotPropertyNode, wrapperFunctionName, wrapperFunctionType);
+          firstSuperDotPropertyNode, wrapperFunctionName, type(firstSuperDotPropertyNode));
     }
 
     private Collection<SuperPropertyWrapperInfo> asCollection() {
@@ -164,11 +163,16 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
    * Determines both what to do when visiting a node and how to determine the context for its
    * descendents.
    */
-  private abstract class LexicalContext {
+  private abstract static class LexicalContext {
     final Node contextRootNode;
+    // precomputed unique id to append to names in this context. This is used to ensure that names
+    // in different contexts don't collide (e.g. 2 functions don't get the same `let
+    // $jscomp$async$this` name declared in their bodies)
+    final String uniqueId;
 
-    LexicalContext(Node contextRootNode) {
+    LexicalContext(Node contextRootNode, String uniqueId) {
       this.contextRootNode = checkNotNull(contextRootNode);
+      this.uniqueId = uniqueId;
     }
 
     Node getContextRootNode() {
@@ -181,7 +185,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
      * @param n This context's root node or one of its descendents.
      * @return this context or a new one for a child context
      */
-    public abstract LexicalContext getContextForNode(Node n);
+    public abstract LexicalContext getContextForNode(NodeTraversal t, Node n);
 
     public abstract void visit(NodeTraversal t, Node n);
   }
@@ -189,14 +193,15 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   /** Defines behavior for nodes in the root scope, outside of any functions. */
   private final class RootContext extends LexicalContext {
 
-    private RootContext(Node contextRootNode) {
-      super(contextRootNode);
+    private RootContext(Node contextRootNode, String uniqueId) {
+      super(contextRootNode, uniqueId);
     }
 
     @Override
-    public LexicalContext getContextForNode(Node n) {
+    public LexicalContext getContextForNode(NodeTraversal t, Node n) {
       if (n.isFunction()) {
-        return new FunctionContext(n);
+        String uniqueId = compiler.getUniqueIdSupplier().getUniqueId(t.getInput());
+        return new FunctionContext(n, uniqueId);
       } else {
         return this;
       }
@@ -212,18 +217,20 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   private final class ParameterListContext extends LexicalContext {
     final FunctionContext functionContext;
 
-    public ParameterListContext(FunctionContext functionContext, Node contextRootNode) {
-      super(contextRootNode);
+    public ParameterListContext(
+        FunctionContext functionContext, Node contextRootNode, String uniqueId) {
+      super(contextRootNode, uniqueId);
       this.functionContext = checkNotNull(functionContext);
     }
 
     @Override
-    public LexicalContext getContextForNode(Node n) {
+    public LexicalContext getContextForNode(NodeTraversal t, Node n) {
       if (n.isFunction()) {
         // Function defined within a parameter list.
         // e.g. `() => something`
         // function someFunc(callback = () => something) {}
-        return new FunctionContext(functionContext, n);
+        String uniqueId = compiler.getUniqueIdSupplier().getUniqueId(t.getInput());
+        return new FunctionContext(functionContext, n, uniqueId);
       } else {
         return this;
       }
@@ -256,14 +263,16 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     // TODO(bradfordcsmith): It would cost less memory if we defined a separate object to hold
     // the data for async context accounting instead of having the booleans and super property
     // wrapper fields on every FunctionContext.
-    @Nullable final FunctionContext asyncThisAndArgumentsContext;
+    final @Nullable FunctionContext asyncThisAndArgumentsContext;
     final SuperPropertyWrappers superPropertyWrappers = new SuperPropertyWrappers();
 
     boolean mustAddAsyncThisVariable = false;
+    // null if mustAddAsyncThisVariable is false
+    AstFactory.@Nullable Type typeOfThis;
     boolean mustAddAsyncArgumentsVariable = false;
 
-    FunctionContext(Node contextRootNode) {
-      super(contextRootNode);
+    FunctionContext(Node contextRootNode, String uniqueId) {
+      super(contextRootNode, uniqueId);
       if (contextRootNode.isAsyncFunction()) {
         asyncThisAndArgumentsContext = this;
       } else {
@@ -271,8 +280,8 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
       }
     }
 
-    FunctionContext(FunctionContext outer, Node contextRootNode) {
-      super(contextRootNode);
+    FunctionContext(FunctionContext outer, Node contextRootNode, String uniqueId) {
+      super(contextRootNode, uniqueId);
       checkState(contextRootNode.isFunction(), contextRootNode);
       if (contextRootNode.isAsyncFunction()) {
         if (contextRootNode.isArrowFunction()) {
@@ -299,20 +308,23 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     }
 
     @Override
-    public LexicalContext getContextForNode(Node n) {
+    public LexicalContext getContextForNode(NodeTraversal t, Node n) {
       if (n == contextRootNode) {
         return this;
       } else if (n.isFunction()) {
-        return new FunctionContext(this, n);
+        String uniqueId = compiler.getUniqueIdSupplier().getUniqueId(t.getInput());
+        return new FunctionContext(this, n, uniqueId);
       } else if (n.isParamList()) {
-        return new ParameterListContext(this, n);
+        String uniqueId = compiler.getUniqueIdSupplier().getUniqueId(t.getInput());
+        return new ParameterListContext(this, n, uniqueId);
       } else {
         return this;
       }
     }
 
-    private void recordAsyncThisReplacementWasDone() {
+    private void recordAsyncThisReplacementWasDone(AstFactory.Type typeOfThis) {
       asyncThisAndArgumentsContext.mustAddAsyncThisVariable = true;
+      asyncThisAndArgumentsContext.typeOfThis = typeOfThis;
     }
 
     private SuperPropertyWrapperInfo getOrCreateSuperPropertyWrapperInfo(
@@ -328,51 +340,18 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     /**
      * Creates a new reference to the variable used to hold the value of `this` for async functions.
      */
-    private Node createThisVariableReference() {
-      recordAsyncThisReplacementWasDone();
-      return astFactory.createThisAliasReferenceForFunction(
-          ASYNC_THIS, asyncThisAndArgumentsContext.getContextRootNode());
-    }
-
-    /** Creates a correctly typed `this` node for this context. */
-    private Node createThisReference() {
-      return astFactory.createThisForFunction(asyncThisAndArgumentsContext.getContextRootNode());
+    private Node createThisVariableReference(AstFactory.Type typeOfThis) {
+      recordAsyncThisReplacementWasDone(typeOfThis);
+      return astFactory.createName(ASYNC_THIS + asyncThisAndArgumentsContext.uniqueId, typeOfThis);
     }
 
     private Node createWrapperArrowFunction(SuperPropertyWrapperInfo wrapperInfo) {
       // super.propertyName
       final Node superDotProperty = wrapperInfo.firstInstanceOfSuperDotProperty.cloneTree();
-      if (rewriteSuperPropertyReferencesWithoutSuper) {
-        // Rewrite to avoid using `super` within an arrow function.
-        // See more information on definition of this option.
-        // TODO(bradfordcsmith): RewriteAsyncIteration and RewriteAsyncFunctions have the
-        // same logic for dealing with super references. Consider having them share
-        // it from a common place instead of duplicating.
-        final Node thisNode = createThisReference();
-        final Node prototypeOfThisNode = astFactory.createObjectGetPrototypeOfCall(thisNode);
-        final Node originalSuperNode = superDotProperty.getFirstChild();
 
-        // NOTE: must look at the enclosing MEMBER_FUNCTION_DEF to see if the method is static
-        if (asyncThisAndArgumentsContext.getContextRootNode().getParent().isStaticMember()) {
-          // For static methods `this` is the class and its direct prototype is the parent
-          // class and the super node we want
-          // super.propertyName -> Object.getPrototypeOf(this).propertyName
-          originalSuperNode.replaceWith(prototypeOfThisNode);
-        } else {
-          // For instance methods `this` is the instance, and its direct prototype is the
-          // ClassName.prototype object. We must go to the prototype of that to get the correct
-          // value for `super`.
-          // super.propertyName -> Object.getPrototypeOf(Object.getPrototypeOf(this)).propertyName
-          originalSuperNode.replaceWith(
-              astFactory.createObjectGetPrototypeOfCall(prototypeOfThisNode));
-        }
-      }
-      // () => super.propertyName
-      // OR avoid super for static method (class object -> superclass object)
-      // () => Object.getPrototypeOf(this).x
-      // OR avoid super for instance method (instance -> prototype -> super prototype)
-      // () => Object.getPrototypeOf(Object.getPrototypeOf(this)).x
-      return astFactory.createZeroArgArrowFunctionForExpression(superDotProperty);
+      // () => { return super.propertyName; };
+      return astFactory.createZeroArgArrowFunctionForExpression(
+          astFactory.createBlock(astFactory.createReturn(superDotProperty)));
     }
 
     @Override
@@ -385,25 +364,36 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
       } else if (asyncThisAndArgumentsContext != null) {
         // We're in the context of an async function's body, so we need to do some replacements.
         switch (n.getToken()) {
-          case NAME:
-            if (n.matchesQualifiedName("arguments")) {
-              n.setString(ASYNC_ARGUMENTS);
+          case NAME -> {
+            if (n.matchesName("arguments")) {
+              n.setString(ASYNC_ARGUMENTS + asyncThisAndArgumentsContext.uniqueId);
+              if (compiler.getLifeCycleStage().isNormalized()) {
+                // TODO: b/322009741 - Stop depending on lifeCycleStage.isNormalized() to decide
+                // constness
+                n.putBooleanProp(Node.IS_CONSTANT_NAME, true);
+              }
               asyncThisAndArgumentsContext.recordAsyncArgumentsReplacementWasDone();
               compiler.reportChangeToChangeScope(contextRootNode);
             }
-            break;
-
-          case THIS:
-            n.replaceWith(asyncThisAndArgumentsContext.createThisVariableReference());
+          }
+          case THIS -> {
+            n.replaceWith(asyncThisAndArgumentsContext.createThisVariableReference(type(n)));
             compiler.reportChangeToChangeScope(contextRootNode);
-            break;
-
-          case SUPER:
+          }
+          case SUPER -> {
             {
               Node parent = n.getParent();
               if (!parent.isGetProp()) {
                 compiler.report(
-                    JSError.make(parent, Es6ToEs3Util.CANNOT_CONVERT_YET, "super expression"));
+                    JSError.make(parent, TranspilationUtil.CANNOT_CONVERT_YET, "super expression"));
+              } else if (NodeUtil.isLValue(parent)) {
+                // NOTE: `super.prop = x` is valid, and can be useful in overridden setters, but
+                // these cannot be async. For now, we don't support this construct in async methods.
+                compiler.report(
+                    JSError.make(
+                        parent.getParent(),
+                        TranspilationUtil.CANNOT_CONVERT_YET,
+                        "assignment to super property"));
               }
               // different name for parent for better readability
               Node superDotProperty = parent;
@@ -418,28 +408,27 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
               if (grandparent.isCall() && grandparent.getFirstChild() == superDotProperty) {
                 // $jscomp$super$get$x(...)   =>   $jscomp$super$get$x().call($jscomp$async$this,
                 // ...)
-                getPropReplacement = astFactory.createGetProp(getPropReplacement, "call");
-                grandparent.addChildAfter(
+                getPropReplacement =
+                    astFactory.createGetPropWithUnknownType(getPropReplacement, "call");
+                Node thisAlias =
                     astFactory
-                        .createThisAliasReferenceForFunction(
-                            ASYNC_THIS, asyncThisAndArgumentsContext.getContextRootNode())
-                        .useSourceInfoFrom(superDotProperty),
-                    superDotProperty);
-                asyncThisAndArgumentsContext.recordAsyncThisReplacementWasDone();
+                        .createThisAliasReferenceForEs6Class(
+                            ASYNC_THIS + asyncThisAndArgumentsContext.uniqueId,
+                            NodeUtil.getEnclosingClass(
+                                asyncThisAndArgumentsContext.getContextRootNode()))
+                        .srcref(superDotProperty);
+                thisAlias.insertAfter(superDotProperty);
+                asyncThisAndArgumentsContext.recordAsyncThisReplacementWasDone(type(thisAlias));
               }
-              getPropReplacement.useSourceInfoFromForTree(superDotProperty);
-              grandparent.replaceChild(superDotProperty, getPropReplacement);
+              getPropReplacement.srcrefTree(superDotProperty);
+              superDotProperty.replaceWith(getPropReplacement);
               compiler.reportChangeToChangeScope(contextRootNode);
             }
-            break;
-
-          case AWAIT:
-            // Awaits become yields in the converted async function's inner generator function.
-            n.replaceWith(astFactory.createYield(n.getJSType(), n.removeFirstChild()));
-            break;
-
-          default:
-            break;
+          }
+          case AWAIT ->
+              // Awaits become yields in the converted async function's inner generator function.
+              n.replaceWith(astFactory.createYield(type(n), n.removeFirstChild()));
+          default -> {}
         }
       }
     }
@@ -451,79 +440,37 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   private final Deque<LexicalContext> contextStack;
   private final AbstractCompiler compiler;
 
-  /**
-   * If this option is set to true, then this pass will rewrite references to properties using super
-   * (e.g. `super.method()`) to avoid using `super` within an arrow function.
-   *
-   * <p>This option exists due to a bug in MS Edge 17 which causes it to fail to access super
-   * properties correctly from within arrow functions.
-   *
-   * <p>See https://github.com/Microsoft/ChakraCore/issues/5784
-   *
-   * <p>If the final compiler output will not include ES6 classes, this option should not be set. It
-   * isn't needed since the `super` references will be transpiled away anyway. Also, when this
-   * option is set it uses `Object.getPrototypeOf()` to rewrite `super`, which may not exist in
-   * pre-ES6 JS environments.
-   */
-  private final boolean rewriteSuperPropertyReferencesWithoutSuper;
-
-  private final JSTypeRegistry registry;
   private final AstFactory astFactory;
 
-  private RewriteAsyncFunctions(Builder builder) {
-    checkNotNull(builder);
-    this.compiler = builder.compiler;
+  private RewriteAsyncFunctions(
+      AbstractCompiler compiler, AstFactory astFactory, StaticScope namespace) {
+    this.compiler = checkNotNull(compiler);
+    this.astFactory = checkNotNull(astFactory);
+    this.namespace = checkNotNull(namespace);
     this.contextStack = new ArrayDeque<>();
-    this.rewriteSuperPropertyReferencesWithoutSuper =
-        builder.rewriteSuperPropertyReferencesWithoutSuper;
-    this.registry = checkNotNull(builder.registry);
-    this.astFactory = checkNotNull(builder.astFactory);
   }
 
-  static class Builder {
-    private final AbstractCompiler compiler;
-    private boolean rewriteSuperPropertyReferencesWithoutSuper = false;
-    private JSTypeRegistry registry;
-    private AstFactory astFactory;
-
-    Builder(AbstractCompiler compiler) {
-      checkNotNull(compiler);
-      this.compiler = compiler;
-    }
-
-    Builder rewriteSuperPropertyReferencesWithoutSuper(boolean value) {
-      rewriteSuperPropertyReferencesWithoutSuper = value;
-      return this;
-    }
-
-    RewriteAsyncFunctions build() {
-      astFactory = compiler.createAstFactory();
-      registry = compiler.getTypeRegistry();
-      return new RewriteAsyncFunctions(this);
-    }
+  static RewriteAsyncFunctions create(AbstractCompiler compiler) {
+    AstFactory astFactory = compiler.createAstFactory();
+    StaticScope namespace = compiler.getTranspilationNamespace();
+    return new RewriteAsyncFunctions(compiler, astFactory, namespace);
   }
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, externs, transpiledFeatures, this);
     TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
+    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, root, transpiledFeatures);
   }
 
   @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, transpiledFeatures, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
-  }
-
-  @Override
-  public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
+  public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
     if (parent == null) {
       checkState(contextStack.isEmpty());
-      contextStack.push(new RootContext(n));
+      String uniqueId = compiler.getUniqueIdSupplier().getUniqueId(t.getInput());
+      contextStack.push(new RootContext(n, uniqueId));
     } else {
       LexicalContext parentContext = contextStack.peek();
-      LexicalContext nodeContext = parentContext.getContextForNode(n);
+      LexicalContext nodeContext = parentContext.getContextForNode(t, n);
       if (nodeContext != parentContext) {
         contextStack.push(nodeContext);
       }
@@ -556,23 +503,26 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
       return;
     }
     Node newBody = astFactory.createBlock();
-    originalFunction.replaceChild(originalBody, newBody);
+    originalBody.replaceWith(newBody);
 
     if (functionContext.mustAddAsyncThisVariable) {
       // const this$ = this;
       newBody.addChildToBack(
-          astFactory.createThisAliasDeclarationForFunction(ASYNC_THIS, originalFunction));
+          astFactory.createSingleConstNameDeclaration(
+              ASYNC_THIS + functionContext.asyncThisAndArgumentsContext.uniqueId,
+              astFactory.createThis(functionContext.typeOfThis)));
       NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.CONST_DECLARATIONS, compiler);
     }
     if (functionContext.mustAddAsyncArgumentsVariable) {
       // const arguments$ = arguments;
-      newBody.addChildToBack(astFactory.createArgumentsAliasDeclaration(ASYNC_ARGUMENTS));
+      newBody.addChildToBack(
+          astFactory.createArgumentsAliasDeclaration(
+              ASYNC_ARGUMENTS + functionContext.asyncThisAndArgumentsContext.uniqueId));
       NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.CONST_DECLARATIONS, compiler);
     }
     for (SuperPropertyWrapperInfo superPropertyWrapperInfo :
         functionContext.superPropertyWrappers.asCollection()) {
       Node arrowFunction = functionContext.createWrapperArrowFunction(superPropertyWrapperInfo);
-
       // const super$get$x = () => super.x;
       Node arrowFunctionDeclarationStatement =
           astFactory.createSingleConstNameDeclaration(
@@ -593,12 +543,12 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
       originalBody =
           astFactory
               .createBlock(astFactory.createReturn(originalBody))
-              .useSourceInfoIfMissingFromForTree(originalBody);
+              .srcrefTreeIfMissing(originalBody);
     }
     // NOTE: visit() will already have made appropriate replacements in originalBody so it may
     // be used as the generator function body.
     Node generatorFunction =
-        astFactory.createZeroArgGeneratorFunction("", originalBody, originalFunction.getJSType());
+        astFactory.createZeroArgGeneratorFunction("", originalBody, /* returnType= */ null);
     compiler.reportChangeToChangeScope(generatorFunction);
     NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.GENERATORS, compiler);
 
@@ -606,9 +556,9 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     newBody.addChildToBack(
         astFactory.createReturn(
             astFactory.createJscompAsyncExecutePromiseGeneratorFunctionCall(
-                t.getScope(), generatorFunction)));
+                namespace, generatorFunction)));
 
-    newBody.useSourceInfoIfMissingFromForTree(originalBody);
+    newBody.srcrefTreeIfMissing(originalBody);
     compiler.reportChangeToEnclosingScope(newBody);
   }
 }

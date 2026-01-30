@@ -16,36 +16,32 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.javascript.jscomp.deps.ModuleLoader.LOAD_WARNING;
+
 import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for {@link RescopeGlobalSymbols}
- *
- */
+/** Unit tests for {@link RescopeGlobalSymbols} */
 @RunWith(JUnit4.class)
 public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   private static final String NAMESPACE = "_";
 
-  private boolean assumeCrossModuleNames = true;
+  private boolean assumeCrossChunkNames = true;
 
-  @Override protected CompilerPass getProcessor(Compiler compiler) {
-    return new RescopeGlobalSymbols(
-        compiler,
-        NAMESPACE,
-        false,
-        assumeCrossModuleNames);
+  @Override
+  protected CompilerPass getProcessor(Compiler compiler) {
+    return new RescopeGlobalSymbols(compiler, NAMESPACE, false, assumeCrossChunkNames);
   }
 
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
-    assumeCrossModuleNames = true;
+    assumeCrossChunkNames = true;
   }
 
   @Test
@@ -61,8 +57,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testVarDeclarations_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testVarDeclarations_allSameChunk() {
+    assumeCrossChunkNames = false;
     testSame("var a = 1;");
     testSame("var a = 1, b = 2, c = 3;");
     testSame("var a = 'str', b = 1, c = { foo: 'bar' }, d = function() {};");
@@ -73,52 +69,68 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testVarDeclarations_export() {
-    assumeCrossModuleNames = false;
+    assumeCrossChunkNames = false;
     test("var _dumpException = 1;", "_._dumpException = 1");
   }
 
   @Test
-  public void testVarDeclarations_acrossModules() {
-    assumeCrossModuleNames = false;
+  public void testVarDeclarations_acrossChunks() {
+    assumeCrossChunkNames = false;
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var a = 1;").addChunk("a").build(),
-        new String[] {"_.a = 1", "_.a"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("var a = 1;").addChunk("a").build()),
+        expected("_.a = 1", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var a = 1, b = 2, c = 3;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a = 1; b = 2; _.c = 3;", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a = 1, b = 2, c = 3;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a = 1; b = 2; _.c = 3;", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var a = 1, b = 2, c = 3;")
-            .addChunk("b;c;")
-            .build(),
-        new String[] {"var a;a = 1; _.b = 2; _.c = 3;", "_.b;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a = 1, b = 2, c = 3;")
+                .addChunk("b;c;")
+                .build()),
+        expected("var a;a = 1; _.b = 2; _.c = 3;", "_.b;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var a = 1, b = 2, c = 3;b;c;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a = 1; b = 2; _.c = 3;b;_.c", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a = 1, b = 2, c = 3;b;c;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a = 1; b = 2; _.c = 3;b;_.c", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var a, b = 1;").addChunk("b").build(),
-        new String[] {"var a;_.b = 1;", "_.b"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("var a, b = 1;").addChunk("b").build()),
+        expected("var a;_.b = 1;", "_.b"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var a, b = 1, c = 2;").addChunk("b").build(),
-        new String[] {"var a, c;_.b = 1;c = 2", "_.b"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a, b = 1, c = 2;")
+                .addChunk("b")
+                .build()),
+        expected("var a, c;_.b = 1;c = 2", "_.b"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var a, b = 1, c = 2;").addChunk("a").build(),
-        new String[] {"var b, c;b = 1;c = 2", "_.a"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a, b = 1, c = 2;")
+                .addChunk("a")
+                .build()),
+        expected("var b, c;b = 1;c = 2", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var a=1; var b=2,c=3;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a=1;b=2;_.c=3", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a=1; var b=2,c=3;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a=1;b=2;_.c=3", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("1;var a, b = 1, c = 2;").addChunk("b").build(),
-        new String[] {"var a, c;1;_.b = 1;c = 2", "_.b"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("1;var a, b = 1, c = 2;")
+                .addChunk("b")
+                .build()),
+        expected("var a, c;1;_.b = 1;c = 2", "_.b"));
   }
 
   @Test
@@ -134,8 +146,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testLetDeclarations_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testLetDeclarations_allSameChunk() {
+    assumeCrossChunkNames = false;
     testSame("let a = 1;");
     testSame("let a = 1, b = 2, c = 3;");
     testSame("let a = 'str', b = 1, c = { foo: 'bar' }, d = function() {};");
@@ -146,65 +158,83 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testLetDeclarations_export() {
-    assumeCrossModuleNames = false;
+    assumeCrossChunkNames = false;
     test("let _dumpException = 1;", "_._dumpException = 1");
   }
 
   @Test
-  public void testLetDeclarations_acrossModules() {
-    assumeCrossModuleNames = false;
-    // test references across modules.
+  public void testLetDeclarations_acrossChunks() {
+    assumeCrossChunkNames = false;
+    // test references across chunks.
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("let a = 1;").addChunk("a").build(),
-        new String[] {"_.a = 1", "_.a"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("let a = 1;").addChunk("a").build()),
+        expected("_.a = 1", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("let a = 1, b = 2, c = 3;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a = 1; b = 2; _.c = 3;", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("let a = 1, b = 2, c = 3;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a = 1; b = 2; _.c = 3;", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("let a = 1, b = 2, c = 3;")
-            .addChunk("b;c;")
-            .build(),
-        new String[] {"var a;a = 1; _.b = 2; _.c = 3;", "_.b;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("let a = 1, b = 2, c = 3;")
+                .addChunk("b;c;")
+                .build()),
+        expected("var a;a = 1; _.b = 2; _.c = 3;", "_.b;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("let a = 1, b = 2, c = 3;b;c;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a = 1; b = 2; _.c = 3;b;_.c", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("let a = 1, b = 2, c = 3;b;c;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a = 1; b = 2; _.c = 3;b;_.c", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("let a, b = 1;").addChunk("b").build(),
-        new String[] {"var a;_.b = 1;", "_.b"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("let a, b = 1;").addChunk("b").build()),
+        expected("var a;_.b = 1;", "_.b"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("let a, b = 1, c = 2;").addChunk("b").build(),
-        new String[] {"var a, c;_.b = 1;c = 2", "_.b"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("let a, b = 1, c = 2;")
+                .addChunk("b")
+                .build()),
+        expected("var a, c;_.b = 1;c = 2", "_.b"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("let a, b = 1, c = 2;").addChunk("a").build(),
-        new String[] {"var b, c;b = 1;c = 2", "_.a"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("let a, b = 1, c = 2;")
+                .addChunk("a")
+                .build()),
+        expected("var b, c;b = 1;c = 2", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("let a=1; let b=2,c=3;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a=1;b=2;_.c=3", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("let a=1; let b=2,c=3;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a=1;b=2;_.c=3", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("1;let a, b = 1, c = 2;").addChunk("b").build(),
-        new String[] {"var a, c;1;_.b = 1;c = 2", "_.b"});
-    // test non-globals with same name as cross-module globals.
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("1;let a, b = 1, c = 2;")
+                .addChunk("b")
+                .build()),
+        expected("var a, c;1;_.b = 1;c = 2", "_.b"));
+    // test non-globals with same name as cross-chunk globals.
     testSame(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("1;let a, b = 1, c = 2;")
-            .addChunk("if (true) { let b = 3; b; }")
-            .build());
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("1;let a, b = 1, c = 2;")
+                .addChunk("if (true) { let b = 3; b; }")
+                .build()));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("1;let a, b = 1, c = 2;")
-            .addChunk("b; if (true) { let b = 3; b; }")
-            .build(),
-        new String[] {"var a, c; 1;_.b = 1;c = 2", "_.b; if (true) { let b = 3; b; }"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("1;let a, b = 1, c = 2;")
+                .addChunk("b; if (true) { let b = 3; b; }")
+                .build()),
+        expected("var a, c; 1;_.b = 1;c = 2", "_.b; if (true) { let b = 3; b; }"));
   }
 
   @Test
@@ -218,8 +248,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testConstDeclarations_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testConstDeclarations_allSameChunk() {
+    assumeCrossChunkNames = false;
     testSame("const a = 1;");
     testSame("const a = 1, b = 2, c = 3;");
     testSame("const a = 'str', b = 1, c = { foo: 'bar' }, d = function() {};");
@@ -228,53 +258,59 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testConstDeclarations_export() {
-    assumeCrossModuleNames = false;
+    assumeCrossChunkNames = false;
     test("const _dumpException = 1;", "_._dumpException = 1");
   }
 
   @Test
-  public void testConstDeclarations_acrossModules() {
-    assumeCrossModuleNames = false;
-    // test references across modules.
+  public void testConstDeclarations_acrossChunks() {
+    assumeCrossChunkNames = false;
+    // test references across chunks.
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("const a = 1;").addChunk("a").build(),
-        new String[] {"_.a = 1", "_.a"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("const a = 1;").addChunk("a").build()),
+        expected("_.a = 1", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("const a = 1, b = 2, c = 3;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a = 1; b = 2; _.c = 3;", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("const a = 1, b = 2, c = 3;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a = 1; b = 2; _.c = 3;", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("const a = 1, b = 2, c = 3;")
-            .addChunk("b;c;")
-            .build(),
-        new String[] {"var a;a = 1; _.b = 2; _.c = 3;", "_.b;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("const a = 1, b = 2, c = 3;")
+                .addChunk("b;c;")
+                .build()),
+        expected("var a;a = 1; _.b = 2; _.c = 3;", "_.b;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("const a = 1, b = 2, c = 3;b;c;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a = 1; b = 2; _.c = 3;b;_.c", "_.a;_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("const a = 1, b = 2, c = 3;b;c;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a = 1; b = 2; _.c = 3;b;_.c", "_.a;_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("const a=1; const b=2,c=3;")
-            .addChunk("a;c;")
-            .build(),
-        new String[] {"var b;_.a=1;b=2;_.c=3", "_.a;_.c"});
-    // test non-globals with same name as cross-module globals.
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("const a=1; const b=2,c=3;")
+                .addChunk("a;c;")
+                .build()),
+        expected("var b;_.a=1;b=2;_.c=3", "_.a;_.c"));
+    // test non-globals with same name as cross-chunk globals.
     testSame(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("1;const a = 1, b = 1, c = 2;")
-            .addChunk("if (true) { const b = 3; b; }")
-            .build());
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("1;const a = 1, b = 1, c = 2;")
+                .addChunk("if (true) { const b = 3; b; }")
+                .build()));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("1;const a = 1, b = 1, c = 2;")
-            .addChunk("b; if (true) { const b = 3; b; }")
-            .build(),
-        new String[] {"var a, c; 1;a = 1; _.b = 1;c = 2", "_.b; if (true) { const b = 3; b; }"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("1;const a = 1, b = 1, c = 2;")
+                .addChunk("b; if (true) { const b = 3; b; }")
+                .build()),
+        expected("var a, c; 1;a = 1; _.b = 1;c = 2", "_.b; if (true) { const b = 3; b; }"));
   }
 
   @Test
@@ -299,8 +335,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testObjectDestructuringDeclarations_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testObjectDestructuringDeclarations_allSameChunk() {
+    assumeCrossChunkNames = false;
     testSame("var {a} = {}; a;");
     testSame("var {a: a} = {}; a;");
     testSame("var {key: a} = {}; a;");
@@ -317,51 +353,60 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testObjectDestructuringDeclarations_acrossModules() {
-    assumeCrossModuleNames = false;
+  public void testObjectDestructuringDeclarations_acrossChunks() {
+    assumeCrossChunkNames = false;
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var {a: a} = {};").addChunk("a").build(),
-        new String[] {"({a: _.a} = {});", "_.a"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("var {a: a} = {};").addChunk("a").build()),
+        expected("({a: _.a} = {});", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var {a: a, b: b, c: c} = {};")
-            .addChunk("a; c;")
-            .build(),
-        new String[] {"var b;({a: _.a, b: b, c: _.c} = {});", "_.a; _.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var {a: a, b: b, c: c} = {};")
+                .addChunk("a; c;")
+                .build()),
+        expected("var b;({a: _.a, b: b, c: _.c} = {});", "_.a; _.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var {a: a, b: b, c: c} = {};")
-            .addChunk("b; c;")
-            .build(),
-        new String[] {"var a;({a: a, b: _.b, c: _.c} = {});", "_.b; _.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var {a: a, b: b, c: c} = {};")
+                .addChunk("b; c;")
+                .build()),
+        expected("var a;({a: a, b: _.b, c: _.c} = {});", "_.b; _.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var {a: a, b: b, c: c} = {}; b; c;")
-            .addChunk("a; c;")
-            .build(),
-        new String[] {"var b;({a: _.a, b: b, c: _.c} = {});b;_.c;", "_.a; _.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var {a: a, b: b, c: c} = {}; b; c;")
+                .addChunk("a; c;")
+                .build()),
+        expected("var b;({a: _.a, b: b, c: _.c} = {});b;_.c;", "_.a; _.c"));
 
     // Test var declarations containing a mix of destructuring and regular names
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var {a} = {}, b;").addChunk("a").build(),
-        new String[] {"var b; ({a: _.a} = {});", "_.a"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("var {a} = {}, b;").addChunk("a").build()),
+        expected("var b; ({a: _.a} = {});", "_.a"));
 
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var {a} = {}, b = 3;").addChunk("b").build(),
-        new String[] {"var a; ({a} = {}); _.b = 3;", "_.b"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var {a} = {}, b = 3;")
+                .addChunk("b")
+                .build()),
+        expected("var a; ({a} = {}); _.b = 3;", "_.b"));
 
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var {a: a, ...c} = {};")
-            .addChunk("a;")
-            .build(),
-        new String[] {"var c; ({a: _.a, ...c} = {});", "_.a;"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var {a: a, ...c} = {};")
+                .addChunk("a;")
+                .build()),
+        expected("var c; ({a: _.a, ...c} = {});", "_.a;"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var {a: a, ...c} = {};")
-            .addChunk("c;")
-            .build(),
-        new String[] {"var a; ({a: a, ..._.c} = {});", "_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var {a: a, ...c} = {};")
+                .addChunk("c;")
+                .build()),
+        expected("var a; ({a: a, ..._.c} = {});", "_.c"));
   }
 
   @Test
@@ -397,8 +442,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testArrayDestructuringDeclarations_sameModule() {
-    assumeCrossModuleNames = false;
+  public void testArrayDestructuringDeclarations_sameChunk() {
+    assumeCrossChunkNames = false;
     testSame("var [a] = [1]; a");
     testSame("var [a, b] = [1, 2]; a; b;");
     testSame("var [[a, b], c] = []; a; b; c");
@@ -409,36 +454,47 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testArrayDestructuringDeclarations_acrossModules() {
-    assumeCrossModuleNames = false;
+  public void testArrayDestructuringDeclarations_acrossChunks() {
+    assumeCrossChunkNames = false;
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var [a] = [];").addChunk("a").build(),
-        new String[] {"[_.a] = [];", "_.a"});
+        srcs(JSChunkGraphBuilder.forUnordered().addChunk("var [a] = [];").addChunk("a").build()),
+        expected("[_.a] = [];", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var [a, b, c] = [];")
-            .addChunk("a; c;")
-            .build(),
-        new String[] {"var b; [_.a, b, _.c] = [];", "_.a; _.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var [a, b, c] = [];")
+                .addChunk("a; c;")
+                .build()),
+        expected("var b; [_.a, b, _.c] = [];", "_.a; _.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var [a, b, c] = [];")
-            .addChunk("b; c;")
-            .build(),
-        new String[] {"var a; [a, _.b, _.c] = [];", "_.b; _.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var [a, b, c] = [];")
+                .addChunk("b; c;")
+                .build()),
+        expected("var a; [a, _.b, _.c] = [];", "_.b; _.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var [a, b, c] = []; b; c;")
-            .addChunk("a; c;")
-            .build(),
-        new String[] {"var b; [_.a, b, _.c] = []; b; _.c;", "_.a; _.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var [a, b, c] = []; b; c;")
+                .addChunk("a; c;")
+                .build()),
+        expected("var b; [_.a, b, _.c] = []; b; _.c;", "_.a; _.c"));
 
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var [a, ...c] = [];").addChunk("a;").build(),
-        new String[] {"var c; ([_.a, ...c] = []);", "_.a;"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var [a, ...c] = [];")
+                .addChunk("a;")
+                .build()),
+        expected("var c; ([_.a, ...c] = []);", "_.a;"));
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("var [a, ...c] = [];").addChunk("c;").build(),
-        new String[] {"var a; ([a, ..._.c] = []);", "_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var [a, ...c] = [];")
+                .addChunk("c;")
+                .build()),
+        expected("var a; ([a, ..._.c] = []);", "_.c"));
   }
 
   @Test
@@ -468,22 +524,24 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
     test("class A {} class B extends A {}", "_.A = class {}; _.B = class extends _.A {}");
     test("class A {} let a = new A;", "_.A = class {}; _.a = new _.A;");
     test(
-        lines(
-            "const PI = 3.14;",
-            "class A {",
-            "  static printPi() {",
-            "    console.log(PI);",
-            "  }",
-            "}",
-            "A.printPi();"),
-        lines(
-            "_.PI = 3.14;",
-            "_.A = class {",
-            "  static printPi() {",
-            "    console.log(_.PI);",
-            "  }",
-            "}",
-            "_.A.printPi();"));
+        """
+        const PI = 3.14;
+        class A {
+          static printPi() {
+            console.log(PI);
+          }
+        }
+        A.printPi();
+        """,
+        """
+        _.PI = 3.14;
+        _.A = class {
+          static printPi() {
+            console.log(_.PI);
+          }
+        }
+        _.A.printPi();
+        """);
 
     // Test that class expression names are not rewritten.
     test("var A = class Name {};", "_.A = class Name {};");
@@ -498,8 +556,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testClasses_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testClasses_allSameChunk() {
+    assumeCrossChunkNames = false;
     test("class A {}", "var A = class {};");
     test("class A {} class B extends A {}", "var A = class {}; var B = class extends A {}");
     testSame("if (true) { class A {} }");
@@ -507,53 +565,49 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testForLoops() {
-    assumeCrossModuleNames = false;
+    assumeCrossChunkNames = false;
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("for (var i = 0, c = 2; i < 1000; i++);")
-            .addChunk("c")
-            .build(),
-        new String[] {"var i;for (i = 0, _.c = 2; i < 1000; i++);", "_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("for (var i = 0, c = 2; i < 1000; i++);")
+                .addChunk("c")
+                .build()),
+        expected("var i;for (i = 0, _.c = 2; i < 1000; i++);", "_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("      for (var i = 0, c = 2;   i < 1000;   i++);")
-            .addChunk("i")
-            .build(),
-        new String[] {"var c;for (  _.i = 0, c = 2; _.i < 1000; _.i++);", "_.i"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("      for (var i = 0, c = 2;   i < 1000;   i++);")
+                .addChunk("i")
+                .build()),
+        expected("var c;for (  _.i = 0, c = 2; _.i < 1000; _.i++);", "_.i"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for (var {i: i, c:   c} = {};  i < 1000; i++);")
-            .addChunk("c")
-            .build(),
-        new String[] {"var i; for (   ({i: i, c: _.c} = {}); i < 1000; i++);", "_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for (var {i: i, c:   c} = {};  i < 1000; i++);")
+                .addChunk("c")
+                .build()),
+        expected("var i; for (   ({i: i, c: _.c} = {}); i < 1000; i++);", "_.c"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for (var [i,   c] = [0, 2]; i < 1000; i++);")
-            .addChunk("c;")
-            .build(),
-        new String[] {"var i; for (    [i, _.c] = [0, 2]; i < 1000; i++);", "_.c;"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for (var [i,   c] = [0, 2]; i < 1000; i++);")
+                .addChunk("c;")
+                .build()),
+        expected("var i; for (    [i, _.c] = [0, 2]; i < 1000; i++);", "_.c;"));
   }
 
   @Test
-  public void testForLoops_acrossModules() {
-    test(
-        "for (var i = 0; i < 1000; i++);",
-        "for (_.i = 0; _.i < 1000; _.i++);");
-    test(
-        "for (var i = 0, c = 2; i < 1000; i++);",
-        "for (_.i = 0, _.c = 2; _.i < 1000; _.i++);");
+  public void testForLoops_acrossChunks() {
+    test("for (var i = 0; i < 1000; i++);", "for (_.i = 0; _.i < 1000; _.i++);");
+    test("for (var i = 0, c = 2; i < 1000; i++);", "for (_.i = 0, _.c = 2; _.i < 1000; _.i++);");
     test(
         "for (var i = 0, c = 2, d = 3; i < 1000; i++);",
         "for (_.i = 0, _.c = 2, _.d = 3; _.i < 1000; _.i++);");
     test(
         "for (var i = 0, c = 2, d = 3, e = 4; i < 1000; i++);",
         "for (_.i = 0, _.c = 2, _.d = 3, _.e = 4; _.i < 1000; _.i++);");
-    test(
-        "for (var i = 0; i < 1000;)i++;",
-        "for (_.i = 0; _.i < 1000;)_.i++;");
-    test(
-        "for (var i = 0,b; i < 1000;)i++;b++",
-        "for (_.i = 0,_.b; _.i < 1000;)_.i++;_.b++");
+    test("for (var i = 0; i < 1000;)i++;", "for (_.i = 0; _.i < 1000;)_.i++;");
+    test("for (var i = 0,b; i < 1000;)i++;b++", "for (_.i = 0,_.b; _.i < 1000;)_.i++;_.b++");
     test("var o={};for (var i in o)i++;", "_.o={};for (_.i in _.o)_.i++;");
 
     // Test destructuring.
@@ -563,109 +617,122 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testForInLoops_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testForInLoops_allSameChunk() {
+    assumeCrossChunkNames = false;
     testSame("for (var i in {});");
     testSame("for (var [a] in {});");
     testSame("for (var {a: a} in {});");
   }
 
   @Test
-  public void testForInLoops_acrossModules() {
-    assumeCrossModuleNames = false;
+  public void testForInLoops_acrossChunks() {
+    assumeCrossChunkNames = false;
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("for (var i in {});").addChunk("i").build(),
-        new String[] {"for (_.i in {});", "_.i"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("for (var i in {});")
+                .addChunk("i")
+                .build()),
+        expected("for (_.i in {});", "_.i"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for (var [  a, b] in {});")
-            .addChunk("a;")
-            .build(),
-        new String[] {"var b; for (    [_.a, b] in {});", "_.a"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for (var [  a, b] in {});")
+                .addChunk("a;")
+                .build()),
+        expected("var b; for (    [_.a, b] in {});", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for (var {i: i, c:   c} in {});")
-            .addChunk("c")
-            .build(),
-        new String[] {"var i; for (    {i: i, c: _.c} in {});", "_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for (var {i: i, c:   c} in {});")
+                .addChunk("c")
+                .build()),
+        expected("var i; for (    {i: i, c: _.c} in {});", "_.c"));
   }
 
   @Test
-  public void testForOfLoops_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testForOfLoops_allSameChunk() {
+    assumeCrossChunkNames = false;
     testSame("for (var i of [1, 2, 3]);");
     testSame("for (var [a] of []);");
     testSame("for (var {a: a} of {});");
   }
 
   @Test
-  public void testForOfLoops_acrossModules() {
-    assumeCrossModuleNames = false;
+  public void testForOfLoops_acrossChunks() {
+    assumeCrossChunkNames = false;
     test(
-        JSChunkGraphBuilder.forUnordered().addChunk("for (var i of []);").addChunk("i").build(),
-        new String[] {"for (_.i of []);", "_.i"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("for (var i of []);")
+                .addChunk("i")
+                .build()),
+        expected("for (_.i of []);", "_.i"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for (var [  a, b] of []);")
-            .addChunk("a;")
-            .build(),
-        new String[] {"var b; for (    [_.a, b] of []);", "_.a"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for (var [  a, b] of []);")
+                .addChunk("a;")
+                .build()),
+        expected("var b; for (    [_.a, b] of []);", "_.a"));
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for (var {i: i, c:   c} of []);")
-            .addChunk("c")
-            .build(),
-        new String[] {"var i; for (    {i: i, c: _.c} of []);", "_.c"});
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for (var {i: i, c:   c} of []);")
+                .addChunk("c")
+                .build()),
+        expected("var i; for (    {i: i, c: _.c} of []);", "_.c"));
   }
 
   @Test
-  public void testForAwaitOfLoops_allSameModule() {
-    assumeCrossModuleNames = false;
-    testSame("for await (var i of [1, 2, 3]);");
-    testSame("for await (var [a] of []);");
-    testSame("for await (var {a: a} of {});");
+  public void testForAwaitOfLoops_allSameChunk() {
+    assumeCrossChunkNames = false;
+    testSame("async () => { for await (var i of [1, 2, 3]);}");
+    testSame("async () => { for await (var [a] of []);}");
+    testSame("async () => { for await (var {a: a} of {});}");
   }
 
   @Test
-  public void testForAwaitOfLoops_acrossModules() {
-    assumeCrossModuleNames = false;
-    test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("for await (var i of []);")
-            .addChunk("i")
-            .build(), //
-        new String[] {"for await (_.i of []);", "_.i"});
-    test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for await (var [  a, b] of []);")
-            .addChunk("a;")
-            .build(),
-        new String[] {"var b; for await (    [_.a, b] of []);", "_.a"});
-    test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("       for await (var {i: i, c:   c} of []);")
-            .addChunk("c")
-            .build(),
-        new String[] {"var i; for await (    {i: i, c: _.c} of []);", "_.c"});
+  public void testForAwaitOfLoops_acrossChunks() {
+    // TODO(b/128938049): re-enable it once we support top-level await.
+    assumeCrossChunkNames = false;
+    testError(
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("for await (var i of []);")
+                .addChunk("i")
+                .build()),
+        RhinoErrorReporter.PARSE_ERROR);
+    testError(
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for await (var [  a, b] of []);")
+                .addChunk("a;")
+                .build()),
+        RhinoErrorReporter.PARSE_ERROR);
+    testError(
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("       for await (var {i: i, c:   c} of []);")
+                .addChunk("c")
+                .build()),
+        RhinoErrorReporter.PARSE_ERROR);
   }
 
   @Test
   public void testFunctionStatements() {
-    test(
-        "function test(){}",
-        "_.test=function (){}");
-    test(
-        "if(1)function test(){}",
-        "if(1)_.test=function (){}");
+    test("function test(){}", "_.test=function (){}");
+    // Ignore block-scoped function declarations.
+    testSame("if(1) function test(){}");
     test("async function test() {}", "_.test = async function() {}");
     test("function *test() {}", "_.test = function *() {}");
   }
 
   @Test
-  public void testFunctionStatements_allSameModule() {
-    assumeCrossModuleNames = false;
+  public void testFunctionStatements_allSameChunk() {
+    assumeCrossChunkNames = false;
     test("function f() {}", "var f = function() {}");
-    test("if (true) { function f() {} }", "if (true) { var f = function() {}; }");
+    testSame("if (true) { function f() {} }");
   }
 
   @Test
@@ -676,32 +743,20 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
     test(
         "function x(){this};var y=function(){var val=x()||{}}",
         "_.x=function(){this};_.y=function(){var val=(0,_.x)()||{}}");
-    test(
-        "function x(){this;x()}",
-        "_.x=function(){this;(0,_.x)()}");
-    test(
-        "var a=function(){this};a()",
-        "_.a=function(){this};(0,_.a)()");
+    test("function x(){this;x()}", "_.x=function(){this;(0,_.x)()}");
+    test("var a=function(){this};a()", "_.a=function(){this};(0,_.a)()");
     // Always trigger free calls for variables assigned through destructuring.
     test("var {a: a} = {a: function() {}}; a();", "({a:_.a}={a:function(){}});(0,_.a)()");
 
-    test(
-        "var ns = {}; ns.a = function() {}; ns.a()",
-        "_.ns={};_.ns.a=function(){};_.ns.a()");
+    test("var ns = {}; ns.a = function() {}; ns.a()", "_.ns={};_.ns.a=function(){};_.ns.a()");
   }
 
   @Test
   public void testFunctionStatements_freeCallSemantics2() {
     // Cases where free call forcing through (0, foo)() is not necessary.
-    test(
-        "var a=function(){};a()",
-        "_.a=function(){};_.a()");
-    test(
-        "function a(){};a()",
-        "_.a=function(){};;_.a()");
-    test(
-        "var a;a=function(){};a()",
-        "_.a=function(){};_.a()");
+    test("var a=function(){};a()", "_.a=function(){};_.a()");
+    test("function a(){};a()", "_.a=function(){};;_.a()");
+    test("var a;a=function(){};a()", "_.a=function(){};_.a()");
 
     // Test that calls to arrow functions are not forced to be free calls
     test("var a = () => {}; a();", "_.a = () => {}; _.a();");
@@ -714,9 +769,7 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
     // Ambiguous cases.
     test("var a=1;a=function(){};a()", "_.a=1;_.a=function(){};(0,_.a)()");
-    test(
-        "var b;var a=b;a()",
-        "_.a=_.b;(0,_.a)()");
+    test("var b;var a=b;a()", "_.a=_.b;(0,_.a)()");
   }
 
   @Test
@@ -726,15 +779,9 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testDeeperScopes() {
-    test(
-        "var a = function(b){return b}",
-        "_.a = function(b){return b}");
-    test(
-        "var a = function(b){var a; return a+b}",
-        "_.a = function(b){var a; return a+b}");
-    test(
-        "var a = function(a,b){return a+b}",
-        "_.a = function(a,b){return a+b}");
+    test("var a = function(b){return b}", "_.a = function(b){return b}");
+    test("var a = function(b){var a; return a+b}", "_.a = function(b){var a; return a+b}");
+    test("var a = function(a,b){return a+b}", "_.a = function(a,b){return a+b}");
     test(
         "var x=1,a = function(b){var a; return a+b+x}",
         "_.x=1;_.a = function(b){var a; return a+b+_.x}");
@@ -745,16 +792,12 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testTryCatch() {
-    test(
-        "try{var a = 1}catch(e){throw e}",
-        "try{_.a = 1}catch(e){throw e}");
+    test("try{var a = 1}catch(e){throw e}", "try{_.a = 1}catch(e){throw e}");
   }
 
   @Test
   public void testShadowInFunctionScope() {
-    test(
-        "var _ = 1; (function () { _ = 2 })()",
-        "_._ = 1; (function () { _._ = 2 })()");
+    test("var _ = 1; (function () { _ = 2 })()", "_._ = 1; (function () { _._ = 2 })()");
     test(
         "function foo() { var _ = {}; _.foo = foo; _.bar = 1; }",
         "_.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1}");
@@ -762,29 +805,43 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
         "function foo() { var {key: _} = {}; _.foo = foo; _.bar = 1; }",
         "_.foo = function () { var {key: _$} = {}; _$.foo = _.foo; _$.bar = 1}");
     test(
-        lines(
-            "function foo() { var _ = {}; _.foo = foo; _.bar = 1; ",
-            "(function() { var _ = 0;})() }"),
-        lines(
-            "_.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1; ",
-            "(function() { var _$ = 0;})() }"));
+        """
+        function foo() { var _ = {}; _.foo = foo; _.bar = 1;
+        (function() { var _ = 0;})() }
+        """,
+        """
+        _.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1;
+        (function() { var _$ = 0;})() }
+        """);
     test(
-        "function foo() { var _ = {}; _.foo = foo; _.bar = 1; "
-        + "var _$ = 1; }",
-        "_.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1; "
-        + "var _$$ = 1; }");
+        """
+        function foo() { var _ = {}; _.foo = foo; _.bar = 1;
+        var _$ = 1; }
+        """,
+        """
+        _.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1;
+        var _$$ = 1; }
+        """);
     test(
-        "function foo() { var _ = {}; _.foo = foo; _.bar = 1; "
-        + "var _$ = 1; (function() { _ = _$ })() }",
-        "_.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1; "
-        + "var _$$ = 1; (function() { _$ = _$$ })() }");
+        """
+        function foo() { var _ = {}; _.foo = foo; _.bar = 1;
+        var _$ = 1; (function() { _ = _$ })() }
+        """,
+        """
+        _.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1;
+        var _$$ = 1; (function() { _$ = _$$ })() }
+        """);
     test(
-        "function foo() { var _ = {}; _.foo = foo; _.bar = 1; "
-        + "var _$ = 1, _$$ = 2 (function() { _ = _$ = _$$; " +
-        "var _$, _$$$ })() }",
-        "_.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1; "
-        + "var _$$ = 1, _$$$ = 2 (function() { _$ = _$$ = _$$$; "
-        + "var _$$, _$$$$ })() }");
+        """
+        function foo() { var _ = {}; _.foo = foo; _.bar = 1;
+        var _$ = 1, _$$ = 2 (function() { _ = _$ = _$$;
+        var _$, _$$$ })() }
+        """,
+        """
+        _.foo = function () { var _$ = {}; _$.foo = _.foo; _$.bar = 1;
+        var _$$ = 1, _$$$ = 2 (function() { _$ = _$$ = _$$$;
+        var _$$, _$$$$ })() }
+        """);
     test(
         "var a = 5; function foo(_) { return _; }", "_.a = 5; _.foo = function(_$) { return _$; }");
     test(
@@ -848,9 +905,11 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
     test(externs(""), srcs("document"), expected("document"));
     // Javascript builtin objects
     testSame(
-        "Object;Function;Array;String;Boolean;Number;Math;"
-        + "Date;RegExp;JSON;Error;EvalError;ReferenceError;"
-        + "SyntaxError;TypeError;URIError;");
+        """
+        Object;Function;Array;String;Boolean;Number;Math;
+        Date;RegExp;JSON;Error;EvalError;ReferenceError;
+        SyntaxError;TypeError;URIError;
+        """);
   }
 
   @Test
@@ -893,31 +952,33 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testSameVarDeclaredInExternsAndSource2() {
-    assumeCrossModuleNames = false;
+    assumeCrossChunkNames = false;
 
     test(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk(
-                lines(
-                    "Foo = function() { this.b = ns; };",
-                    "var f = function(a) {",
-                    "  if (a instanceof Foo && a.b === ns) {}",
-                    "},",
-                    "ns = {},",
-                    "g = function(a) { var b = new Foo; };"))
-            .addChunk("f; g;")
-            .build(),
-        new String[] {
-          lines(
-              "var ns;",
-              "Foo = function() { this.b = ns; };",
-              "_.f = function(a) {",
-              "  if (a instanceof Foo && a.b === ns) {}",
-              "};",
-              "ns = {};",
-              "_.g = function(a) { var b = new Foo; };"),
-          "_.f; _.g;"
-        });
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk(
+                    """
+                    Foo = function() { this.b = ns; };
+                    var f = function(a) {
+                      if (a instanceof Foo && a.b === ns) {}
+                    },
+                    ns = {},
+                    g = function(a) { var b = new Foo; };
+                    """)
+                .addChunk("f; g;")
+                .build()),
+        expected(
+            """
+            var ns;
+            Foo = function() { this.b = ns; };
+            _.f = function(a) {
+              if (a instanceof Foo && a.b === ns) {}
+            };
+            ns = {};
+            _.g = function(a) { var b = new Foo; };
+            """,
+            "_.f; _.g;"));
 
     test(
         externs("var y;"),
@@ -945,15 +1006,17 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   @Test
   public void testEs6Modules() {
+    ignoreWarnings(LOAD_WARNING);
     // Test that this pass does nothing to ES6 modules.
     testSame("var a = 3; a; export default a;");
 
-    assumeCrossModuleNames = false;
+    assumeCrossChunkNames = false;
     testSame(
-        JSChunkGraphBuilder.forUnordered()
-            .addChunk("var a = 3; export {a};")
-            .addChunk("import {a} from './input0';")
-            .build());
+        srcs(
+            JSChunkGraphBuilder.forUnordered()
+                .addChunk("var a = 3; export {a};")
+                .addChunk("import {a} from './input0';")
+                .build()));
   }
 
   @Test

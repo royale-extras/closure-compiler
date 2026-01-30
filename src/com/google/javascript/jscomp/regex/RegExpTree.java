@@ -18,62 +18,51 @@ package com.google.javascript.jscomp.regex;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static java.lang.Math.min;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
-/**
- * An AST for JavaScript regular expressions.
- */
+/** An AST for JavaScript regular expressions. */
 public abstract class RegExpTree {
 
   /**
-   * Returns a simpler regular expression that is semantically the same assuming
-   * the given flags.
+   * Returns a simpler regular expression that is semantically the same assuming the given flags.
+   *
    * @param flags Regular expression flags, e.g. {@code "igm"}.
    */
   public abstract RegExpTree simplify(String flags);
 
   /**
-   * True if the presence or absence of an {@code "i"} flag would change the
-   * meaning of this regular expression.
+   * True if the presence or absence of an {@code "i"} flag would change the meaning of this regular
+   * expression.
    */
   public abstract boolean isCaseSensitive();
 
-  /**
-   * True if the regular expression contains an anchor : {@code ^} or {@code $}.
-   */
+  /** True if the regular expression contains an anchor : {@code ^} or {@code $}. */
   public abstract boolean containsAnchor();
 
-  /**
-   * True if the regular expression contains capturing groups.
-   */
+  /** True if the regular expression contains capturing groups. */
   public final boolean hasCapturingGroup() {
     return numCapturingGroups() != 0;
   }
 
-  /**
-   * The number of capturing groups.
-   */
+  /** The number of capturing groups. */
   public abstract int numCapturingGroups();
 
-  /**
-   * The children of this node.
-   */
+  /** The children of this node. */
   public abstract List<? extends RegExpTree> children();
 
-  /**
-   * Appends this regular expression source to the given buffer.
-   */
+  /** Appends this regular expression source to the given buffer. */
   protected abstract void appendSourceCode(StringBuilder sb);
 
   protected abstract void appendDebugInfo(StringBuilder sb);
@@ -113,19 +102,22 @@ public abstract class RegExpTree {
    * @param pattern The {@code foo} From {@code /foo/i}.
    * @param flags The {@code i} From {@code /foo/i}.
    */
-  public static RegExpTree parseRegExp(
-      final String pattern, final String flags) {
+  public static RegExpTree parseRegExp(final String pattern, final String flags) {
 
-    /** A recursive descent parser that closes over pattern and flags above. */
+    /* A recursive descent parser that closes over pattern and flags above. */
     class Parser {
       /** The number of characters in pattern consumed. */
       int pos;
+
       /** The number of capturing groups seen so far. */
       int numCapturingGroups;
+
       /** The names of capturing groups in the regex expression */
-      Set<String> capturingGroupNames = new HashSet<>();
+      final Set<String> capturingGroupNames = new LinkedHashSet<>();
+
       /** The length of pattern. */
       final int limit = pattern.length();
+
       /** Boolean indicating whether we should look for named capture group backreferences */
       boolean lookForNamedCaptureBackreferences;
 
@@ -147,7 +139,7 @@ public abstract class RegExpTree {
           out = parse();
         }
 
-        if (pos < limit) {  // Unmatched closed paren maybe.
+        if (pos < limit) { // Unmatched closed paren maybe.
           throw new IllegalArgumentException(pattern.substring(pos));
         }
         return out;
@@ -164,34 +156,27 @@ public abstract class RegExpTree {
           char ch = pattern.charAt(pos);
           RegExpTree atom;
           switch (ch) {
-            case '[':
-              atom = parseCharset();
-              break;
-            case '(':
-              atom = parseParenthetical();
-              break;
-            case ')':
+            case '[' -> atom = parseCharset();
+            case '(' -> atom = parseParenthetical();
+            case ')' -> {
               break topLoop;
-            case '\\':
-              atom = parseEscape();
-              break;
-            case '^':
-            case '$':
+            }
+            case '\\' -> atom = parseEscape();
+            case '^', '$' -> {
               atom = new Anchor(ch);
               ++pos;
-              break;
-            case '.':
+            }
+            case '.' -> {
               // We represent . as a character set to make it easy to simplify
               // things like /.|[\r\n]/.
               atom = DOT_CHARSET;
               ++pos;
-              break;
-            case '|':
-              // An alternative may be empty as in /foo||bar/.
-              // The '|' is consumed below.
-              atom = Empty.INSTANCE;
-              break;
-            default:
+            }
+            case '|' ->
+                // An alternative may be empty as in /foo||bar/.
+                // The '|' is consumed below.
+                atom = Empty.INSTANCE;
+            default -> {
               // Find a run of concatenated characters to avoid building a
               // tree node per literal character.
               int start = pos;
@@ -216,8 +201,7 @@ public abstract class RegExpTree {
                     // Repetition binds more tightly than concatenation.
                     // Only consume up to "foo" in /foob*/ so that the suffix
                     // operator parser below has the right precedence.
-                    if (end + 1 >= limit
-                        || !isRepetitionStart(pattern.charAt(end + 1))) {
+                    if (end + 1 >= limit || !isRepetitionStart(pattern.charAt(end + 1))) {
                       ++end;
                     } else {
                       break charsLoop;
@@ -226,7 +210,7 @@ public abstract class RegExpTree {
               }
               atom = new Text(pattern.substring(start, end));
               pos = end;
-              break;
+            }
           }
           if (pos < limit && isRepetitionStart(pattern.charAt(pos))) {
             atom = parseRepetition(atom);
@@ -249,7 +233,9 @@ public abstract class RegExpTree {
           }
         }
         // An alternative may have no parsed content blank as in /foo|/.
-        if (preceder == null) { preceder = Empty.INSTANCE; }
+        if (preceder == null) {
+          preceder = Empty.INSTANCE;
+        }
         if (alternatives != null) {
           alternatives.add(preceder);
           return new Alternation(alternatives.build());
@@ -259,9 +245,8 @@ public abstract class RegExpTree {
       }
 
       /**
-       * Handles capturing groups {@code (...)},
-       * non-capturing groups {@code (?:...)}, and lookahead assertions
-       * {@code (?=...)}.
+       * Handles capturing groups {@code (...)}, non-capturing groups {@code (?:...)}, and lookahead
+       * assertions {@code (?=...)}.
        */
       private RegExpTree parseParenthetical() {
         checkState(pattern.charAt(pos) == '(');
@@ -273,42 +258,38 @@ public abstract class RegExpTree {
           if (pos + 1 < limit) {
             char ch = pattern.charAt(pos + 1);
             switch (ch) {
+              case ':' -> {
                 // (?:...) Non-capturing groups.
-              case ':':
                 pos += 2;
                 type = ParentheticalType.NONCAPTURING;
-                break;
-
-                // (?=...) and (?!...) Lookahead Assertions
-              case '=':
+              }
+              // (?=...) and (?!...) Lookahead Assertions
+              case '=' -> {
                 pos += 2;
                 type = ParentheticalType.POSITIVE_LOOKAHEAD;
-                break;
-              case '!':
+              }
+              case '!' -> {
                 pos += 2;
                 type = ParentheticalType.NEGATIVE_LOOKAHEAD;
-                break;
-
-                // (?<=...) and (?<!...) Lookbehind Assertions, (?<name>) named groups
-              case '<':
+              }
+              // (?<=...) and (?<!...) Lookbehind Assertions, (?<name>) named groups
+              case '<' -> {
                 if (pos + 2 < limit && pattern.charAt(pos + 2) == '=') {
                   pos += 3;
                   type = ParentheticalType.POSITIVE_LOOKBEHIND;
-                  break;
                 } else if (pos + 2 < limit && pattern.charAt(pos + 2) == '!') {
                   pos += 3;
                   type = ParentheticalType.NEGATIVE_LOOKBEHIND;
-                  break;
                 } else {
                   pos += 2;
                   captureName = scanNamedGroupName();
                   capturingGroupNames.add(captureName);
                   type = ParentheticalType.NAMED_GROUPS;
-                  break;
                 }
-              default:
-                throw new IllegalArgumentException(
-                    "Malformed parenthetical: " + pattern.substring(start));
+              }
+              default ->
+                  throw new IllegalArgumentException(
+                      "Malformed parenthetical: " + pattern.substring(start));
             }
           } else {
             throw new IllegalArgumentException(
@@ -325,23 +306,26 @@ public abstract class RegExpTree {
               "Unclosed parenthetical group: " + pattern.substring(start));
         }
         switch (type) {
-          case CAPTURING:
+          case CAPTURING -> {
             ++numCapturingGroups;
             return new CapturingGroup(body);
-          case NONCAPTURING:
+          }
+          case NONCAPTURING -> {
             return body;
-
-          case POSITIVE_LOOKAHEAD:
+          }
+          case POSITIVE_LOOKAHEAD -> {
             return new LookaheadAssertion(body, true);
-          case NEGATIVE_LOOKAHEAD:
+          }
+          case NEGATIVE_LOOKAHEAD -> {
             return new LookaheadAssertion(body, false);
-
-          case POSITIVE_LOOKBEHIND:
+          }
+          case POSITIVE_LOOKBEHIND -> {
             return new LookbehindAssertion(body, true);
-          case NEGATIVE_LOOKBEHIND:
+          }
+          case NEGATIVE_LOOKBEHIND -> {
             return new LookbehindAssertion(body, false);
-
-          case NAMED_GROUPS:
+          }
+          case NAMED_GROUPS -> {
             if (captureName != null) {
               ++numCapturingGroups;
               return new NamedCaptureGroup(body, captureName);
@@ -349,6 +333,7 @@ public abstract class RegExpTree {
               throw new IllegalArgumentException(
                   "Malformed named capture group: " + pattern.substring(start));
             }
+          }
         }
         throw new AssertionError("Unrecognized ParentheticalType " + type);
       }
@@ -383,9 +368,8 @@ public abstract class RegExpTree {
       }
 
       /**
-       * Parses a square bracketed character set.
-       * Standalone character groups (@code /\d/} are handled by
-       * {@link #parseEscape}.
+       * Parses a square bracketed character set. Standalone character groups {@code /\d/} are
+       * handled by {@link #parseEscape}.
        */
       private RegExpTree parseCharset() {
         checkState(pattern.charAt(pos) == '[');
@@ -393,12 +377,14 @@ public abstract class RegExpTree {
 
         boolean isCaseInsensitive = flags.indexOf('i') >= 0;
         boolean inverse = pos < limit && pattern.charAt(pos) == '^';
-        if (inverse) { ++pos; }
+        if (inverse) {
+          ++pos;
+        }
         CharRanges ranges = CharRanges.EMPTY;
         CharRanges ieExplicits = CharRanges.EMPTY;
         while (pos < limit && pattern.charAt(pos) != ']') {
           char ch = pattern.charAt(pos);
-          char start;
+          int start;
           if (ch == '\\') {
             ++pos;
             char possibleGroupName = pattern.charAt(pos);
@@ -413,9 +399,8 @@ public abstract class RegExpTree {
             start = ch;
             ++pos;
           }
-          char end = start;
-          if (pos + 1 < limit && pattern.charAt(pos) == '-'
-              && pattern.charAt(pos + 1) != ']') {
+          int end = start;
+          if (pos + 1 < limit && pattern.charAt(pos) == '-' && pattern.charAt(pos + 1) != ']') {
             ++pos;
             ch = pattern.charAt(pos);
             if (ch == '\\') {
@@ -448,7 +433,7 @@ public abstract class RegExpTree {
             ranges = CaseCanonicalize.expandToAllMatched(ranges);
           }
         }
-        ++pos;  // Consume ']'
+        ++pos; // Consume ']'
 
         if (inverse) {
           ranges = CharRanges.ALL_CODE_UNITS.difference(ranges);
@@ -458,31 +443,32 @@ public abstract class RegExpTree {
       }
 
       /**
-       * Parses an escape to a code point.
-       * Some of the characters parsed here have special meanings in various
-       * contexts, so contexts must filter those instead.
-       * E.g. '\b' means a different thing inside a charset than without.
+       * Parses an escape to a code point. Some of the characters parsed here have special meanings
+       * in various contexts, so contexts must filter those instead. E.g. '\b' means a different
+       * thing inside a charset than without.
        */
-      private char parseEscapeChar() {
+      private int parseEscapeChar() {
         char ch = pattern.charAt(pos++);
-        switch (ch) {
-          case 'b': return '\b';
-          case 'f': return '\f';
-          case 'n': return '\n';
-          case 'r': return '\r';
-          case 't': return '\t';
-          case 'u': return parseHex(4);
-          case 'v': return '\u000b';
-          case 'x': return parseHex(2);
-          default:
+        return switch (ch) {
+          case 'b' -> '\b';
+          case 'f' -> '\f';
+          case 'n' -> '\n';
+          case 'r' -> '\r';
+          case 't' -> '\t';
+          case 'u' ->
+              (flags.contains("u") && pos < limit && pattern.charAt(pos) == '{')
+                  ? parseBracedUnicodeEscape()
+                  : parseHex(4);
+          case 'v' -> '\u000b';
+          case 'x' -> parseHex(2);
+          default -> {
             if ('0' <= ch && ch <= '7') {
               char codeUnit = (char) (ch - '0');
               // Allow octal literals in the range \0-\377.
               // \41 might be a group, but \041 is not a group.
               // We read, but do not emit octal literals since they
               // are deprecated in ES5.
-              int octLimit = Math.min(
-                  limit, pos + (ch <= '3' ? 2 : 1) + (ch == '0' ? 1 : 0));
+              int octLimit = min(limit, pos + (ch <= '3' ? 2 : 1) + (ch == '0' ? 1 : 0));
               while (pos < octLimit) {
                 ch = pattern.charAt(pos);
                 if ('0' <= ch && ch <= '7') {
@@ -492,15 +478,14 @@ public abstract class RegExpTree {
                   break;
                 }
               }
-              return codeUnit;
+              yield codeUnit;
             }
-            return ch;
-        }
+            yield ch;
+          }
+        };
       }
 
-      /**
-       * Parses an escape that appears outside a charset.
-       */
+      /** Parses an escape that appears outside a charset. */
       private RegExpTree parseEscape() {
         checkState(pattern.charAt(pos) == '\\');
         int start = pos;
@@ -575,8 +560,8 @@ public abstract class RegExpTree {
             // \1 - \7 are octal escapes if there is no such group.
             // \8 and \9 are the literal characters '8' and '9' if there
             // is no such group.
-            return new Text(Character.toString(
-              possibleGroupIndex <= 7 ? (char) possibleGroupIndex : ch));
+            return new Text(
+                Character.toString(possibleGroupIndex <= 7 ? (char) possibleGroupIndex : ch));
           }
         } else if (lookForNamedCaptureBackreferences
             && ch == 'k'
@@ -595,22 +580,26 @@ public abstract class RegExpTree {
           return new NamedBackReference(potentialName);
         } else {
           CharRanges charGroup = NAMED_CHAR_GROUPS.get(ch);
-          if (charGroup != null) {  // Handle \d, etc.
+          if (charGroup != null) { // Handle \d, etc.
             ++pos;
             return new Charset(charGroup, CharRanges.EMPTY);
           }
-          return new Text("" + parseEscapeChar());
+          return new Text(new String(Character.toChars(parseEscapeChar())));
         }
       }
 
-      /**
-       * Parses n hex digits to a code-unit.
-       */
-      private char parseHex(int n) {
+      /** Parses n hex digits to a code-unit. */
+      private int parseHex(int n) {
         if (pos + n > limit) {
-          throw new IllegalArgumentException(
-              "Abbreviated hex escape " + pattern.substring(pos));
+          throw new IllegalArgumentException("Abbreviated hex escape " + pattern.substring(pos));
         }
+        if (n > 7) {
+          // We need to guard the MSB to prevent overflow.
+          throw new IllegalArgumentException(
+              "Cannot parse hexadecimal encoding wider than 28 bits: "
+                  + pattern.substring(pos, pos + n));
+        }
+
         int result = 0;
         while (--n >= 0) {
           char ch = pattern.charAt(pos);
@@ -627,45 +616,67 @@ public abstract class RegExpTree {
           ++pos;
           result = (result << 4) | digit;
         }
-        return (char) result;
+        return result;
+      }
+
+      private int parseBracedUnicodeEscape() {
+        int openBrace = pos;
+        checkState(pattern.charAt(pos++) == '{');
+
+        int closeBrace = pos;
+        while (closeBrace < limit && pattern.charAt(closeBrace) != '}') {
+          closeBrace++;
+        }
+        if (closeBrace == limit) {
+          throw new IllegalArgumentException(
+              "Malformed unicode escape: expected '}' after " + pattern.substring(openBrace));
+        } else if (closeBrace == pos) {
+          throw new IllegalArgumentException("Empty unicode escape");
+        }
+
+        int result = parseHex(closeBrace - pos);
+        if (result > 0x10FFFF) {
+          throw new IllegalArgumentException(
+              "Unicode must be at most 0x10FFFF: " + pattern.substring(openBrace + 1, pos));
+        }
+        pos++; // Consume the close brace.
+        return result;
       }
 
       private boolean isRepetitionStart(char ch) {
-        switch (ch) {
-          case '?':
-          case '*':
-          case '+':
-          case '{':
-            return true;
-          default:
-            return false;
-        }
+        return switch (ch) {
+          case '?', '*', '+', '{' -> true;
+          default -> false;
+        };
       }
 
       /**
-       * Parse a repetition.  {@code x?} is treated as a repetition --
-       * an optional production can be matched 0 or 1 time.
+       * Parse a repetition. {@code x?} is treated as a repetition -- an optional production can be
+       * matched 0 or 1 time.
        */
       private RegExpTree parseRepetition(RegExpTree body) {
-        if (pos == limit) { return body; }
-        int min, max;
+        if (pos == limit) {
+          return body;
+        }
+        int min;
+        int max;
         switch (pattern.charAt(pos)) {
-          case '+':
+          case '+' -> {
             ++pos;
             min = 1;
             max = Integer.MAX_VALUE;
-            break;
-          case '*':
+          }
+          case '*' -> {
             ++pos;
             min = 0;
             max = Integer.MAX_VALUE;
-            break;
-          case '?':
+          }
+          case '?' -> {
             ++pos;
             min = 0;
             max = 1;
-            break;
-          case '{':
+          }
+          case '{' -> {
             ++pos;
             int start = pos;
             int end = pattern.indexOf('}', start);
@@ -677,13 +688,13 @@ public abstract class RegExpTree {
             pos = end + 1;
             int comma = counts.indexOf(',');
             try {
-              min = Integer.parseInt(
-                  comma >= 0 ? counts.substring(0, comma) : counts);
-              max = comma >= 0
-                  ? comma + 1 != counts.length()
-                      ? Integer.parseInt(counts.substring(comma + 1))
-                      : Integer.MAX_VALUE
-                  : min;
+              min = Integer.parseInt(comma >= 0 ? counts.substring(0, comma) : counts);
+              max =
+                  comma >= 0
+                      ? comma + 1 != counts.length()
+                          ? Integer.parseInt(counts.substring(comma + 1))
+                          : Integer.MAX_VALUE
+                      : min;
             } catch (NumberFormatException ex) {
               min = max = -1;
             }
@@ -692,9 +703,10 @@ public abstract class RegExpTree {
               pos = start - 1;
               return body;
             }
-            break;
-          default:
+          }
+          default -> {
             return body;
+          }
         }
         boolean greedy = true;
         if (pos < limit && pattern.charAt(pos) == '?') {
@@ -719,12 +731,7 @@ public abstract class RegExpTree {
       return ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch == '_' || ch == '$'));
     }
 
-    // Workaround b/36459436
-    // When running under GWT, Character.isLetter only handles ASCII
-    // Angular relies heavily on U+0275 (Latin Barred O)
-    return ch == 0x0275
-        // TODO: UnicodeLetter also includes Letter Number (NI)
-        || Character.isLetter(ch);
+    return Character.isLetter(ch);
   }
 
   /**
@@ -751,21 +758,27 @@ public abstract class RegExpTree {
   }
 
   /**
-   * True if, but not necessarily always when the, given regular expression
-   * must match the whole input or none of it.
+   * True if, but not necessarily always when the, given regular expression must match the whole
+   * input or none of it.
    */
   public static boolean matchesWholeInput(RegExpTree t, String flags) {
-    if (flags.indexOf('m') >= 0) { return false; }
-
-    if (!(t instanceof Concatenation)) {
+    if (flags.indexOf('m') >= 0) {
       return false;
     }
 
-    Concatenation c = (Concatenation) t;
-    if (c.elements.isEmpty()) { return false; }
-    RegExpTree first = c.elements.get(0), last = Iterables.getLast(c.elements);
-    if (!(first instanceof Anchor && last instanceof Anchor)) { return false; }
-    return ((Anchor) first).type == '^' && ((Anchor) last).type == '$';
+    if (!(t instanceof Concatenation c)) {
+      return false;
+    }
+
+    if (c.elements.isEmpty()) {
+      return false;
+    }
+    RegExpTree first = c.elements.get(0);
+    RegExpTree last = Iterables.getLast(c.elements);
+    if (!(first instanceof Anchor firstAnchor && last instanceof Anchor lastAnchor)) {
+      return false;
+    }
+    return firstAnchor.type == '^' && lastAnchor.type == '$';
   }
 
   /** Represents a node that never has children such as an anchor or charset. */
@@ -792,7 +805,7 @@ public abstract class RegExpTree {
   }
 
   /** Represents an empty portion of a RegExp such as the middle of "||" */
-  public static final class Empty extends RegExpTreeAtom {
+  private static final class Empty extends RegExpTreeAtom {
     static final Empty INSTANCE = new Empty();
 
     @Override
@@ -824,7 +837,10 @@ public abstract class RegExpTree {
   /** Represents an anchor, namely ^ or $. */
   public static final class Anchor extends RegExpTreeAtom {
     final char type;
-    Anchor(char type) { this.type = type; }
+
+    Anchor(char type) {
+      this.type = type;
+    }
 
     @Override
     public RegExpTree simplify(String flags) {
@@ -848,7 +864,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof Anchor && type == ((Anchor) o).type;
+      return o instanceof Anchor anchor && type == anchor.type;
     }
 
     @Override
@@ -882,7 +898,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof WordBoundary && type == ((WordBoundary) o).type;
+      return o instanceof WordBoundary wordBoundary && type == wordBoundary.type;
     }
 
     @Override
@@ -917,8 +933,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof BackReference
-          && groupIndex == ((BackReference) o).groupIndex;
+      return o instanceof BackReference backReference && groupIndex == backReference.groupIndex;
     }
 
     @Override
@@ -952,8 +967,8 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof NamedBackReference
-          && groupName.equals(((NamedBackReference) o).groupName);
+      return o instanceof NamedBackReference namedBackReference
+          && groupName.equals(namedBackReference.groupName);
     }
 
     @Override
@@ -974,32 +989,18 @@ public abstract class RegExpTree {
      * @param ch The code-unit to escape.
      * @param next The next code-unit or -1 if indeterminable.
      */
-    private static void escapeRegularCharOnto(
-        char ch, int next, StringBuilder sb) {
+    private static void escapeRegularCharOnto(char ch, int next, StringBuilder sb) {
       switch (ch) {
-        case '$':
-        case '^':
-        case '*':
-        case '(':
-        case ')':
-        case '+':
-        case '[':
-        case '|':
-        case '.':
-        case '/':
-        case '?':
-          sb.append('\\').append(ch);
-          break;
-        case '{':
+        case '$', '^', '*', '(', ')', '+', '[', '|', '.', '/', '?' -> sb.append('\\').append(ch);
+        case '{' -> {
           // If possibly part of a repetition, then escape.
           // Concatenation is handled by the digitsMightBleed check.
           if ('0' <= next && next <= '9') {
             sb.append('\\');
           }
           sb.append(ch);
-          break;
-        default:
-          escapeCharOnto(ch, sb);
+        }
+        default -> escapeCharOnto(ch, sb);
       }
     }
 
@@ -1042,7 +1043,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof Text && text.equals(((Text) o).text);
+      return o instanceof Text text && this.text.equals(text.text);
     }
 
     @Override
@@ -1054,7 +1055,8 @@ public abstract class RegExpTree {
   /** Represents a repeating item such as ...+, ...*, or ...{0,1} */
   public static final class Repetition extends RegExpTree {
     final RegExpTree body;
-    final int min, max;
+    final int min;
+    final int max;
     final boolean greedy;
 
     Repetition(RegExpTree body, int min, int max, boolean greedy) {
@@ -1067,12 +1069,15 @@ public abstract class RegExpTree {
     @Override
     public RegExpTree simplify(String flags) {
       RegExpTree body = this.body.simplify(flags);
-      if (max == 0 && !body.hasCapturingGroup()) { return Empty.INSTANCE; }
-      if (body instanceof Empty || NEVER_MATCHES.equals(body)) { return body; }
+      if (max == 0 && !body.hasCapturingGroup()) {
+        return Empty.INSTANCE;
+      }
+      if (body instanceof Empty || NEVER_MATCHES.equals(body)) {
+        return body;
+      }
       int min = this.min;
       int max = this.max;
-      if (body instanceof Repetition) {
-        Repetition rbody = (Repetition) body;
+      if (body instanceof Repetition rbody) {
         if (rbody.greedy == greedy) {
           long lmin = ((long) min) * rbody.min;
           long lmax = ((long) max) * rbody.max;
@@ -1083,10 +1088,11 @@ public abstract class RegExpTree {
           }
         }
       }
-      if (min == 1 && max == 1) { return body; }
+      if (min == 1 && max == 1) {
+        return body;
+      }
       boolean greedy = this.greedy || min == max;
-      return body.equals(this.body) && min == this.min && max == this.max
-          && greedy == this.greedy
+      return body.equals(this.body) && min == this.min && max == this.max && greedy == this.greedy
           ? this
           : new Repetition(body, min, max, greedy).simplify(flags);
     }
@@ -1112,9 +1118,10 @@ public abstract class RegExpTree {
     }
 
     private void appendBodySourceCode(StringBuilder sb) {
-      if (body instanceof Alternation || body instanceof Concatenation
+      if (body instanceof Alternation
+          || body instanceof Concatenation
           || body instanceof Repetition
-          || (body instanceof Text && ((Text) body).text.length() > 1)) {
+          || (body instanceof Text text && text.text.length() > 1)) {
         sb.append("(?:");
         body.appendSourceCode(sb);
         sb.append(')');
@@ -1126,24 +1133,25 @@ public abstract class RegExpTree {
     private static int suffixLen(int min, int max) {
       // This mirrors the branches that renders a suffix in appendSourceCode below.
       if (max == Integer.MAX_VALUE) {
-        switch (min) {
-          case 0:  // *
-          case 1:  // +
-            return 1;
-          default:
-            return 3 + numDecimalDigits(min); // {3,}
-        }
+        return switch (min) {
+          case 0, // *
+              1 // +
+              ->
+              1;
+          default -> // {3,}
+              3 + numDecimalDigits(min);
+        };
       }
       if (min == 0 && max == 1) {
-        return 1;  // ?
+        return 1; // ?
       }
       if (min == max) {
         if (min == 1) {
-          return 0;  // No suffix needed for {1}.
+          return 0; // No suffix needed for {1}.
         }
-        return 2 + numDecimalDigits(min);  // {4}
+        return 2 + numDecimalDigits(min); // {4}
       }
-      return 3 + numDecimalDigits(min) + numDecimalDigits(max);  // {2,7}
+      return 3 + numDecimalDigits(min) + numDecimalDigits(max); // {2,7}
     }
 
     private static int numDecimalDigits(int n) {
@@ -1169,22 +1177,21 @@ public abstract class RegExpTree {
       int bodyLen = bodyEnd - bodyStart;
       int min = this.min;
       int max = this.max;
-      if (min >= 2 && max == Integer.MAX_VALUE || max - min <= 1) {
+      if ((min >= 2 && max == Integer.MAX_VALUE) || max - min <= 1) {
         int expanded =
-           // If min == max then we want to try expanding to the limit and
-           // attach the empty suffix, which is equivalent to min = max = 1,
-           // i.e. /a/ vs /a{1}/.
-           min == max
-           // Give aa+ preference over aaa*.
-           || max == Integer.MAX_VALUE
-           ? min - 1
-           : min;
+            // If min == max then we want to try expanding to the limit and
+            // attach the empty suffix, which is equivalent to min = max = 1,
+            // i.e. /a/ vs /a{1}/.
+            min == max
+                    // Give aa+ preference over aaa*.
+                    || max == Integer.MAX_VALUE
+                ? min - 1
+                : min;
         int expandedMin = min - expanded;
         int expandedMax = max == Integer.MAX_VALUE ? max : max - expanded;
         int suffixLen = suffixLen(min, max);
         int expandedSuffixLen = suffixLen(expandedMin, expandedMax);
-        if (bodyLen * expanded + expandedSuffixLen < suffixLen
-            && !body.hasCapturingGroup()) {
+        if (bodyLen * expanded + expandedSuffixLen < suffixLen && !body.hasCapturingGroup()) {
           // a{2} -> aa
           // a{2,} -> aa+
           // a{2,3} -> aaa?
@@ -1198,10 +1205,9 @@ public abstract class RegExpTree {
 
       if (max == Integer.MAX_VALUE) {
         switch (min) {
-          case 0: sb.append('*'); break;
-          case 1: sb.append('+'); break;
-          default:
-            sb.append('{').append(min).append(",}");
+          case 0 -> sb.append('*');
+          case 1 -> sb.append('+');
+          default -> sb.append('{').append(min).append(",}");
         }
       } else if (min == 0 && max == 1) {
         sb.append('?');
@@ -1220,13 +1226,16 @@ public abstract class RegExpTree {
     @Override
     protected void appendDebugInfo(StringBuilder sb) {
       sb.append(" min=").append(min).append(", max=").append(max);
-      if (!greedy) { sb.append("  not_greedy"); }
+      if (!greedy) {
+        sb.append("  not_greedy");
+      }
     }
 
     @Override
     public boolean equals(Object o) {
-      if (!(o instanceof Repetition)) { return false; }
-      Repetition that = (Repetition) o;
+      if (!(o instanceof Repetition that)) {
+        return false;
+      }
       return this.body.equals(that.body)
           && this.min == that.min
           && this.max == that.max
@@ -1252,17 +1261,19 @@ public abstract class RegExpTree {
       List<RegExpTree> alternatives = new ArrayList<>();
       for (RegExpTree alternative : this.alternatives) {
         alternative = alternative.simplify(flags);
-        if (alternative instanceof Alternation) {
-          alternatives.addAll(((Alternation) alternative).alternatives);
+        if (alternative instanceof Alternation alternation) {
+          alternatives.addAll(alternation.alternatives);
         } else {
           alternatives.add(alternative);
         }
       }
       // Remove duplicates
       RegExpTree last = null;
-      for (Iterator<RegExpTree> it = alternatives.iterator(); it.hasNext();) {
+      for (Iterator<RegExpTree> it = alternatives.iterator(); it.hasNext(); ) {
         RegExpTree alternative = it.next();
-        if (alternative.equals(NEVER_MATCHES)) { continue; }
+        if (alternative.equals(NEVER_MATCHES)) {
+          continue;
+        }
         if (alternative.equals(last) && !alternative.hasCapturingGroup()) {
           it.remove();
         } else {
@@ -1272,8 +1283,7 @@ public abstract class RegExpTree {
       // Collapse character alternatives into character sets.
       for (int i = 0, n = alternatives.size(); i < n; ++i) {
         RegExpTree alternative = alternatives.get(i);
-        if ((alternative instanceof Text
-             && ((Text) alternative).text.length() == 1)
+        if ((alternative instanceof Text text && text.text.length() == 1)
             || alternative instanceof Charset) {
           int end = i;
           int nCharsets = 0;
@@ -1281,8 +1291,7 @@ public abstract class RegExpTree {
             RegExpTree follower = alternatives.get(end);
             if (follower instanceof Charset) {
               ++nCharsets;
-            } else if (!(follower instanceof Text
-                         && ((Text) follower).text.length() == 1)) {
+            } else if (!(follower instanceof Text text && text.text.length() == 1)) {
               break;
             }
             ++end;
@@ -1294,46 +1303,49 @@ public abstract class RegExpTree {
             CharRanges ieExplicits = CharRanges.EMPTY;
             List<RegExpTree> charAlternatives = alternatives.subList(i, end);
             for (RegExpTree charAlternative : charAlternatives) {
-              if (charAlternative instanceof Text) {
-                char ch = ((Text) charAlternative).text.charAt(0);
+              if (charAlternative instanceof Text text) {
+                char ch = text.text.charAt(0);
                 members[memberIdx++] = ch;
                 if (IE_SPEC_ERRORS.contains(ch)) {
                   ieExplicits = ieExplicits.union(CharRanges.inclusive(ch, ch));
                 }
-              } else if (charAlternative instanceof Charset) {
-                Charset cs = (Charset) charAlternative;
+              } else if (charAlternative instanceof Charset cs) {
                 chars = chars.union(cs.ranges);
                 ieExplicits = ieExplicits.union(cs.ieExplicits);
               }
             }
             chars = chars.union(CharRanges.withMembers(members));
             charAlternatives.clear();
-            charAlternatives.add(
-                new Charset(chars, ieExplicits).simplify(flags));
+            charAlternatives.add(new Charset(chars, ieExplicits).simplify(flags));
             n = alternatives.size();
           }
         }
       }
       switch (alternatives.size()) {
-        case 0: return Empty.INSTANCE;
-        case 1: return alternatives.get(0);
-        case 2:
-          if (alternatives.get(1) instanceof Empty) {  // (?:a|) -> a?
+        case 0 -> {
+          return Empty.INSTANCE;
+        }
+        case 1 -> {
+          return alternatives.get(0);
+        }
+        case 2 -> {
+          if (alternatives.get(1) instanceof Empty) { // (?:a|) -> a?
             return new Repetition(alternatives.get(0), 0, 1, true);
           } else if (alternatives.get(0) instanceof Empty) {
             return new Repetition(alternatives.get(1), 0, 1, false);
           }
-          break;
+        }
       }
       // TODO: maybe pull out common prefix or suffix
-      return alternatives.equals(this.alternatives)
-          ? this : new Alternation(alternatives);
+      return alternatives.equals(this.alternatives) ? this : new Alternation(alternatives);
     }
 
     @Override
     public boolean isCaseSensitive() {
       for (RegExpTree alternative : alternatives) {
-        if (alternative.isCaseSensitive()) { return true; }
+        if (alternative.isCaseSensitive()) {
+          return true;
+        }
       }
       return false;
     }
@@ -1341,7 +1353,9 @@ public abstract class RegExpTree {
     @Override
     public boolean containsAnchor() {
       for (RegExpTree alternative : alternatives) {
-        if (alternative.containsAnchor()) { return true; }
+        if (alternative.containsAnchor()) {
+          return true;
+        }
       }
       return false;
     }
@@ -1377,9 +1391,9 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return this == o || (
-          (o instanceof Alternation)
-          && alternatives.equals(((Alternation) o).alternatives));
+      return this == o
+          || ((o instanceof Alternation alternation)
+              && alternatives.equals(alternation.alternatives));
     }
 
     @Override
@@ -1388,11 +1402,10 @@ public abstract class RegExpTree {
     }
   }
 
-  private static final RegExpTree NEVER_MATCHES = new LookaheadAssertion(
-      Empty.INSTANCE, false);
+  private static final RegExpTree NEVER_MATCHES = new LookaheadAssertion(Empty.INSTANCE, false);
 
   /** Represents a lookahead assertion such as (?=...) or (?!...) */
-  public static final class LookaheadAssertion extends RegExpTree {
+  private static final class LookaheadAssertion extends RegExpTree {
     final RegExpTree body;
     final boolean positive;
 
@@ -1405,7 +1418,7 @@ public abstract class RegExpTree {
     public RegExpTree simplify(String flags) {
       RegExpTree simpleBody = body.simplify(flags);
       if (simpleBody instanceof Empty) {
-        if (positive) {  // Always true
+        if (positive) { // Always true
           return simpleBody;
         }
       }
@@ -1446,8 +1459,9 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      if (!(o instanceof LookaheadAssertion)) { return false; }
-      LookaheadAssertion that = (LookaheadAssertion) o;
+      if (!(o instanceof LookaheadAssertion that)) {
+        return false;
+      }
       return this.positive == that.positive && this.body.equals(that.body);
     }
 
@@ -1457,7 +1471,7 @@ public abstract class RegExpTree {
     }
   }
 
-  /** Represents a lookbehind assertion such as {@code (?<=...) } or  {@code (?<!...) } */
+  /** Represents a lookbehind assertion such as {@code (?<=...) } or {@code (?<!...) } */
   public static final class LookbehindAssertion extends RegExpTree {
     final RegExpTree body;
     final boolean positive;
@@ -1512,10 +1526,9 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      if (!(o instanceof LookbehindAssertion)) {
+      if (!(o instanceof LookbehindAssertion that)) {
         return false;
       }
-      LookbehindAssertion that = (LookbehindAssertion) o;
       return this.positive == that.positive && this.body.equals(that.body);
     }
 
@@ -1572,8 +1585,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof CapturingGroup
-          && body.equals(((CapturingGroup) o).body);
+      return o instanceof CapturingGroup capturingGroup && body.equals(capturingGroup.body);
     }
 
     @Override
@@ -1633,9 +1645,9 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof NamedCaptureGroup
-          && name.equals(((NamedCaptureGroup) o).name)
-          && body.equals(((NamedCaptureGroup) o).body);
+      return o instanceof NamedCaptureGroup namedCaptureGroup
+          && name.equals(namedCaptureGroup.name)
+          && body.equals(namedCaptureGroup.body);
     }
 
     @Override
@@ -1651,7 +1663,7 @@ public abstract class RegExpTree {
     private final String propertyValue;
     private final boolean negated;
 
-    UnicodePropertyEscape(String propertyName, String propertyValue, boolean negated) {
+    UnicodePropertyEscape(@Nullable String propertyName, String propertyValue, boolean negated) {
       checkState(propertyValue != null);
       checkArgument(
           propertyName == null || !propertyName.isEmpty(),
@@ -1685,10 +1697,10 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return (o instanceof UnicodePropertyEscape)
-          && negated == ((UnicodePropertyEscape) o).negated
-          && Objects.equals(propertyName, ((UnicodePropertyEscape) o).propertyName)
-          && Objects.equals(propertyValue, ((UnicodePropertyEscape) o).propertyValue);
+      return (o instanceof UnicodePropertyEscape unicodePropertyEscape)
+          && negated == unicodePropertyEscape.negated
+          && Objects.equals(propertyName, unicodePropertyEscape.propertyName)
+          && Objects.equals(propertyValue, unicodePropertyEscape.propertyValue);
     }
 
     @Override
@@ -1699,66 +1711,81 @@ public abstract class RegExpTree {
 
   private static final CharRanges DIGITS = CharRanges.inclusive('0', '9');
 
-  private static final CharRanges UCASE_LETTERS
-      = CharRanges.inclusive('A', 'Z');
+  private static final CharRanges UCASE_LETTERS = CharRanges.inclusive('A', 'Z');
 
-  private static final CharRanges LCASE_LETTERS
-      = CharRanges.inclusive('a', 'z');
+  private static final CharRanges LCASE_LETTERS = CharRanges.inclusive('a', 'z');
 
   private static final CharRanges LETTERS = UCASE_LETTERS.union(LCASE_LETTERS);
 
-  private static final CharRanges WORD_CHARS = DIGITS
-      .union(LETTERS).union(CharRanges.withMembers('_'));
+  private static final CharRanges WORD_CHARS =
+      DIGITS.union(LETTERS).union(CharRanges.withMembers('_'));
 
-  private static final CharRanges INVERSE_WORD_CHARS
-      = CharRanges.ALL_CODE_UNITS.difference(WORD_CHARS);
+  private static final CharRanges INVERSE_WORD_CHARS =
+      CharRanges.ALL_CODE_UNITS.difference(WORD_CHARS);
 
-  private static final CharRanges SPACE_CHARS = CharRanges.withMembers(
-      '\t', '\n', '\u000b', '\u000c', '\r', ' ', '\u00a0',
-      // Unicode 3.0 Zs
-      '\u1680', '\u180e', '\u2000', '\u2001',
-      '\u2002', '\u2003', '\u2004', '\u2005',
-      '\u2006', '\u2007', '\u2008', '\u2009',
-      '\u200a',
-      // Line terminator chars
-      '\u2028', '\u2029',
-      // Unicode 3.0 Zs
-      '\u202f', '\u205f', '\u3000',
-      // Byte order marker is a space character in ES5 but not ES3.
-      '\ufeff'
-      );
+  private static final CharRanges SPACE_CHARS =
+      CharRanges.withMembers(
+          '\t',
+          '\n',
+          '\u000b',
+          '\u000c',
+          '\r',
+          ' ',
+          '\u00a0',
+          // Unicode 3.0 Zs
+          '\u1680',
+          '\u180e',
+          '\u2000',
+          '\u2001',
+          '\u2002',
+          '\u2003',
+          '\u2004',
+          '\u2005',
+          '\u2006',
+          '\u2007',
+          '\u2008',
+          '\u2009',
+          '\u200a',
+          // Line terminator chars
+          '\u2028',
+          '\u2029',
+          // Unicode 3.0 Zs
+          '\u202f',
+          '\u205f',
+          '\u3000',
+          // Byte order marker is a space character in ES5 but not ES3.
+          '\ufeff');
 
-  /** IE is broken around \s.  IE (6, 7, 8 at least), only recognize these. */
-  private static final CharRanges IE_SPACE_CHARS = CharRanges.withMembers(
-    '\t', '\n', '\u000b', '\u000c', '\r', ' '
-    );
+  /** IE is broken around \s. IE (6, 7, 8 at least), only recognize these. */
+  private static final CharRanges IE_SPACE_CHARS =
+      CharRanges.withMembers('\t', '\n', '\u000b', '\u000c', '\r', ' ');
 
-  /** IE is broken around \s.  IE (6, 7, 8 at least), only recognize these. */
-  private static final CharRanges IE_SPEC_ERRORS = SPACE_CHARS.difference(
-      IE_SPACE_CHARS);
+  /** IE is broken around \s. IE (6, 7, 8 at least), only recognize these. */
+  private static final CharRanges IE_SPEC_ERRORS = SPACE_CHARS.difference(IE_SPACE_CHARS);
 
-  private static final ImmutableMap<Character, CharRanges> NAMED_CHAR_GROUPS
-       = ImmutableMap.<Character, CharRanges>builder()
+  private static final ImmutableMap<Character, CharRanges> NAMED_CHAR_GROUPS =
+      ImmutableMap.<Character, CharRanges>builder()
           .put('d', DIGITS)
           .put('D', CharRanges.ALL_CODE_UNITS.difference(DIGITS))
           .put('s', SPACE_CHARS)
           .put('S', CharRanges.ALL_CODE_UNITS.difference(SPACE_CHARS))
           .put('w', WORD_CHARS)
           .put('W', INVERSE_WORD_CHARS)
-          .build();
+          .buildOrThrow();
 
-  private static final Charset DOT_CHARSET = new Charset(
-      CharRanges.ALL_CODE_UNITS.difference(
-          CharRanges.withMembers('\n', '\r', '\u2028', '\u2029')),
-      CharRanges.EMPTY);
+  private static final Charset DOT_CHARSET =
+      new Charset(
+          CharRanges.ALL_CODE_UNITS.difference(
+              CharRanges.withMembers('\n', '\r', '\u2028', '\u2029')),
+          CharRanges.EMPTY);
 
   /** Represents a set of possible characters structured as [a-zA-Z] or [^a-zA-Z] */
-  public static final class Charset extends RegExpTreeAtom {
+  private static final class Charset extends RegExpTreeAtom {
     final CharRanges ranges;
+
     /**
-     * Code units that were mentioned explicitly and that might be matched by
-     * a group according to ECMAScript 5 but would not because of specification
-     * violations in IE.
+     * Code units that were mentioned explicitly and that might be matched by a group according to
+     * ECMAScript 5 but would not because of specification violations in IE.
      */
     final CharRanges ieExplicits;
 
@@ -1768,24 +1795,22 @@ public abstract class RegExpTree {
     }
 
     private static int complexityWordFolded(CharRanges ranges) {
-      return Math.min(
+      return min(
           complexityWordFoldedHelper(ranges),
-          1 + complexityWordFoldedHelper(
-              CharRanges.ALL_CODE_UNITS.difference(ranges)));
+          1 + complexityWordFoldedHelper(CharRanges.ALL_CODE_UNITS.difference(ranges)));
     }
 
     private static int complexityWordFoldedHelper(CharRanges ranges) {
       int complexity = DecomposedCharset.complexity(ranges);
       if (ranges.containsAll(WORD_CHARS)) {
-        complexity = Math.min(
-            complexity,
-            1 + DecomposedCharset.complexity(ranges.difference(WORD_CHARS)));
+        complexity =
+            min(complexity, 1 + DecomposedCharset.complexity(ranges.difference(WORD_CHARS)));
       }
       if (ranges.containsAll(INVERSE_WORD_CHARS)) {
-        complexity = Math.min(
-            complexity,
-            1 + DecomposedCharset.complexity(
-                ranges.difference(INVERSE_WORD_CHARS)));
+        complexity =
+            min(
+                complexity,
+                1 + DecomposedCharset.complexity(ranges.difference(INVERSE_WORD_CHARS)));
       }
       return complexity;
     }
@@ -1809,8 +1834,7 @@ public abstract class RegExpTree {
 
         options.add(ranges.union(ucaseLettersToLower));
         options.add(ranges.union(lcaseLettersToUpper));
-        options.add(ranges.union(lcaseLettersToUpper)
-                    .union(ucaseLettersToLower));
+        options.add(ranges.union(lcaseLettersToUpper).union(ucaseLettersToLower));
 
         options.add(ranges.union(ucaseLettersToLower).difference(ucaseLetters));
         options.add(ranges.union(lcaseLettersToUpper).difference(lcaseLetters));
@@ -1826,8 +1850,7 @@ public abstract class RegExpTree {
         }
       }
 
-      if (best.getNumRanges() == 1
-          && best.end(0) - best.start(0) == 1) {
+      if (best.getNumRanges() == 1 && best.end(0) - best.start(0) == 1) {
         return new Text(Character.toString((char) best.start(0)));
       }
 
@@ -1849,8 +1872,7 @@ public abstract class RegExpTree {
       // case-insensitive leaves us with something that matches the above
       // definition.
       CharRanges withoutNamedGroups = decompose().ranges;
-      return !withoutNamedGroups.equals(
-            CaseCanonicalize.expandToAllMatched(withoutNamedGroups));
+      return !withoutNamedGroups.equals(CaseCanonicalize.expandToAllMatched(withoutNamedGroups));
     }
 
     private DecomposedCharset decompose(CharRanges ranges, boolean inverted) {
@@ -1860,12 +1882,10 @@ public abstract class RegExpTree {
         char groupName = 0;
         CharRanges simplest = null;
         int minComplexity = DecomposedCharset.complexity(ranges);
-        for (Map.Entry<Character, CharRanges> namedGroup
-             : NAMED_CHAR_GROUPS.entrySet()) {
+        for (Map.Entry<Character, CharRanges> namedGroup : NAMED_CHAR_GROUPS.entrySet()) {
           CharRanges group = namedGroup.getValue();
           if (ranges.containsAll(group)) {
-            CharRanges withoutGroup = ranges.difference(group).union(
-                rangesInterIeExplicits);
+            CharRanges withoutGroup = ranges.difference(group).union(rangesInterIeExplicits);
             int complexity = DecomposedCharset.complexity(withoutGroup);
             if (complexity < minComplexity) {
               simplest = withoutGroup;
@@ -1914,7 +1934,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof Charset && ranges.equals(((Charset) o).ranges);
+      return o instanceof Charset charset && ranges.equals(charset.ranges);
     }
 
     @Override
@@ -1929,8 +1949,7 @@ public abstract class RegExpTree {
     final CharRanges ranges;
     final String namedGroups;
 
-    DecomposedCharset(
-        boolean inverted, CharRanges ranges, String namedGroups) {
+    DecomposedCharset(boolean inverted, CharRanges ranges, String namedGroups) {
       this.inverted = inverted;
       this.ranges = ranges;
       this.namedGroups = namedGroups;
@@ -1951,7 +1970,9 @@ public abstract class RegExpTree {
         }
       }
       sb.append('[');
-      if (inverted) { sb.append('^'); }
+      if (inverted) {
+        sb.append('^');
+      }
       sb.append(namedGroups);
       boolean rangesStartCharset = !inverted && namedGroups.isEmpty();
       boolean emitDashAtEnd = false;
@@ -1959,50 +1980,39 @@ public abstract class RegExpTree {
         char start = (char) ranges.start(i);
         char end = (char) (ranges.end(i) - 1);
         switch (end - start) {
-          case 0:
+          case 0 -> {
             if (start == '-') {
               // Put it at the end where it doesn't need escaping.
               emitDashAtEnd = true;
             } else {
-              escapeRangeCharOnto(
-                  start, rangesStartCharset, i == 0, i + 1 == n, sb);
+              escapeRangeCharOnto(start, rangesStartCharset, i == 0, i + 1 == n, sb);
             }
-            break;
-          case 1:
+          }
+          case 1 -> {
             escapeRangeCharOnto(start, rangesStartCharset, i == 0, false, sb);
-            escapeRangeCharOnto(
-                end, rangesStartCharset, false, i + 1 == n, sb);
-            break;
-          default:
+            escapeRangeCharOnto(end, rangesStartCharset, false, i + 1 == n, sb);
+          }
+          default -> {
             escapeRangeCharOnto(start, rangesStartCharset, i == 0, false, sb);
             sb.append('-');
             escapeRangeCharOnto(end, rangesStartCharset, false, true, sb);
-            break;
+          }
         }
       }
-      if (emitDashAtEnd) { sb.append('-'); }
+      if (emitDashAtEnd) {
+        sb.append('-');
+      }
       sb.append(']');
     }
 
     static void escapeRangeCharOnto(
-        char ch, boolean startIsFlush, boolean atStart, boolean atEnd,
-        StringBuilder sb) {
+        char ch, boolean startIsFlush, boolean atStart, boolean atEnd, StringBuilder sb) {
       switch (ch) {
-        case '\b':
-          sb.append("\\b");
-          break;
-        case '^':
-          sb.append(atStart && startIsFlush ? "\\^" : "^");
-          break;
-        case '-':
-          sb.append(atStart || atEnd ? "-" : "\\-");
-          break;
-        case '\\':
-        case ']':
-          sb.append('\\').append(ch);
-          break;
-        default:
-          escapeCharOnto(ch, sb);
+        case '\b' -> sb.append("\\b");
+        case '^' -> sb.append(atStart && startIsFlush ? "\\^" : "^");
+        case '-' -> sb.append(atStart || atEnd ? "-" : "\\-");
+        case '\\', ']' -> sb.append('\\').append(ch);
+        default -> escapeCharOnto(ch, sb);
       }
     }
 
@@ -2017,9 +2027,11 @@ public abstract class RegExpTree {
           ++complexity;
         }
         switch (end - start) {
-          case 0: continue;
-          case 1: break;
-          default: complexity += 1;
+          case 0 -> {
+            continue;
+          }
+          case 1 -> {}
+          default -> complexity += 1;
         }
         if (end < 0x20 || end >= 0x7f) {
           complexity += end >= 0x100 ? 6 : 4;
@@ -2032,19 +2044,18 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      if (!(o instanceof DecomposedCharset)) {
+      if (!(o instanceof DecomposedCharset that)) {
         return false;
       }
-      DecomposedCharset that = (DecomposedCharset) o;
-      return this.inverted = that.inverted
-          && this.ranges.equals(that.ranges)
-          && this.namedGroups.equals(that.namedGroups);
+      return this.inverted =
+          that.inverted
+              && this.ranges.equals(that.ranges)
+              && this.namedGroups.equals(that.namedGroups);
     }
 
     @Override
     public int hashCode() {
-      return ranges.hashCode()
-          + 31 * (namedGroups.hashCode() + (inverted ? 1 : 0));
+      return ranges.hashCode() + 31 * (namedGroups.hashCode() + (inverted ? 1 : 0));
     }
   }
 
@@ -2066,8 +2077,8 @@ public abstract class RegExpTree {
         final List<RegExpTree> simplified = new ArrayList<>();
 
         void simplify(RegExpTree t) {
-          if (t instanceof Concatenation) {
-            for (RegExpTree child : ((Concatenation) t).elements) {
+          if (t instanceof Concatenation concatenation) {
+            for (RegExpTree child : concatenation.elements) {
               simplify(child);
             }
           } else if (t instanceof Empty) {
@@ -2075,8 +2086,7 @@ public abstract class RegExpTree {
           } else {
             int lastIndex = simplified.size() - 1;
             if (lastIndex >= 0) {
-              RegExpTree pairwise = simplifyPairwise(
-                  simplified.get(lastIndex), t);
+              RegExpTree pairwise = simplifyPairwise(simplified.get(lastIndex), t);
               if (pairwise != null) {
                 simplified.set(lastIndex, pairwise);
                 return;
@@ -2086,43 +2096,39 @@ public abstract class RegExpTree {
           }
         }
 
-        RegExpTree simplifyPairwise(RegExpTree before, RegExpTree after) {
-          if (before instanceof Text && after instanceof Text) {
-            return new Text(
-                ((Text) before).text + ((Text) after).text).simplify(flags);
+        @Nullable RegExpTree simplifyPairwise(RegExpTree before, RegExpTree after) {
+          if (before instanceof Text beforeText && after instanceof Text afterText) {
+            return new Text(beforeText.text + afterText.text).simplify(flags);
           }
           // Fold adjacent repetitions.
-          int beforeMin = 1, beforeMax = 1;
+          int beforeMin = 1;
+          int beforeMax = 1;
           RegExpTree beforeBody = before;
           boolean beforeGreedy = false;
-          if (before instanceof Repetition) {
-            Repetition r = (Repetition) before;
+          if (before instanceof Repetition r) {
             beforeMin = r.min;
             beforeMax = r.max;
             beforeBody = r.body;
             beforeGreedy = r.greedy;
           }
-          int afterMin = 1, afterMax = 1;
+          int afterMin = 1;
+          int afterMax = 1;
           RegExpTree afterBody = after;
           boolean afterGreedy = false;
-          if (after instanceof Repetition) {
-            Repetition r = (Repetition) after;
+          if (after instanceof Repetition r) {
             afterMin = r.min;
             afterMax = r.max;
             afterBody = r.body;
             afterGreedy = r.greedy;
           }
-          if (beforeBody.equals(afterBody)
-              && !beforeBody.hasCapturingGroup()) {
+          if (beforeBody.equals(afterBody) && !beforeBody.hasCapturingGroup()) {
             long lmin = ((long) beforeMin) + afterMin;
             long lmax = ((long) beforeMax) + afterMax;
             if (lmin < Integer.MAX_VALUE) {
               int min = (int) lmin;
-              int max = lmax >= Integer.MAX_VALUE
-                  ? Integer.MAX_VALUE : (int) lmax;
+              int max = lmax >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) lmax;
               return new Repetition(
-                  beforeBody, min, max,
-                  beforeGreedy || afterGreedy || min == max);
+                  beforeBody, min, max, beforeGreedy || afterGreedy || min == max);
             }
           }
           return null;
@@ -2134,11 +2140,11 @@ public abstract class RegExpTree {
         s.simplify(element.simplify(flags));
       }
 
-      switch (s.simplified.size()) {
-        case 0: return Empty.INSTANCE;
-        case 1: return s.simplified.get(0);
-        default: return new Concatenation(s.simplified);
-      }
+      return switch (s.simplified.size()) {
+        case 0 -> Empty.INSTANCE;
+        case 1 -> s.simplified.get(0);
+        default -> new Concatenation(s.simplified);
+      };
     }
 
     @Override
@@ -2182,8 +2188,7 @@ public abstract class RegExpTree {
       boolean digitsMightBleed = false;
       for (RegExpTree element : elements) {
         boolean parenthesize = false;
-        if (element instanceof Alternation
-            || element instanceof Concatenation) {
+        if (element instanceof Alternation || element instanceof Concatenation) {
           parenthesize = true;
         }
         if (parenthesize) {
@@ -2212,14 +2217,13 @@ public abstract class RegExpTree {
             }
           }
         }
-        digitsMightBleed = (
+        digitsMightBleed =
+            (
             // \1(?:0) bleeds if there are 10 or more
             // capturing groups preceding.
-            (element instanceof BackReference
-             && ((BackReference) element).groupIndex < 10)
-            // foo{(?:10}) bleeds.
-            || (element instanceof Text
-                && ((Text) element).text.endsWith("{")));
+            (element instanceof BackReference backReference && backReference.groupIndex < 10)
+                // foo{(?:10}) bleeds.
+                || (element instanceof Text text && text.text.endsWith("{")));
       }
     }
 
@@ -2230,8 +2234,7 @@ public abstract class RegExpTree {
 
     @Override
     public boolean equals(Object o) {
-      return o instanceof Concatenation
-          && elements.equals(((Concatenation) o).elements);
+      return o instanceof Concatenation concatenation && elements.equals(concatenation.elements);
     }
 
     @Override
@@ -2242,25 +2245,13 @@ public abstract class RegExpTree {
 
   static void escapeCharOnto(char ch, StringBuilder sb) {
     switch (ch) {
-      case '\u0000':
-        sb.append("\\0");
-        break;
-      case '\f':
-        sb.append("\\f");
-        break;
-      case '\t':
-        sb.append("\\t");
-        break;
-      case '\n':
-        sb.append("\\n");
-        break;
-      case '\r':
-        sb.append("\\r");
-        break;
-      case '\\':
-        sb.append("\\\\");
-        break;
-      default:
+      case '\u0000' -> sb.append("\\0");
+      case '\f' -> sb.append("\\f");
+      case '\t' -> sb.append("\\t");
+      case '\n' -> sb.append("\\n");
+      case '\r' -> sb.append("\\r");
+      case '\\' -> sb.append("\\\\");
+      default -> {
         if (ch < 0x20 || ch >= 0x7f) {
           if (ch >= 0x100) {
             sb.append("\\u");
@@ -2276,6 +2267,7 @@ public abstract class RegExpTree {
         } else {
           sb.append(ch);
         }
+      }
     }
   }
 }

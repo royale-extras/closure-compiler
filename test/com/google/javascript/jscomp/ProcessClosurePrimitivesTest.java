@@ -19,32 +19,30 @@ package com.google.javascript.jscomp;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_CLOSURE_CALL_SCOPE_ERROR;
 import static com.google.javascript.jscomp.ProcessClosurePrimitives.BASE_CLASS_ERROR;
+import static com.google.javascript.jscomp.ProcessClosurePrimitives.CLASS_NAMESPACE_ERROR;
 import static com.google.javascript.jscomp.ProcessClosurePrimitives.CLOSURE_CALL_CANNOT_BE_ALIASED_ERROR;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.CLOSURE_DEFINES_ERROR;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.DEFINE_CALL_WITHOUT_ASSIGNMENT;
 import static com.google.javascript.jscomp.ProcessClosurePrimitives.EXPECTED_OBJECTLIT_ERROR;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.INVALID_ARGUMENT_ERROR;
+import static com.google.javascript.jscomp.ProcessClosurePrimitives.FUNCTION_NAMESPACE_ERROR;
 import static com.google.javascript.jscomp.ProcessClosurePrimitives.INVALID_CSS_RENAMING_MAP;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.INVALID_DEFINE_NAME_ERROR;
+import static com.google.javascript.jscomp.ProcessClosurePrimitives.INVALID_GOOG_WEAK_USAGE_CALL;
+import static com.google.javascript.jscomp.ProcessClosurePrimitives.INVALID_RENAME_FUNCTION;
 import static com.google.javascript.jscomp.ProcessClosurePrimitives.INVALID_STYLE_ERROR;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.MISSING_DEFINE_ANNOTATION;
 import static com.google.javascript.jscomp.ProcessClosurePrimitives.NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR;
-import static com.google.javascript.jscomp.ProcessClosurePrimitives.NULL_ARGUMENT_ERROR;
+import static com.google.javascript.jscomp.ProcessClosurePrimitives.POSSIBLE_BASE_CLASS_ERROR;
+import static com.google.javascript.jscomp.ProcessClosurePrimitives.WEAK_NAMESPACE_TYPE;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link ProcessClosurePrimitives}.
- *
- */
+/** Tests for {@link ProcessClosurePrimitives}. */
 @RunWith(JUnit4.class)
 public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
 
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
+    enableCreateModuleMap();
 
     options.setWarningLevel(DiagnosticGroups.MODULE_LOAD, CheckLevel.OFF);
     return options;
@@ -52,7 +50,52 @@ public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    return new ProcessClosurePrimitives(compiler, /* preprocessorSymbolTable= */ null);
+    return new ProcessClosurePrimitives(compiler);
+  }
+
+  @Test
+  public void testProvide_weakNamespaceError() {
+    test(
+        srcs("goog.provide('foo'); /** @type {Object} */ var foo = {};"),
+        warning(WEAK_NAMESPACE_TYPE));
+    test(
+        srcs("goog.provide('foo'); /** @type {!Object} */ var foo = {};"),
+        warning(WEAK_NAMESPACE_TYPE));
+    test(
+        srcs("goog.provide('foo.bar'); /** @type {Object} */ foo.bar = {};"),
+        warning(WEAK_NAMESPACE_TYPE));
+    test(
+        srcs("goog.provide('foo.bar'); /** @type {!Object} */ foo.bar = {};"),
+        warning(WEAK_NAMESPACE_TYPE));
+
+    testNoWarning("goog.provide('foo'); /** @type {Object<string>} */ var foo = {};");
+
+    testNoWarning(externs("/** @type {!Object} */ var foo = {};"), srcs("goog.provide('foo');"));
+  }
+
+  @Test
+  public void testProvideValidObjectType() {
+    testNoWarning(srcs("goog.provide('foo'); /** @type {Object<string>} */ var foo = {};"));
+  }
+
+  @Test
+  public void testProvidedDeclaredFunctionError() {
+    testError("goog.provide('foo'); function foo(){}", FUNCTION_NAMESPACE_ERROR);
+  }
+
+  @Test
+  public void testProvidedDeclaredFunctionError_ignoredInExterns() {
+    testNoWarning(externs(" function foo(){}"), srcs("goog.provide('foo');"));
+  }
+
+  @Test
+  public void testProvidedDeclaredClassError() {
+    testError("goog.provide('foo'); class foo {}", CLASS_NAMESPACE_ERROR);
+  }
+
+  @Test
+  public void testProvidedDeclaredClassError_ignoredInExterns() {
+    testNoWarning(externs("class foo {}"), srcs("goog.provide('foo');"));
   }
 
   @Test
@@ -66,42 +109,18 @@ public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testValidSetCssNameMapping() {
-    test("goog.setCssNameMapping({foo:'bar',\"biz\":'baz'});", "");
-    CssRenamingMap map = getLastCompiler().getCssRenamingMap();
-    assertThat(map).isNotNull();
-    assertThat(map.get("foo")).isEqualTo("bar");
-    assertThat(map.get("biz")).isEqualTo("baz");
-  }
-
-  @Test
-  public void testValidSetCssNameMappingWithType() {
-    test("goog.setCssNameMapping({foo:'bar',\"biz\":'baz'}, 'BY_PART');", "");
-    CssRenamingMap map = getLastCompiler().getCssRenamingMap();
-    assertThat(map).isNotNull();
-    assertThat(map.get("foo")).isEqualTo("bar");
-    assertThat(map.get("biz")).isEqualTo("baz");
-
-    test("goog.setCssNameMapping({foo:'bar',biz:'baz','biz-foo':'baz-bar'}," +
-        " 'BY_WHOLE');", "");
-    map = getLastCompiler().getCssRenamingMap();
-    assertThat(map).isNotNull();
-    assertThat(map.get("foo")).isEqualTo("bar");
-    assertThat(map.get("biz")).isEqualTo("baz");
-    assertThat(map.get("biz-foo")).isEqualTo("baz-bar");
-  }
-
-  @Test
   public void testSetCssNameMappingByShortHand() {
-    testError("goog.setCssNameMapping({shortHandFirst, shortHandSecond});",
+    testError(
+        "goog.setCssNameMapping({shortHandFirst, shortHandSecond});",
         NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
   }
 
   @Test
   public void testSetCssNameMappingByTemplate() {
-    testError("goog.setCssNameMapping({foo: `bar`});",
-        NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
-    testError("goog.setCssNameMapping({foo: `${vari}bar`});",
+    testError(
+        "goog.setCssNameMapping({foo: `bar`});", NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
+    testError(
+        "goog.setCssNameMapping({foo: `${vari}bar`});",
         NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
   }
 
@@ -115,14 +134,16 @@ public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
     testError("goog.setCssNameMapping(undefined);", EXPECTED_OBJECTLIT_ERROR);
 
     // Make sure all values of the object literal are string literals.
-    testError("var BAR = 'bar'; goog.setCssNameMapping({foo:BAR});",
+    testError(
+        "var BAR = 'bar'; goog.setCssNameMapping({foo:BAR});",
         NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
     testError("goog.setCssNameMapping({foo:6});", NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
-    testError("goog.setCssNameMapping({foo:false});",
-        NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
-    testError("goog.setCssNameMapping({foo:null});",
-        NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
-    testError("goog.setCssNameMapping({foo:undefined});",
+    testError(
+        "goog.setCssNameMapping({foo:false});", NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
+    testError(
+        "goog.setCssNameMapping({foo:null});", NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
+    testError(
+        "goog.setCssNameMapping({foo:undefined});",
         NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR);
   }
 
@@ -166,17 +187,14 @@ public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
   @Test
   public void testSetCssNameMappingValidity() {
     // Make sure that the keys don't have -'s
-    test("goog.setCssNameMapping({'a': 'b', 'a-a': 'c'})", "", warning(INVALID_CSS_RENAMING_MAP));
+    testWarning("goog.setCssNameMapping({'a': 'b', 'a-a': 'c'})", INVALID_CSS_RENAMING_MAP);
 
     // In full mode, we check that map(a-b)=map(a)-map(b)
-    test(
-        "goog.setCssNameMapping({'a': 'b', 'a-a': 'c'}, 'BY_WHOLE')",
-        "",
-        warning(INVALID_CSS_RENAMING_MAP));
+    testWarning(
+        "goog.setCssNameMapping({'a': 'b', 'a-a': 'c'}, 'BY_WHOLE')", INVALID_CSS_RENAMING_MAP);
 
     // Unknown mapping type
-    testError("goog.setCssNameMapping({foo:'bar'}, 'UNKNOWN');",
-        INVALID_STYLE_ERROR);
+    testError("goog.setCssNameMapping({foo:'bar'}, 'UNKNOWN');", INVALID_STYLE_ERROR);
   }
 
   @Test
@@ -197,7 +215,7 @@ public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
     testSame("function f() { goog.isDef('a.b'); }");
     testSame("function f() { goog.inherits(a, b); }");
     testSame("function f() { goog.exportSymbol(a, b); }");
-    test("function f() { goog.setCssNameMapping({}); }", "function f() {}");
+    testSame("function f() { goog.setCssNameMapping({}); }");
     testSame("x || goog.isDef('a.b');");
     testSame("x || goog.inherits(a, b);");
     testSame("x || goog.exportSymbol(a, b);");
@@ -207,271 +225,306 @@ public final class ProcessClosurePrimitivesTest extends CompilerTestCase {
   private static final String METHOD_FORMAT =
       "function Foo() {} Foo.prototype.method = function() { %s };";
 
-  private static final String FOO_INHERITS =
-      "goog.inherits(Foo, BaseFoo);";
+  private static final String FOO_INHERITS = "goog.inherits(Foo, BaseFoo);";
 
   @Test
   public void testInvalidBase1() {
     testError(
-        "var Foo = function() {};" + FOO_INHERITS +
-        "Foo.base(this, 'method');", BASE_CLASS_ERROR);
+        "var Foo = function() {};" + FOO_INHERITS + "Foo.base(this, 'method');", BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase2() {
-    testError("function Foo() {}" + FOO_INHERITS +
-        "Foo.method = function() {" +
-        "  Foo.base(this, 'method');" +
-        "};", BASE_CLASS_ERROR);
+    testError(
+        """
+        function Foo() {}
+        FOO_INHERITS
+        Foo.method = function() {
+          Foo.base(this, 'method');
+        };
+        """
+            .replace("FOO_INHERITS", FOO_INHERITS),
+        BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase3() {
-    testError(String.format(FOO_INHERITS + METHOD_FORMAT, "Foo.base();"),
-        BASE_CLASS_ERROR);
+    testError(String.format(FOO_INHERITS + METHOD_FORMAT, "Foo.base();"), BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase4() {
-    testError(String.format(FOO_INHERITS + METHOD_FORMAT, "Foo.base(this, 'bar');"),
-        BASE_CLASS_ERROR);
+    testError(
+        String.format(FOO_INHERITS + METHOD_FORMAT, "Foo.base(this, 'bar');"), BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase5() {
-    testError(String.format(FOO_INHERITS + METHOD_FORMAT,
-        "Foo.base('foo', 'method');"),
+    testError(
+        String.format(FOO_INHERITS + METHOD_FORMAT, "Foo.base('foo', 'method');"),
         BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase7() {
-    testError("function Foo() { Foo.base(this); };" + FOO_INHERITS,
-        BASE_CLASS_ERROR);
+    testError("function Foo() { Foo.base(this); };" + FOO_INHERITS, BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase8() {
-    testError("var Foo = function() { Foo.base(this); };" + FOO_INHERITS,
-        BASE_CLASS_ERROR);
+    testError("var Foo = function() { Foo.base(this); };" + FOO_INHERITS, BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase9() {
-    testError("var goog = {}; goog.Foo = function() { goog.Foo.base(this); };"
-        + FOO_INHERITS,
+    testError(
+        "var goog = {}; goog.Foo = function() { goog.Foo.base(this); };" + FOO_INHERITS,
         BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase10() {
-    testError("function Foo() { Foo.base(this); }" + FOO_INHERITS,
-        BASE_CLASS_ERROR);
+    testError("function Foo() { Foo.base(this); }" + FOO_INHERITS, BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase11() {
-    testError("function Foo() { Foo.base(this, 'method'); }" + FOO_INHERITS,
-        BASE_CLASS_ERROR);
+    testError("function Foo() { Foo.base(this, 'method'); }" + FOO_INHERITS, BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase12() {
-    testError("function Foo() { Foo.base(this, 1, 2); }" + FOO_INHERITS,
-        BASE_CLASS_ERROR);
+    testError("function Foo() { Foo.base(this, 1, 2); }" + FOO_INHERITS, BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidBase13() {
     testError(
-        "function Bar(){ Bar.base(this, 'constructor'); }" +
-        "goog.inherits(Bar, Goo);" +
-        "function Foo(){ Bar.base(this, 'constructor'); }" + FOO_INHERITS,
+        """
+        function Bar(){ Bar.base(this, 'constructor'); }
+        goog.inherits(Bar, Goo);
+        function Foo(){ Bar.base(this, 'constructor'); }
+        """
+            + FOO_INHERITS,
         BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidGoogBase14() {
-    testError("class Foo extends BaseFoo { constructor() { Foo.base(this); } }",
-        BASE_CLASS_ERROR);
+    testError("class Foo extends BaseFoo { constructor() { Foo.base(this); } }", BASE_CLASS_ERROR);
   }
 
   @Test
   public void testInvalidGoogBase14b() {
-    testError("class Foo extends BaseFoo { method() { Foo.base(this, 'method'); } }",
-        BASE_CLASS_ERROR);
+    testError(
+        "class Foo extends BaseFoo { method() { Foo.base(this, 'method'); } }", BASE_CLASS_ERROR);
   }
 
   @Test
   public void testValidBase1() {
-    test(FOO_INHERITS
-         + String.format(METHOD_FORMAT, "Foo.base(this, 'method');"),
-         FOO_INHERITS
-         + String.format(METHOD_FORMAT, "Foo.superClass_.method.call(this)"));
+    test(
+        FOO_INHERITS + String.format(METHOD_FORMAT, "Foo.base(this, 'method');"),
+        FOO_INHERITS + String.format(METHOD_FORMAT, "Foo.superClass_.method.call(this)"));
   }
 
   @Test
   public void testValidBase2() {
-    test(FOO_INHERITS
-         + String.format(METHOD_FORMAT, "Foo.base(this, 'method', 1, 2);"),
-         FOO_INHERITS
-         + String.format(METHOD_FORMAT,
-             "Foo.superClass_.method.call(this, 1, 2)"));
+    test(
+        FOO_INHERITS + String.format(METHOD_FORMAT, "Foo.base(this, 'method', 1, 2);"),
+        FOO_INHERITS + String.format(METHOD_FORMAT, "Foo.superClass_.method.call(this, 1, 2)"));
   }
 
   @Test
   public void testValidBase3() {
-    test(FOO_INHERITS
-         + String.format(METHOD_FORMAT, "return Foo.base(this, 'method');"),
-         FOO_INHERITS
-         + String.format(METHOD_FORMAT,
-             "return Foo.superClass_.method.call(this)"));
+    test(
+        FOO_INHERITS + String.format(METHOD_FORMAT, "return Foo.base(this, 'method');"),
+        FOO_INHERITS + String.format(METHOD_FORMAT, "return Foo.superClass_.method.call(this)"));
   }
 
   @Test
   public void testValidBase4() {
-    test("function Foo() { Foo.base(this, 'constructor', 1, 2); }"
-         + FOO_INHERITS,
-         "function Foo() { BaseFoo.call(this, 1, 2); } " + FOO_INHERITS);
+    test(
+        "function Foo() { Foo.base(this, 'constructor', 1, 2); }" + FOO_INHERITS,
+        "function Foo() { BaseFoo.call(this, 1, 2); } " + FOO_INHERITS);
   }
 
   @Test
   public void testValidBase5() {
-    test("var Foo = function() { Foo.base(this, 'constructor', 1); };"
-         + FOO_INHERITS,
-         "var Foo = function() { BaseFoo.call(this, 1); }; " + FOO_INHERITS);
+    test(
+        "var Foo = function() { Foo.base(this, 'constructor', 1); };" + FOO_INHERITS,
+        "var Foo = function() { BaseFoo.call(this, 1); }; " + FOO_INHERITS);
   }
 
   @Test
   public void testValidBase6() {
-    test("var goog = {}; goog.Foo = function() {" +
-         "goog.Foo.base(this, 'constructor'); }; " +
-         "goog.inherits(goog.Foo, goog.BaseFoo);",
-         "var goog = {}; goog.Foo = function() { goog.BaseFoo.call(this); }; " +
-         "goog.inherits(goog.Foo, goog.BaseFoo);");
+    test(
+        """
+        var goog = {}; goog.Foo = function() {
+        goog.Foo.base(this, 'constructor'); };
+        goog.inherits(goog.Foo, goog.BaseFoo);
+        """,
+        """
+        var goog = {}; goog.Foo = function() { goog.BaseFoo.call(this); };
+        goog.inherits(goog.Foo, goog.BaseFoo);
+        """);
   }
 
   @Test
   public void testValidBase7() {
     // No goog.inherits, so this is probably a different 'base' function.
-    testSame(""
-        + "var a = function() {"
-        + "  a.base(this, 'constructor');"
-        + "};");
+    testSame(
+        """
+        var a = function() {
+          a.base(this, 'constructor');
+        };
+        """);
   }
 
   @Test
   public void testValidBase_exportsAssignmentsBeforeGoogInherits() {
     test(
-        lines(
-            "goog.module('my.Foo');",
-            "class Bar {}",
-            "function Foo() { Foo.base(this, 'constructor', 1, 2); }",
-            "exports.Foo = Foo;",
-            "exports.Bar = Bar;",
-            FOO_INHERITS),
-        lines(
-            "goog.module('my.Foo');",
-            "class Bar {}",
-            "function Foo() { BaseFoo.call(this, 1, 2); }",
-            "exports.Foo = Foo;",
-            "exports.Bar = Bar;",
-            FOO_INHERITS));
+        """
+        goog.module('my.Foo');
+        class Bar {}
+        function Foo() { Foo.base(this, 'constructor', 1, 2); }
+        exports.Foo = Foo;
+        exports.Bar = Bar;
+        """
+            + FOO_INHERITS,
+        """
+        goog.module('my.Foo');
+        class Bar {}
+        function Foo() { BaseFoo.call(this, 1, 2); }
+        exports.Foo = Foo;
+        exports.Bar = Bar;
+        """
+            + FOO_INHERITS);
   }
 
   @Test
   public void testInvalidBase_nonAliasLinesBeforeGoogInherits() {
     testSame(
-        lines(
-            "goog.module('my.Foo');",
-            "function Foo() { Foo.base(this, 'constructor', 1, 2); }",
-            "alert(0);",
-            "alert(1);",
-            "alert(2);",
-            FOO_INHERITS));
+        """
+        goog.module('my.Foo');
+        function Foo() { Foo.base(this, 'constructor', 1, 2); }
+        alert(0);
+        alert(1);
+        alert(2);
+        """
+            + FOO_INHERITS);
   }
 
   @Test
-  public void testDefineCases() {
-    String jsdoc = "/** @define {number} */\n";
-    test(jsdoc + "var name = goog.define('name', 1);", jsdoc + "var name = 1");
-    test(jsdoc + "const name = goog.define('name', 1);", jsdoc + "const name = 1");
-    test(jsdoc + "ns.name = goog.define('ns.name', 1);", jsdoc + "ns.name = 1");
+  public void testValidBase_googProvide_googRequiredInOtherModule() {
+    test(
+        srcs(
+            """
+            goog.provide('my.Foo');
+            /** @constructor */
+            my.Foo = function() {}
+            goog.inherits(my.Foo, BaseFoo);
+            """,
+            """
+            goog.module('test');
+            const Foo = goog.require('my.Foo');
+            Foo.prototype.method = function() {
+              Foo.base(this, 'method');
+            };
+            """),
+        error(POSSIBLE_BASE_CLASS_ERROR));
   }
 
   @Test
-  public void testDefineErrorCases() {
-    String jsdoc = "/** @define {number} */\n";
-    testError("const name = goog.define('name', 1);", MISSING_DEFINE_ANNOTATION);
-    testError(jsdoc + "goog.define('name', 1);", DEFINE_CALL_WITHOUT_ASSIGNMENT);
-    testError(jsdoc + "name.two = goog.define('name.2', 1);", INVALID_DEFINE_NAME_ERROR);
-    testError(jsdoc + "const x = goog.define();", NULL_ARGUMENT_ERROR);
-    testError(jsdoc + "const value = goog.define('value');", NULL_ARGUMENT_ERROR);
-    testError(jsdoc + "const five = goog.define(5);", INVALID_ARGUMENT_ERROR);
-
-    testError(jsdoc + "templateName = goog.define(`templateName`, 1);", INVALID_ARGUMENT_ERROR);
-    testError(jsdoc + "templateName = goog.define(`${template}Name`, 1);", INVALID_ARGUMENT_ERROR);
+  public void testValidBase_googModule_googRequiredInOtherModule() {
+    test(
+        srcs(
+            """
+            goog.module('FooModule');
+            /** @constructor */ function Foo() {}
+            goog.inherits(Foo, BaseFoo);
+            exports = {Foo};
+            """,
+            """
+            goog.module('test');
+            const {Foo: FooRequired} = goog.require('FooModule');
+            FooRequired.prototype.method = function() {
+              FooRequired.base(this, 'method');
+            };
+            """),
+        error(POSSIBLE_BASE_CLASS_ERROR));
   }
 
   @Test
-  public void testInvalidDefine() {
-    testError(
-        "goog.provide('a.b'); var x = x || goog.define('goog.DEBUG', true);",
-        DEFINE_CALL_WITHOUT_ASSIGNMENT);
-    testError(
-        "goog.provide('a.b'); function f() { const debug = goog.define('goog.DEBUG', true); }",
-        INVALID_CLOSURE_CALL_SCOPE_ERROR);
-  }
-
-  @Test
-  public void testValidDefine() {
+  public void testValidPrimitiveCalls() {
     testNoWarning(
-        lines(
-            "goog.module('a');",
-            "/** @define {boolean} */",
-            "const DEBUG = goog.define('goog.DEBUG', true);"));
+        """
+        goog.module('c');
+        goog.forwardDeclare('A.b');
+        """);
     testNoWarning(
-        lines(
-            "goog.provide('b');",
-            "/** @define {boolean} */",
-            "goog.DEBUG = goog.define('goog.DEBUG', true);"));
-    testNoWarning(
-        lines(
-            "goog.module('c');", //
-            "goog.forwardDeclare('A.b');"));
-    testNoWarning(
-        lines(
-            "goog.module('d');", //
-            "goog.addDependency('C.D');"));
+        """
+        goog.module('d');
+        goog.addDependency('C.D');
+        """);
   }
 
   @Test
-  public void testDefineValues() {
-    testSame("var CLOSURE_DEFINES = {'FOO': 'string'};");
-    testSame("var CLOSURE_DEFINES = {'FOO': true};");
-    testSame("var CLOSURE_DEFINES = {'FOO': false};");
-    testSame("var CLOSURE_DEFINES = {'FOO': 1};");
-    testSame("var CLOSURE_DEFINES = {'FOO': 0xABCD};");
-    testSame("var CLOSURE_DEFINES = {'FOO': -1};");
-    testSame("let CLOSURE_DEFINES = {'FOO': 'string'};");
-    testSame("const CLOSURE_DEFINES = {'FOO': 'string'};");
-  }
+  public void testInvalidGoogWeakUsage() {
+    // Error: the argument must be a name.
+    testError("goog.weakUsage(1);", INVALID_GOOG_WEAK_USAGE_CALL);
 
-  @Test
-  public void testDefineValuesErrors() {
-    testError("var CLOSURE_DEFINES = {'FOO': a};", CLOSURE_DEFINES_ERROR);
-    testError("var CLOSURE_DEFINES = {'FOO': 0+1};", CLOSURE_DEFINES_ERROR);
-    testError("var CLOSURE_DEFINES = {'FOO': 'value' + 'value'};", CLOSURE_DEFINES_ERROR);
-    testError("var CLOSURE_DEFINES = {'FOO': !true};", CLOSURE_DEFINES_ERROR);
-    testError("var CLOSURE_DEFINES = {'FOO': -true};", CLOSURE_DEFINES_ERROR);
+    // Error: there must be exactly one argument.
+    testError("a = 1; b = 1; goog.weakUsage(a, b);", INVALID_GOOG_WEAK_USAGE_CALL);
 
-    testError("var CLOSURE_DEFINES = {SHORTHAND};", CLOSURE_DEFINES_ERROR);
-    testError("var CLOSURE_DEFINES = {'TEMPLATE': `template`};", CLOSURE_DEFINES_ERROR);
-    testError("var CLOSURE_DEFINES = {'TEMPLATE': `${template}Sub`};", CLOSURE_DEFINES_ERROR);
+    // Regular name is allowed.
+    testSame("a = 1; goog.weakUsage(a);");
+
+    // Qualified name is allowed.
+    testSame("a = {b:1}; goog.weakUsage(a.b);");
   }
 
   @Test
   public void testOtherBaseCall() {
     testSame("class Foo extends BaseFoo { method() { baz.base('arg'); } }");
+  }
+
+  @Test
+  public void testRenameFunction_withOneStringLit_isOk() {
+    testSame("const p = JSCompiler_renameProperty('a')");
+  }
+
+  @Test
+  public void testRenameFunction_withOneStringLit_andAnotherArg_isOk() {
+    testSame("const p = JSCompiler_renameProperty('a', 0)");
+  }
+
+  @Test
+  public void testRenameFunction_withZeroArgs_isReported() {
+    test(
+        srcs("const p = JSCompiler_renameProperty()"),
+        error(INVALID_RENAME_FUNCTION).withMessageContaining("1 or 2 arguments"),
+        error(INVALID_RENAME_FUNCTION).withMessageContaining("string literal"));
+  }
+
+  @Test
+  public void testRenameFunction_withThreeArgs_isReported() {
+    test(
+        srcs("const p = JSCompiler_renameProperty(1, 2, 3)"),
+        error(INVALID_RENAME_FUNCTION).withMessageContaining("1 or 2 arguments"),
+        error(INVALID_RENAME_FUNCTION).withMessageContaining("string literal"));
+  }
+
+  @Test
+  public void testRenameFunction_withNonStringArg_isReported() {
+    test(
+        srcs("const p = JSCompiler_renameProperty(0)"),
+        error(INVALID_RENAME_FUNCTION).withMessageContaining("string literal"));
+  }
+
+  @Test
+  public void testInvalidRenameFunction_withPropertyRefInFirstArg_isReported() {
+    test(
+        srcs("const p = JSCompiler_renameProperty('a.b')"),
+        error(INVALID_RENAME_FUNCTION).withMessageContaining("property path"));
   }
 }

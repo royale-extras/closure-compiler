@@ -22,6 +22,7 @@ import com.google.javascript.rhino.JSDocInfo.Visibility;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Class that contains common Matchers that are useful to everyone.
@@ -92,11 +93,11 @@ public final class Matchers {
   }
 
   /**
-   * Returns a matcher that matches constructor definitions of the specified
-   * name.
+   * Returns a matcher that matches constructor definitions of the specified name.
+   *
    * @param name The name of the class constructor to match.
    */
-  public static Matcher constructor(final String name) {
+  public static Matcher constructor(final @Nullable String name) {
     return new Matcher() {
       @Override public boolean matches(Node node, NodeMetadata metadata) {
         JSDocInfo info = node.getJSDocInfo();
@@ -173,7 +174,7 @@ public final class Matchers {
    *     ns.AppContext.prototype.get} will match {@code appContext.get} and {@code this.get} when
    *     called from the AppContext class.
    */
-  public static Matcher functionCall(final String name) {
+  public static Matcher functionCall(final @Nullable String name) {
     return new Matcher() {
       @Override
       public boolean matches(Node node, NodeMetadata metadata) {
@@ -212,7 +213,7 @@ public final class Matchers {
   public static Matcher googRequirelike(final String namespace) {
     return (Node node, NodeMetadata metadata) ->
         googRequirelike().matches(node, metadata)
-            && node.getSecondChild().isString()
+            && node.getSecondChild().isStringLit()
             && node.getSecondChild().getString().equals(namespace);
   }
 
@@ -248,15 +249,14 @@ public final class Matchers {
   }
 
   /**
-   * Returns a Matcher that matches nodes representing a GETPROP access of
-   * an object property.
-   * @param name The name of the property to match. For non-static properties,
-   *     this must be the fully qualified name that includes the type of the
-   *     object. For instance: {@code ns.AppContext.prototype.root}
-   *     will match {@code appContext.root} and {@code this.root} when accessed
-   *     from the AppContext.
+   * Returns a Matcher that matches nodes representing a GETPROP access of an object property.
+   *
+   * @param name The name of the property to match. For non-static properties, this must be the
+   *     fully qualified name that includes the type of the object. For instance: {@code
+   *     ns.AppContext.prototype.root} will match {@code appContext.root} and {@code this.root} when
+   *     accessed from the AppContext.
    */
-  public static Matcher propertyAccess(final String name) {
+  public static Matcher propertyAccess(final @Nullable String name) {
     return new Matcher() {
       @Override
       public boolean matches(Node node, NodeMetadata metadata) {
@@ -325,7 +325,7 @@ public final class Matchers {
    * prototype of a class.
    */
   public static Matcher prototypeVariableDeclaration() {
-    return matcherForPrototypeDeclaration(false /* requireFunctionType */);
+    return matcherForPrototypeDeclaration(/* requireFunctionType= */ false);
   }
 
   /**
@@ -333,7 +333,7 @@ public final class Matchers {
    * prototype of a class.
    */
   public static Matcher prototypeMethodDeclaration() {
-    return matcherForPrototypeDeclaration(true /* requireFunctionType */);
+    return matcherForPrototypeDeclaration(/* requireFunctionType= */ true);
   }
 
   /**
@@ -457,8 +457,7 @@ public final class Matchers {
         && jsType.isSubtypeOf(providedJsType)) {
       if (node.isName() && propertyName.equals(node.getString())) {
         return true;
-      } else if (node.isGetProp()
-          && propertyName.equals(node.getLastChild().getString())) {
+      } else if (node.isGetProp() && propertyName.equals(node.getString())) {
         return true;
       }
     }
@@ -467,7 +466,8 @@ public final class Matchers {
 
   private static Matcher matcherForPrototypeDeclaration(final boolean requireFunctionType) {
     return new Matcher() {
-      @Override public boolean matches(Node node, NodeMetadata metadata) {
+      @Override
+      public boolean matches(Node node, NodeMetadata metadata) {
         // TODO(mknichel): Figure out which node is the best to return for this
         // function: the GETPROP node, or the ASSIGN node when the property is
         // being assigned to.
@@ -476,9 +476,9 @@ public final class Matchers {
         //   bar: 1
         // };
         Node firstChild = node.getFirstChild();
-        if (node.isGetProp() && firstChild.isGetProp()
-            && firstChild.getLastChild().isString()
-            && "prototype".equals(firstChild.getLastChild().getString())) {
+        if (node.isGetProp()
+            && firstChild.isGetProp()
+            && "prototype".equals(firstChild.getString())) {
           JSType fnJsType = getJsType(metadata, JSTypeNative.FUNCTION_FUNCTION_TYPE);
           JSType jsType = node.getJSType();
           if (jsType == null) {

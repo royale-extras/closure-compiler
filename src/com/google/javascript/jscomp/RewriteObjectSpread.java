@@ -16,10 +16,12 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.javascript.jscomp.AstFactory.type;
 
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.StaticScope;
 
 /**
  * Converts object spread to valid ES2017 code.
@@ -31,29 +33,24 @@ import com.google.javascript.rhino.Node;
  *
  * <p>Note that object rest is handled by {@link Es6RewriteDestructuring}
  */
-public final class RewriteObjectSpread implements NodeTraversal.Callback, HotSwapCompilerPass {
+public final class RewriteObjectSpread implements NodeTraversal.Callback, CompilerPass {
   private final AbstractCompiler compiler;
   private static final FeatureSet transpiledFeatures =
       FeatureSet.BARE_MINIMUM.with(Feature.OBJECT_LITERALS_WITH_SPREAD);
 
   private final AstFactory astFactory;
+  private final StaticScope namespace;
 
   public RewriteObjectSpread(AbstractCompiler compiler) {
     this.compiler = compiler;
     this.astFactory = compiler.createAstFactory();
+    this.namespace = this.compiler.getTranspilationNamespace();
   }
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, externs, transpiledFeatures, this);
     TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, transpiledFeatures, this);
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
+    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, root, transpiledFeatures);
   }
 
   @Override
@@ -64,18 +61,15 @@ public final class RewriteObjectSpread implements NodeTraversal.Callback, HotSwa
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
-      case OBJECTLIT:
-        visitObject(t, n);
-        break;
-      default:
-        break;
+      case OBJECTLIT -> visitObject(n);
+      default -> {}
     }
   }
 
-  private void visitObject(NodeTraversal t, Node obj) {
-    for (Node child : obj.children()) {
+  private void visitObject(Node obj) {
+    for (Node child = obj.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isSpread()) {
-        visitObjectWithSpread(t, obj);
+        visitObjectWithSpread(obj);
         return;
       }
     }
@@ -86,21 +80,21 @@ public final class RewriteObjectSpread implements NodeTraversal.Callback, HotSwa
    *
    * Object.assign({}, {first:b, c}, spread, {d:e, last});
    */
-  private void visitObjectWithSpread(NodeTraversal t, Node obj) {
+  private void visitObjectWithSpread(Node obj) {
     checkArgument(obj.isObjectLit());
 
     // Add an empty target object literal so changes made by Object.assign will not affect any other
     // variables.
     Node result =
-        astFactory.createObjectDotAssignCall(
-            t.getScope(), obj.getJSType(), astFactory.createObjectLit());
+        astFactory.createObjectDotAssignCall(namespace, type(obj), astFactory.createObjectLit());
 
     // An indicator whether the current last thing in the param list is an object literal to which
     // properties may be added.  Initialized to null since nothing should be added to the empty
     // object literal in first position of the param list.
     Node trailingObjectLiteral = null;
 
-    for (Node child : obj.children()) {
+    for (Node child = obj.getFirstChild(); child != null; ) {
+      final Node next = child.getNext();
       if (child.isSpread()) {
         // Add the object directly to the param list.
         Node spreaded = child.removeFirstChild();
@@ -117,9 +111,10 @@ public final class RewriteObjectSpread implements NodeTraversal.Callback, HotSwa
         // Add the property to the object literal.
         trailingObjectLiteral.addChildToBack(child.detach());
       }
+      child = next;
     }
 
-    result.useSourceInfoIfMissingFromForTree(obj);
+    result.srcrefTreeIfMissing(obj);
     obj.replaceWith(result);
     compiler.reportChangeToEnclosingScope(result);
   }

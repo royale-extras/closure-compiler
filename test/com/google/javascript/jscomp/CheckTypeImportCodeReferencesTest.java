@@ -18,8 +18,6 @@ package com.google.javascript.jscomp;
 
 import static com.google.javascript.jscomp.CheckTypeImportCodeReferences.TYPE_IMPORT_CODE_REFERENCE;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -32,13 +30,6 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   }
 
   @Override
-  @Before
-  public void setUp() throws Exception {
-    super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
-  }
-
-  @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new CheckTypeImportCodeReferences(compiler);
   }
@@ -47,44 +38,49 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_namespace() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "/** @type {namespace} */ let x;",
-                "namespace;")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            /** @type {namespace} */ let x;
+            namespace;
+            """));
   }
 
   @Test
   public void testRequireTypeCodeReference_alias() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "/** @type {alias} */ let x;")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            /** @type {alias} */ let x;
+            """));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');", //
-                "const alias = goog.requireType('namespace');",
-                "alias;")),
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            alias;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');", //
-                "let alias = goog.requireType('namespace');",
-                "alias;")),
+            """
+            goog.module('test');
+            let alias = goog.requireType('namespace');
+            alias;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');", //
-                "var alias = goog.requireType('namespace');",
-                "alias;")),
+            """
+            goog.module('test');
+            var alias = goog.requireType('namespace');
+            alias;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
   }
 
@@ -92,17 +88,19 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_destructuring() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const {alias} = goog.requireType('namespace');",
-                "/** @type {alias} */ let x;")));
+            """
+            goog.module('test');
+            const {alias} = goog.requireType('namespace');
+            /** @type {alias} */ let x;
+            """));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');", //
-                "const {alias} = goog.requireType('namespace');",
-                "alias;")),
+            """
+            goog.module('test');
+            const {alias} = goog.requireType('namespace');
+            alias;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
   }
 
@@ -110,24 +108,27 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_destructuring_shortname() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const {alias: myAlias} = goog.requireType('namespace');",
-                "alias;")));
+            """
+            goog.module('test');
+            const {alias: myAlias} = goog.requireType('namespace');
+            alias;
+            """));
 
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const {alias: myAlias} = goog.requireType('namespace');",
-                "/** @type {myAlias} */ let x;")));
+            """
+            goog.module('test');
+            const {alias: myAlias} = goog.requireType('namespace');
+            /** @type {myAlias} */ let x;
+            """));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const {alias: myAlias} = goog.requireType('namespace');",
-                "myAlias;")),
+            """
+            goog.module('test');
+            const {alias: myAlias} = goog.requireType('namespace');
+            myAlias;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
   }
 
@@ -135,10 +136,11 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_destructuring_multiple() {
     test(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const {otherAlias, alias: myAlias, anotherAlias} = goog.requireType('namespace');",
-                "myAlias;")),
+            """
+            goog.module('test');
+            const {otherAlias, alias: myAlias, anotherAlias} = goog.requireType('namespace');
+            myAlias;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
   }
 
@@ -146,24 +148,27 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_shadowing() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "function foo(alias) { alias; }")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            function foo(alias) { alias; }
+            """));
 
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "function foo() { let alias; }")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            function foo() { let alias; }
+            """));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "function foo() { alias; }")),
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            function foo() { alias; }
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
   }
 
@@ -171,17 +176,19 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_getprop_left() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "/** @type {alias.prop} */ let x;")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            /** @type {alias.prop} */ let x;
+            """));
 
     test(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "alias.prop;")),
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            alias.prop;
+            """),
         error(TYPE_IMPORT_CODE_REFERENCE));
   }
 
@@ -189,19 +196,21 @@ public final class CheckTypeImportCodeReferencesTest extends CompilerTestCase {
   public void testRequireTypeCodeReference_getprop_right() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "obj.alias;")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            obj.alias;
+            """));
   }
 
   @Test
   public void testRequireTypeCodeReference_implicit_var() {
     testSame(
         srcs(
-            lines(
-                "goog.module('test');",
-                "const alias = goog.requireType('namespace');",
-                "function f() { arguments; }")));
+            """
+            goog.module('test');
+            const alias = goog.requireType('namespace');
+            function f() { arguments; }
+            """));
   }
 }

@@ -59,8 +59,8 @@ public class ParseTree {
   public BreakStatementTree asBreakStatement() { return (BreakStatementTree) this; }
   public CallExpressionTree asCallExpression() { return (CallExpressionTree) this; }
 
-  public OptionalCallExpressionTree asOptionalCallExpression() {
-    return (OptionalCallExpressionTree) this;
+  public OptChainCallExpressionTree asOptChainCallExpression() {
+    return (OptChainCallExpressionTree) this;
   }
 
   public CaseClauseTree asCaseClause() { return (CaseClauseTree) this; }
@@ -72,12 +72,15 @@ public class ParseTree {
   public ComprehensionTree asComprehension() { return (ComprehensionTree) this; }
   public ComputedPropertyDefinitionTree asComputedPropertyDefinition() {
     return (ComputedPropertyDefinitionTree) this; }
+
+  public ComputedPropertyFieldTree asComputedPropertyField() {
+    return (ComputedPropertyFieldTree) this;
+  }
+
   public ComputedPropertyGetterTree asComputedPropertyGetter() {
     return (ComputedPropertyGetterTree) this; }
   public ComputedPropertyMethodTree asComputedPropertyMethod() {
     return (ComputedPropertyMethodTree) this; }
-  public ComputedPropertyMemberVariableTree asComputedPropertyMemberVariable() {
-    return (ComputedPropertyMemberVariableTree) this; }
   public ComputedPropertySetterTree asComputedPropertySetter() {
     return (ComputedPropertySetterTree) this; }
   public ConditionalExpressionTree asConditionalExpression() {
@@ -127,7 +130,6 @@ public class ParseTree {
     return (OptionalMemberLookupExpressionTree) this;
   }
 
-  public MemberVariableTree asMemberVariable() { return (MemberVariableTree) this; }
   public MissingPrimaryExpressionTree asMissingPrimaryExpression() {
     return (MissingPrimaryExpressionTree) this; }
   public NewExpressionTree asNewExpression() { return (NewExpressionTree) this; }
@@ -170,16 +172,6 @@ public class ParseTree {
   public ThisExpressionTree asThisExpression() { return (ThisExpressionTree) this; }
   public ThrowStatementTree asThrowStatement() { return (ThrowStatementTree) this; }
   public TryStatementTree asTryStatement() { return (TryStatementTree) this; }
-  public TypeNameTree asTypeName() { return (TypeNameTree) this; }
-  public TypedParameterTree asTypedParameter() { return (TypedParameterTree) this; }
-  public OptionalParameterTree asOptionalParameter() { return (OptionalParameterTree) this; }
-  public ParameterizedTypeTree asParameterizedType() { return (ParameterizedTypeTree) this; }
-  public ArrayTypeTree asArrayType() { return (ArrayTypeTree) this; }
-  public RecordTypeTree asRecordType() { return (RecordTypeTree) this; }
-  public UnionTypeTree asUnionType() { return (UnionTypeTree) this; }
-  public FunctionTypeTree asFunctionType() { return (FunctionTypeTree) this; }
-  public TypeQueryTree asTypeQuery() { return (TypeQueryTree) this; }
-  public GenericTypeListTree asGenericTypeList() { return (GenericTypeListTree) this; }
   public UnaryExpressionTree asUnaryExpression() { return (UnaryExpressionTree) this; }
   public VariableDeclarationListTree asVariableDeclarationList() {
     return (VariableDeclarationListTree) this; }
@@ -192,17 +184,6 @@ public class ParseTree {
   public AwaitExpressionTree asAwaitExpression() {
     return (AwaitExpressionTree) this;
   }
-  public InterfaceDeclarationTree asInterfaceDeclaration() {
-    return (InterfaceDeclarationTree) this;
-  }
-  public EnumDeclarationTree asEnumDeclaration() { return (EnumDeclarationTree) this; }
-  public TypeAliasTree asTypeAlias() { return (TypeAliasTree) this; }
-  public AmbientDeclarationTree asAmbientDeclaration() { return (AmbientDeclarationTree) this; }
-  public NamespaceDeclarationTree asNamespaceDeclaration() {
-    return (NamespaceDeclarationTree) this;
-  }
-  public IndexSignatureTree asIndexSignature() { return (IndexSignatureTree) this; }
-  public CallSignatureTree asCallSignature() { return (CallSignatureTree) this; }
 
   public NewTargetExpressionTree asNewTargetExpression() {
     return (NewTargetExpressionTree) this;
@@ -216,38 +197,53 @@ public class ParseTree {
     return (ForAwaitOfStatementTree) this;
   }
 
+  public FieldDeclarationTree asFieldDeclaration() {
+    return (FieldDeclarationTree) this;
+  }
+
   public boolean isPattern() {
     ParseTree parseTree = this;
     while (parseTree.type == ParseTreeType.PAREN_EXPRESSION) {
       parseTree = parseTree.asParenExpression().expression;
     }
 
-    switch (parseTree.type) {
-      case ARRAY_PATTERN:
-      case OBJECT_PATTERN:
-        return true;
-      default:
-        return false;
-    }
+    return switch (parseTree.type) {
+      case ARRAY_PATTERN, OBJECT_PATTERN -> true;
+      default -> false;
+    };
   }
 
+  /** Is valid assignment target for non-vanilla assignment operators like `+=`, `-+`, `**=`, etc */
+  public boolean isValidNonVanillaAssignmentTarget() {
+    ParseTree parseTree = this;
+    while (parseTree.type == ParseTreeType.PAREN_EXPRESSION) {
+      parseTree = parseTree.asParenExpression().expression;
+    }
+    return switch (parseTree.type) {
+      case IDENTIFIER_EXPRESSION, MEMBER_EXPRESSION, MEMBER_LOOKUP_EXPRESSION, DEFAULT_PARAMETER ->
+          true;
+      case ARRAY_PATTERN, OBJECT_PATTERN -> false;
+      default -> false;
+    };
+  }
+
+  /** Is valid assignment target for any assignment operator like `=`, `+=`, `-+`, `**=`, etc */
   public boolean isValidAssignmentTarget() {
     ParseTree parseTree = this;
     while (parseTree.type == ParseTreeType.PAREN_EXPRESSION) {
       parseTree = parseTree.asParenExpression().expression;
     }
 
-    switch(parseTree.type) {
-      case IDENTIFIER_EXPRESSION:
-      case MEMBER_EXPRESSION:
-      case MEMBER_LOOKUP_EXPRESSION:
-      case ARRAY_PATTERN:
-      case OBJECT_PATTERN:
-      case DEFAULT_PARAMETER:
-        return true;
-      default:
-        return false;
-    }
+    return switch (parseTree.type) {
+      case IDENTIFIER_EXPRESSION,
+          MEMBER_EXPRESSION,
+          MEMBER_LOOKUP_EXPRESSION,
+          ARRAY_PATTERN,
+          OBJECT_PATTERN,
+          DEFAULT_PARAMETER ->
+          true;
+      default -> false;
+    };
   }
 
   public boolean isRestParameter() {

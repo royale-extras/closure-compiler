@@ -42,7 +42,7 @@ WebAssembly.Module = function(bytes) {};
 WebAssembly.Instance = function(moduleObject, importObject) {};
 
 /**
- * @typedef {{initial:number, maximum:(number|undefined)}}
+ * @typedef {{initial:number, maximum:(number|undefined), shared:(boolean|undefined)}}
  */
 var MemoryDescriptor;
 
@@ -77,9 +77,56 @@ WebAssembly.LinkError = function() {};
 
 /**
  * @constructor
+ * @param {string=} message
+ * @param {string=} fileName
+ * @param {number=} lineNumber
  * @extends {Error}
  */
-WebAssembly.RuntimeError = function() {};
+WebAssembly.RuntimeError = function(message, fileName, lineNumber) {};
+
+/**
+ * @record
+ */
+function WebAssemblyTagOptions() {};
+
+/**
+ * @type {Array<string>}
+ */
+WebAssemblyTagOptions.prototype.parameters;
+
+/**
+ * @constructor
+ * @param {!WebAssemblyTagOptions} type
+ */
+WebAssembly.Tag = function(type) {};
+
+/**
+ * @type {!WebAssembly.Tag}
+ */
+WebAssembly.JSTag;
+
+/**
+ * @record
+ */
+function WebAssemblyExceptionOptions() {};
+
+/**
+ * @type {undefined|boolean}
+ */
+WebAssemblyExceptionOptions.prototype.traceStack;
+
+/**
+ * @constructor
+ * @param {!WebAssembly.Tag} tag
+ * @param {!Array} payload
+ * @param {WebAssemblyExceptionOptions=} options
+ */
+WebAssembly.Exception = function(tag, payload, options) {};
+
+/**
+ * @type {undefined|string}
+ */
+WebAssembly.Exception.prototype.stack;
 
 // Note: Closure compiler does not support function overloading, omit this overload for now.
 // {function(!WebAssembly.Module, Object=):!Promise<!WebAssembly.Instance>}
@@ -91,11 +138,11 @@ WebAssembly.RuntimeError = function() {};
 WebAssembly.instantiate = function(moduleObject, importObject) {};
 
 /**
- * @param {!Promise<!Response>} moduleStream
+ * @param {!Promise<!Response>|!Response} source
  * @param {Object=} importObject
  * @return {!Promise<{module:!WebAssembly.Module, instance:!WebAssembly.Instance}>}
  */
-WebAssembly.instantiateStreaming = function(moduleStream, importObject) {};
+WebAssembly.instantiateStreaming = function(source, importObject) {};
 
 /**
  * @param {!BufferSource} bytes
@@ -174,3 +221,45 @@ WebAssembly.Table.prototype.get = function(index) {};
  * @return {undefined}
  */
 WebAssembly.Table.prototype.set = function(index, value) {};
+
+/**
+ * @typedef {{
+ *   anyfunc: !Function,
+ *   externref: ?,
+ *   f32: number,
+ *   f64: number,
+ *   i32: number,
+ *   i64: bigint,
+ *   v128: *
+ * }}
+ * Note: This declaration is only here to document the acceptable type strings
+ * ("anyfunc"|"externref"|"f32"|"f64"|"i32"|"i64"|"v128") and to prevent
+ * the properties to be marked as missing externs in d.ts files.
+ */
+WebAssembly.ValueTypeMap;
+
+/**
+ * @typedef {string}
+ * Really: keyof ValueTypeMap, i.e. ("anyfunc"|"externref"|"f32"|"f64"|"i32"|"i64"|"v128")
+ */
+WebAssembly.ValueType;
+
+/**
+ * @typedef {{
+ *   mutable: (boolean|undefined),
+ *   value: WebAssembly.ValueType
+ * }}
+ */
+WebAssembly.GlobalDescriptor;
+
+/**
+ * @constructor
+ * @param {WebAssembly.GlobalDescriptor} descriptor
+ * @param {?=} v
+ */
+WebAssembly.Global = function(descriptor, v) {};
+
+/**
+ * @type {?}
+ */
+WebAssembly.Global.prototype.value;

@@ -20,25 +20,19 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.javascript.jscomp.AbstractCompiler;
+import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
-import com.google.javascript.jscomp.HotSwapCompilerPass;
-import com.google.javascript.jscomp.NodeUtil;
-import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.deps.ModuleLoader.ModulePath;
 import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
 import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleType;
 import com.google.javascript.rhino.Node;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Creates a {@link ModuleMap}. */
-public class ModuleMapCreator implements HotSwapCompilerPass {
-  public static final DiagnosticType MISSING_NAMESPACE_IMPORT =
-      DiagnosticType.error(
-          "JSC_MISSING_NAMESPACE_IMPORT", "Imported Closure namespace \"{0}\" never defined.");
-
+public class ModuleMapCreator implements CompilerPass {
   public static final DiagnosticType DOES_NOT_HAVE_EXPORT =
       DiagnosticType.error(
           "JSC_DOES_NOT_HAVE_EXPORT", "Requested module does not have an export \"{0}\".");
@@ -49,7 +43,7 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
           "Requested module does not have an export \"{0}\".{1}");
 
   private final class ModuleRequestResolverImpl implements ModuleRequestResolver {
-    private UnresolvedModule getFallbackForMissingNonClosureModule(ModuleLoader.ModulePath path) {
+    private UnresolvedModule getFallbackForMissingNonClosureModule(ModulePath path) {
       ModuleMetadata metadata =
           ModuleMetadata.builder()
               .rootNode(null)
@@ -72,7 +66,6 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
               .localNameToLocalExport(ImmutableMap.of())
               .path(path)
               .metadata(metadata)
-              .unresolvedModule(this)
               .build();
         }
 
@@ -127,8 +120,7 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
     }
 
     @Override
-    @Nullable
-    public UnresolvedModule resolve(Import i) {
+    public @Nullable UnresolvedModule resolve(Import i) {
       if (i.modulePath() == null) {
         return resolveForClosure(i.moduleRequest());
       }
@@ -136,31 +128,24 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
     }
 
     @Override
-    @Nullable
-    public UnresolvedModule resolve(Export e) {
+    public @Nullable UnresolvedModule resolve(Export e) {
       return resolve(e.moduleRequest(), e.modulePath(), e.exportNode());
     }
 
-    @Nullable
-    private UnresolvedModule resolveForClosure(String namespace) {
-      UnresolvedModule module = unresolvedModulesByClosureNamespace.get(namespace);
-      if (module == null) {
-        module = getFallbackForMissingClosureModule(namespace);
-        unresolvedModulesByClosureNamespace.put(namespace, module);
-      }
-      return module;
+    private @Nullable UnresolvedModule resolveForClosure(String namespace) {
+      return unresolvedModulesByClosureNamespace.computeIfAbsent(
+          namespace, this::getFallbackForMissingClosureModule);
     }
 
-    @Nullable
-    private UnresolvedModule resolve(
-        String moduleRequest, ModuleLoader.ModulePath modulePath, Node forLineInfo) {
+    private @Nullable UnresolvedModule resolve(
+        String moduleRequest, ModulePath modulePath, Node forLineInfo) {
 
       if (GoogEsImports.isGoogImportSpecifier(moduleRequest)) {
         String namespace = GoogEsImports.getClosureIdFromGoogImportSpecifier(moduleRequest);
         return resolveForClosure(namespace);
       }
 
-      ModuleLoader.ModulePath requestedPath =
+      ModulePath requestedPath =
           modulePath.resolveJsModule(
               moduleRequest,
               forLineInfo.getSourceFileName(),
@@ -200,8 +185,8 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
     this.esModuleProcessor = new EsModuleProcessor(compiler);
     this.closureModuleProcessor = new ClosureModuleProcessor(compiler);
     this.nonEsModuleProcessor = new NonEsModuleProcessor();
-    unresolvedModules = new HashMap<>();
-    unresolvedModulesByClosureNamespace = new HashMap<>();
+    unresolvedModules = new LinkedHashMap<>();
+    unresolvedModulesByClosureNamespace = new LinkedHashMap<>();
   }
 
   private ModuleMap create() {
@@ -219,15 +204,15 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
 
   private ModuleMap resolve() {
     ModuleRequestResolver requestResolver = new ModuleRequestResolverImpl();
-    Map<String, Module> resolvedModules = new HashMap<>();
-    Map<String, Module> resolvedClosureModules = new HashMap<>();
+    Map<String, Module> resolvedModules = new LinkedHashMap<>();
+    Map<String, Module> resolvedClosureModules = new LinkedHashMap<>();
 
     // We need to resolve in a loop as any missing reference will add a fake to the
     // unresolvedModules map (see getFallback* methods above). This would cause a concurrent
     // modification exception if we just iterated over unresolvedModules. So the first loop through
     // should resolve any "known" modules, and the second any "unrecognized" modules.
     do {
-      Set<String> toResolve =
+      ImmutableSet<String> toResolve =
           Sets.difference(unresolvedModules.keySet(), resolvedModules.keySet()).immutableCopy();
 
       for (String key : toResolve) {
@@ -242,7 +227,7 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
     } while (!resolvedModules.keySet().containsAll(unresolvedModules.keySet()));
 
     do {
-      Set<String> toResolve =
+      ImmutableSet<String> toResolve =
           Sets.difference(
                   unresolvedModulesByClosureNamespace.keySet(), resolvedClosureModules.keySet())
               .immutableCopy();
@@ -265,16 +250,17 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
   private void process(ModuleMetadata moduleMetadata) {
     final ModuleProcessor processor;
     switch (moduleMetadata.moduleType()) {
-      case ES6_MODULE:
-        processor = esModuleProcessor;
-        break;
-      case GOOG_MODULE:
-      case LEGACY_GOOG_MODULE:
-        processor = closureModuleProcessor;
-        break;
-      default:
-        processor = nonEsModuleProcessor;
-        break;
+      case ES6_MODULE -> processor = esModuleProcessor;
+      case GOOG_MODULE, LEGACY_GOOG_MODULE -> {
+        if (moduleMetadata.googNamespaces().size() == 1) {
+          processor = closureModuleProcessor;
+        } else {
+          // this indicates some malformed Closure module. We should already have reported an
+          // error.
+          processor = nonEsModuleProcessor;
+        }
+      }
+      default -> processor = nonEsModuleProcessor;
     }
     UnresolvedModule module =
         processor.process(moduleMetadata, moduleMetadata.path(), moduleMetadata.rootNode());
@@ -294,33 +280,5 @@ public class ModuleMapCreator implements HotSwapCompilerPass {
   @Override
   public void process(Node externs, Node root) {
     compiler.setModuleMap(create());
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    for (ModuleMetadata metadata : compiler.getModuleMetadataMap().getAllModuleMetadata()) {
-      // Call NodeUtil.getInputId on the metadata's root node as it could be a block of a nested
-      // goog.module, which won't have an input ID on the node itself.
-      if (originalRoot.getInputId().equals(NodeUtil.getInputId(metadata.rootNode()))) {
-        // We're hotswapping this module, rescan it.
-        process(metadata);
-      } else {
-        // Existing module we aren't hot swapping. We need to pull off the previously created
-        // UnresolvedModule - we can't scan this again since the module is probably transpiled now.
-        if (metadata.path() != null) {
-          Module module = compiler.getModuleMap().getModule(metadata.path());
-          unresolvedModules.put(metadata.path().toModuleName(), module.unresolvedModule());
-          module.unresolvedModule().reset();
-        }
-
-        for (String namespace : metadata.googNamespaces()) {
-          Module module = compiler.getModuleMap().getClosureModule(namespace);
-          unresolvedModulesByClosureNamespace.put(namespace, module.unresolvedModule());
-          module.unresolvedModule().reset();
-        }
-      }
-    }
-
-    compiler.setModuleMap(resolve());
   }
 }

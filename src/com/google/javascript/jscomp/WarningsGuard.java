@@ -15,7 +15,9 @@
  */
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.base.Tri;
 import java.io.Serializable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Class that allows to flexibly manage what to do with a reported warning/error.
@@ -29,18 +31,18 @@ import java.io.Serializable;
  *
  * <p>For example there are could be several implementations: StrictGuard - {return ERROR}. All
  * warnings should be treat as errors. SilentGuard - {if (WARNING) return OFF}. Suppress all
- * warnings but still fail if JS has errors. WhitelistGuard (if !whitelistErrors.contains(error)
+ * warnings but still fail if JS has errors. AllowlistGuard (if !allowlistErrors.contains(error)
  * return ERROR) return error if it does not present in the allowlist.
  */
 public abstract class WarningsGuard implements Serializable {
 
   /** Priority */
-  public static enum Priority {
+  public enum Priority {
     MAX(1),
     MIN(100),
     STRICT(100),
     DEFAULT(50),
-    SUPPRESS_BY_WHITELIST(40),
+    SUPPRESS_BY_ALLOWLIST(40),
     SUPPRESS_DOC(20),
     FILTER_BY_PATH(1);
 
@@ -56,58 +58,37 @@ public abstract class WarningsGuard implements Serializable {
   }
 
   /**
-   * Returns a new check level for a given error. OFF - suppress it, ERROR -
-   * report as error. null means that this guard does not know what to do
-   * with the error. Null is extremely helpful when you have a chain of
-   * guards. If current guard returns null, then the next in the chain should
-   * process it.
+   * Returns a new check level for a given error.
+   *
+   * <p>`null` means that this guard does not know what to do with the error. `null` can be used it
+   * chain multiple guards; if current guard returns null, then the next in the chain should process
+   * it.
    *
    * @param error a reported error.
    * @return what level given error should have.
    */
-  public abstract CheckLevel level(JSError error);
+  public abstract @Nullable CheckLevel level(JSError error);
 
   /**
-   * The priority in which warnings guards are applied. Lower means the
-   * guard will be applied sooner. Expressed on a scale of 1 to 100.
+   * Do checks for `group` still need to be run if this guard is installed?
+   *
+   * <ol>
+   *   <li>TRUE: Enables one or more types in the group, so it must be checked.
+   *   <li>FALSE: Disables all types in the group, so it need not be checked.
+   *   <li>UNKNOWN: Does not affect or only partially disables the group, so checking is undecided.
+   * </ol>
+   *
+   * @param group a group to check.
+   */
+  public Tri mustRunChecks(DiagnosticGroup group) {
+    return Tri.UNKNOWN;
+  }
+
+  /**
+   * The priority in which warnings guards are applied. Lower means the guard will be applied
+   * sooner. Expressed on a scale of 1 to 100.
    */
   protected int getPriority() {
     return Priority.DEFAULT.value;
-  }
-
-  /**
-   * Returns whether all warnings in the given diagnostic group will be
-   * filtered out. Used to determine which passes to skip.
-   *
-   * @param group A group of DiagnosticTypes.
-   * @return Whether all warnings of these types are disabled by this guard.
-   */
-  protected boolean disables(DiagnosticGroup group) {
-    return false;
-  }
-
-  /**
-   * Returns whether any of the warnings in the given diagnostic group will be
-   * upgraded to a warning or error.
-   *
-   * @param group A group of DiagnosticTypes.
-   * @return Whether any warnings of these types are enabled by this guard.
-   */
-  protected boolean enables(DiagnosticGroup group) {
-    return false;
-  }
-
-  /**
-   * Make a warnings guard that's the same as this one but with
-   * all escalating guards turned down.
-   */
-  protected WarningsGuard makeNonStrict() {
-    return this;
-  }
-
-  enum DiagnosticGroupState {
-    ON,
-    OFF,
-    UNSPECIFIED
   }
 }

@@ -19,12 +19,10 @@ package com.google.javascript.jscomp;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import java.util.Map;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Compilation results
- */
+/** Compilation results */
 public class Result {
   public final boolean success;
   public final ImmutableList<JSError> errors;
@@ -34,11 +32,12 @@ public class Result {
   public final VariableMap propertyMap;
   public final VariableMap namedAnonFunctionMap;
   public final VariableMap stringMap;
+  public final VariableMap instrumentationMappings;
   public final SourceMap sourceMap;
-  public final Map<String, Integer> cssNames;
+  public final Set<String> cssNames;
   public final String externExport;
   public final String idGeneratorMap;
-  public final Set<SourceFile> transpiledFiles;
+  public final boolean transpiledFiles;
 
   Result(
       ImmutableList<JSError> errors,
@@ -46,19 +45,21 @@ public class Result {
       VariableMap variableMap,
       VariableMap propertyMap,
       VariableMap namedAnonFunctionMap,
-      VariableMap stringMap,
-      SourceMap sourceMap,
+      @Nullable VariableMap stringMap,
+      @Nullable VariableMap instrumentationMappings,
+      @Nullable SourceMap sourceMap,
       String externExport,
-      Map<String, Integer> cssNames,
-      String idGeneratorMap,
-      Set<SourceFile> transpiledFiles) {
+      @Nullable Set<String> cssNames,
+      @Nullable String idGeneratorMap,
+      boolean transpiledFiles) {
     this.success = errors.isEmpty();
-    this.errors  = errors;
+    this.errors = errors;
     this.warnings = warnings;
     this.variableMap = variableMap;
     this.propertyMap = propertyMap;
     this.namedAnonFunctionMap = namedAnonFunctionMap;
     this.stringMap = stringMap;
+    this.instrumentationMappings = instrumentationMappings;
     this.sourceMap = sourceMap;
     this.externExport = externExport;
     this.cssNames = cssNames;
@@ -82,33 +83,37 @@ public class Result {
         variableMap,
         propertyMap,
         namedAnonFunctionMap,
-        null,
+        /* stringMap= */ null,
+        /* instrumentationMappings= */ null,
         sourceMap,
         externExport,
-        null,
-        null,
-        null);
+        /* cssNames= */ null,
+        /* idGeneratorMap= */ null,
+        /* transpiledFiles= */ false);
   }
 
   /**
-   * Returns an almost empty result that is used for multistage compilation.
+   * Returns an almost empty result that is more appropriate for a partial compilation.
    *
-   * <p>For multistage compilations, Result for stage1 only cares about errors and warnings. It is
-   * unnecessary to write all of other results in the disk.
+   * <p>For a partial compilation we only care about errors and warnings. It is unnecessary to
+   * examine all of the other results.
+   *
+   * @param result the full `Result` object provided by the compiler
    */
-  public static Result createResultForStage1(Result result) {
+  public static Result pruneResultForPartialCompilation(Result result) {
     VariableMap emptyVariableMap = new VariableMap(ImmutableMap.of());
     return new Result(
-        result.errors,
-        result.warnings,
-        emptyVariableMap,
-        emptyVariableMap,
-        emptyVariableMap,
-        null,
-        null,
-        "",
-        null,
-        null,
-        null);
+        /* errors= */ result.errors,
+        /* warnings= */ result.warnings,
+        /* variableMap= */ emptyVariableMap,
+        /* propertyMap= */ emptyVariableMap,
+        /* namedAnonFunctionMap= */ emptyVariableMap,
+        /* stringMap= */ null,
+        /* instrumentationMappings= */ emptyVariableMap,
+        /* sourceMap= */ null,
+        /* externExport= */ "",
+        /* cssNames= */ null,
+        /* idGeneratorMap= */ null,
+        /* transpiledFiles= */ false);
   }
 }

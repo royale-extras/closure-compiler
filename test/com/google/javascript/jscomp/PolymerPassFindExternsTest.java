@@ -28,37 +28,38 @@ import org.junit.runners.JUnit4;
 public final class PolymerPassFindExternsTest extends CompilerTestCase {
 
   private static final String EXTERNS =
-      lines(
-          MINIMAL_EXTERNS,
-          "/** @constructor */",
-          "var HTMLElement = function() {};",
-          "/** @constructor @extends {HTMLElement} */",
-          "var HTMLInputElement = function() {};",
-          "/** @constructor @extends {HTMLElement} */",
-          "var PolymerElement = function() {};",
-          "/** @type {!Object} */",
-          "PolymerElement.prototype.$;",
-          "PolymerElement.prototype.created = function() {};",
-          "PolymerElement.prototype.ready = function() {};",
-          "PolymerElement.prototype.attached = function() {};",
-          "PolymerElement.prototype.domReady = function() {};",
-          "PolymerElement.prototype.detached = function() {};",
-          "/**",
-          " * Call the callback after a timeout. Calling job again with the same name",
-          " * resets the timer but will not result in additional calls to callback.",
-          " *",
-          " * @param {string} name",
-          " * @param {Function} callback",
-          " * @param {number} timeoutMillis The minimum delay in milliseconds before",
-          " *     calling the callback.",
-          " */",
-          "PolymerElement.prototype.job = function(name, callback, timeoutMillis) {};",
-          "/**",
-          " * @param a {!Object}",
-          " * @return {!function()}",
-          " */",
-          "var Polymer = function(a) {};",
-          "var alert = function(msg) {};");
+      MINIMAL_EXTERNS
+          + """
+          /** @constructor */
+          var HTMLElement = function() {};
+          /** @constructor @extends {HTMLElement} */
+          var HTMLInputElement = function() {};
+          /** @constructor @extends {HTMLElement} */
+          var PolymerElement = function() {};
+          /** @type {!Object} */
+          PolymerElement.prototype.$;
+          PolymerElement.prototype.created = function() {};
+          PolymerElement.prototype.ready = function() {};
+          PolymerElement.prototype.attached = function() {};
+          PolymerElement.prototype.domReady = function() {};
+          PolymerElement.prototype.detached = function() {};
+          /**
+           * Call the callback after a timeout. Calling job again with the same name
+           * resets the timer but will not result in additional calls to callback.
+           *
+           * @param {string} name
+           * @param {Function} callback
+           * @param {number} timeoutMillis The minimum delay in milliseconds before
+           *     calling the callback.
+           */
+          PolymerElement.prototype.job = function(name, callback, timeoutMillis) {};
+          /**
+           * @param a {!Object}
+           * @return {!function()}
+           */
+          var Polymer = function(a) {};
+          var alert = function(msg) {};
+          """;
 
   private PolymerPassFindExterns findExternsCallback;
 
@@ -98,34 +99,38 @@ public final class PolymerPassFindExternsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testFindsPolymerElementRoot_skipsTypeSummaryAtFront() {
-    testSame(externs(lines("/** @typeSummary */ let PolymerElement;"), EXTERNS), srcs(""));
+  public void testFindsPolymerElementRoot_inTypeSummary() {
+    testSame(externs("/** @typeSummary */\n" + EXTERNS), srcs(""));
     Node polymerElementNode = findExternsCallback.getPolymerElementExterns();
 
     assertThat(polymerElementNode).isNotNull();
     assertThat(polymerElementNode.isVar()).isTrue();
     assertThat(polymerElementNode.getFirstChild().matchesQualifiedName("PolymerElement")).isTrue();
     assertThat(polymerElementNode.getParent().isScript()).isTrue();
-    assertThat(NodeUtil.isFromTypeSummary(polymerElementNode.getParent())).isFalse();
+    assertThat(NodeUtil.isFromTypeSummary(polymerElementNode.getParent())).isTrue();
   }
 
   @Test
-  public void testFindsPolymerElementRoot_skipsTypeSummaryAtBack() {
-    testSame(externs(EXTERNS, lines("/** @typeSummary */ let PolymerElement;")), srcs(""));
+  public void testFindsPolymerElementRoot_inTypeSummary_ignoresModule() {
+    testSame(
+        externs(
+            "goog.module = function(id) { };",
+            """
+            /** @typeSummary */
+            goog.module('some.module');
+            """
+                + EXTERNS),
+        srcs(""));
     Node polymerElementNode = findExternsCallback.getPolymerElementExterns();
 
-    assertThat(polymerElementNode).isNotNull();
-    assertThat(polymerElementNode.isVar()).isTrue();
-    assertThat(polymerElementNode.getFirstChild().matchesQualifiedName("PolymerElement")).isTrue();
-    assertThat(polymerElementNode.getParent().isScript()).isTrue();
-    assertThat(NodeUtil.isFromTypeSummary(polymerElementNode.getParent())).isFalse();
+    assertThat(polymerElementNode).isNull();
   }
 
   @Test
   public void testFindsPolymerElementProps() {
     testSame("");
-    final ImmutableList<String> expectedProps = ImmutableList.of(
-        "$", "created", "ready", "attached", "domReady", "detached", "job");
+    final ImmutableList<String> expectedProps =
+        ImmutableList.of("$", "created", "ready", "attached", "domReady", "detached", "job");
     ImmutableList<Node> polymerElementProps = findExternsCallback.getPolymerElementProps();
 
     assertThat(polymerElementProps).isNotNull();
@@ -136,8 +141,13 @@ public final class PolymerPassFindExternsTest extends CompilerTestCase {
   }
 
   private String getPropertyName(Node node) {
-    Node rightName = node.getFirstChild().getSecondChild();
-    return rightName.isFunction()
-        ? node.getFirstFirstChild().getSecondChild().getString() : rightName.getString();
+    node = node.getFirstChild();
+
+    Node rvalue = node.getSecondChild();
+    if (rvalue != null && rvalue.isFunction() && !node.isGetProp()) {
+      node = node.getFirstChild();
+    }
+
+    return node.getString();
   }
 }

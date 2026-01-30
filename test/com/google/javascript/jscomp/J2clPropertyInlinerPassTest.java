@@ -16,8 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.collect.Lists;
-import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -45,50 +43,93 @@ public class J2clPropertyInlinerPassTest extends CompilerTestCase {
     return compiler;
   }
 
-  private void testDoesntChange(List<SourceFile> js) {
-    test(js, js);
+  private void testDoesntChange(Sources js) {
+    testSame(js);
+  }
+
+  // Nearly all of the tests in this file were written at a time when
+  // J2clPropertyInlinerPassTest ran before CollapseProperties, so they
+  // are written with the `$clinit()` method and the internally generated
+  // static property used by the getter and setter in their uncollapsed forms.
+  // Now this pass runs after properties are collapsed, so this test case
+  // and integration cases in J2clIntegrationTest confirm that the collapsed
+  // forms are handled correctly also.
+  @Test
+  public void testInlineCollapsedProp() {
+    test(
+        srcs(
+            SourceFile.fromCode(
+                "someFile.js",
+                """
+                var A = function() {};
+                var A$$0clinit = function() {
+                  A$$0x = 2;
+                };
+                Object.defineProperties(A, {x :{
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A$$0clinit(), A$$0x;
+                  }
+                }});
+                var A$$0x = null;
+                var x = A.x;
+                """)),
+        expected(
+            SourceFile.fromCode(
+                "someFile.js",
+                """
+                var A = function() {};
+                var A$$0clinit = function() {
+                  A$$0x = 2;
+                };
+                var A$$0x = null;
+                var x = (A$$0clinit(), A$$0x);
+                """)));
   }
 
   @Test
   public void testNoInlineNonJ2clProps() {
     testDoesntChange(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "var A$$0clinit = function() {",
-                    "  A$$0x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x :{",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A$$0clinit(), A$$0x;",
-                    "  }",
-                    "}});",
-                    "var A$$0x = null;",
-                    "var x = A.x;"))));
+                """
+                var A = function() {};
+                var globalValue = null;
+                var initGlobalValue = function() {
+                  globalValue = 2;
+                };
+                Object.defineProperties(A, {x :{
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return initGlobalValue, globalValue;
+                  }
+                }});
+                var x = A.x;
+                """)));
   }
 
   @Test
   public void testNoInlineNonJ2clPropsValue() {
     testDoesntChange(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "var A$$0clinit = function() {",
-                    "  A$$0x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x :{",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  value: 2",
-                    "}});",
-                    "var A$$0x = null;",
-                    "var x = A.x;"))));
+                """
+                var A = function() {};
+                var A$$0clinit = function() {
+                  A$$0x = 2;
+                };
+                Object.defineProperties(A, {x :{
+                  configurable:true,
+                  enumerable:true,
+                  value: 2
+                }});
+                var A$$0x = null;
+                var x = A.x;
+                """)));
   }
 
   // In this test we want to remove the J2CL property but not the entire Object.defineProperties
@@ -96,423 +137,446 @@ public class J2clPropertyInlinerPassTest extends CompilerTestCase {
   @Test
   public void testNoStripDefineProperties() {
     test(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$j2cl_prop = 2;",
-                    "};",
-                    "Object.defineProperties(A, {",
-                    "  j2cl_prop: {",
-                    "    configurable: true,",
-                    "    enumerable: true,",
-                    "    get: function() {",
-                    "      return A.$clinit(), A.$j2cl_prop;",
-                    "    },",
-                    "    set: function(value) {",
-                    "      A.$clinit(), A.$j2cl_prop = value;",
-                    "    }",
-                    "  },",
-                    "  non_j2cl_prop: {",
-                    "    configurable: true,",
-                    "    enumerable: true,",
-                    "    get: function() {",
-                    "      return 55;",
-                    "    },",
-                    "    set: function(v) {",
-                    "      console.log(v);",
-                    "    }",
-                    "  },",
-                    "});"))),
-        Lists.newArrayList(
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$j2cl_prop = 2;
+                };
+                Object.defineProperties(A, {
+                  j2cl_prop: {
+                    configurable: true,
+                    enumerable: true,
+                    get: function() {
+                      return A.$clinit(), A.$j2cl_prop;
+                    },
+                    set: function(value) {
+                      A.$clinit(), A.$j2cl_prop = value;
+                    }
+                  },
+                  non_j2cl_prop: {
+                    configurable: true,
+                    enumerable: true,
+                    get: function() {
+                      return 55;
+                    },
+                    set: function(v) {
+                      console.log(v);
+                    }
+                  },
+                });
+                """)),
+        expected(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$j2cl_prop = 2;",
-                    "};",
-                    "Object.defineProperties(A, {",
-                    "  non_j2cl_prop: {",
-                    "    configurable: true,",
-                    "    enumerable: true,",
-                    "    get: function() {",
-                    "      return 55;",
-                    "    },",
-                    "    set: function(v) {",
-                    "      console.log(v);",
-                    "    }",
-                    "  },",
-                    "});"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$j2cl_prop = 2;
+                };
+                Object.defineProperties(A, {
+                  non_j2cl_prop: {
+                    configurable: true,
+                    enumerable: true,
+                    get: function() {
+                      return 55;
+                    },
+                    set: function(v) {
+                      console.log(v);
+                    }
+                  },
+                });
+                """)));
   }
 
   @Test
   public void testInlineDefinePropertiesGetter() {
     test(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "  set: function(value) {",
-                    "    A.$clinit(), A.$x = value;",
-                    "  }",
-                    "}});",
-                    "A.$x = 3;",
-                    "var xx = A.x;"))),
-        Lists.newArrayList(
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                  set: function(value) {
+                    A.$clinit(), A.$x = value;
+                  }
+                }});
+                A.$x = 3;
+                var xx = A.x;
+                """)),
+        expected(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "A.$x = 3;",
-                    "var xx = (A.$clinit(), A.$x);"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                A.$x = 3;
+                var xx = (A.$clinit(), A.$x);
+                """)));
   }
 
   @Test
   public void testInlineDefinePropertiesSetter() {
     test(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "  set: function(value) {",
-                    "    A.$clinit(), A.$x = value;",
-                    "  }",
-                    "}});",
-                    "A.$x = 3;",
-                    "A.x = 10;"))),
-        Lists.newArrayList(
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                  set: function(value) {
+                    A.$clinit(), A.$x = value;
+                  }
+                }});
+                A.$x = 3;
+                A.x = 10;
+                """)),
+        expected(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "A.$x = 3;",
-                    "{(A.$clinit(), A.$x = 10);}"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                A.$x = 3;
+                {(A.$clinit(), A.$x = 10);}
+                """)));
   }
 
   @Test
   public void testInlineGettersInQualifier() {
     test(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = {y: 2};",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "  set: function(value) {",
-                    "    A.$clinit(), A.$x = value;",
-                    "  }",
-                    "}});",
-                    "A.$x = null;",
-                    "var xy = A.x.y;"))),
-        Lists.newArrayList(
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = {y: 2};
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                  set: function(value) {
+                    A.$clinit(), A.$x = value;
+                  }
+                }});
+                A.$x = null;
+                var xy = A.x.y;
+                """)),
+        expected(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = {y: 2};",
-                    "};",
-                    "A.$x = null;",
-                    "var xy = (A.$clinit(), A.$x).y;"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = {y: 2};
+                };
+                A.$x = null;
+                var xy = (A.$clinit(), A.$x).y;
+                """)));
   }
 
   @Test
   public void testInlineGettersInQualifierNoSetter() {
     test(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = {y: 2};",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "}});",
-                    "A.$x = null;",
-                    "var xy = A.x.y;"))),
-        Lists.newArrayList(
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = {y: 2};
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                }});
+                A.$x = null;
+                var xy = A.x.y;
+                """)),
+        expected(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = {y: 2};",
-                    "};",
-                    "A.$x = null;",
-                    "var xy = (A.$clinit(), A.$x).y;"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = {y: 2};
+                };
+                A.$x = null;
+                var xy = (A.$clinit(), A.$x).y;
+                """)));
   }
 
   @Test
   public void testNoInlineCompoundAssignment() {
     testDoesntChange(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "  set: function(value) {",
-                    "    A.$clinit(), A.$x = value;",
-                    "  }",
-                    "}});",
-                    "A.$x = 3;",
-                    "A.x += 5;"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                  set: function(value) {
+                    A.$clinit(), A.$x = value;
+                  }
+                }});
+                A.$x = 3;
+                A.x += 5;
+                """)));
   }
 
   @Test
   public void testNoInlineIncrementGetter() {
     // Test ++
     testDoesntChange(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "  set: function(value) {",
-                    "    A.$clinit(), A.$x = value;",
-                    "  }",
-                    "}});",
-                    "A.$x = 3;",
-                    "A.x--;"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                  set: function(value) {
+                    A.$clinit(), A.$x = value;
+                  }
+                }});
+                A.$x = 3;
+                A.x--;
+                """)));
 
     // Test --
     testDoesntChange(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = 2;",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "  set: function(value) {",
-                    "    A.$clinit(), A.$x = value;",
-                    "  }",
-                    "}});",
-                    "A.$x = 3;",
-                    "A.x++;"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = 2;
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                  set: function(value) {
+                    A.$clinit(), A.$x = value;
+                  }
+                }});
+                A.$x = 3;
+                A.x++;
+                """)));
   }
 
   @Test
   public void testNoInlineSetterOnlyGetter() {
     test(
-        Lists.newArrayList(
+        srcs(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = {y: 2};",
-                    "};",
-                    "Object.defineProperties(A, {x: {",
-                    "  configurable:true,",
-                    "  enumerable:true,",
-                    "  get:function() {",
-                    "    return A.$clinit(), A.$x;",
-                    "  },",
-                    "}});",
-                    "A.$x = null;",
-                    "A.x = null;"))),
-        Lists.newArrayList(
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = {y: 2};
+                };
+                Object.defineProperties(A, {x: {
+                  configurable:true,
+                  enumerable:true,
+                  get:function() {
+                    return A.$clinit(), A.$x;
+                  },
+                }});
+                A.$x = null;
+                A.x = null;
+                """)),
+        expected(
             SourceFile.fromCode(
                 "someFile.js",
-                lines(
-                    "var A = function() {};",
-                    "A.$clinit = function() {",
-                    "  A.$x = {y: 2};",
-                    "};",
-                    "A.$x = null;",
-                    "A.x = null;"))));
+                """
+                var A = function() {};
+                A.$clinit = function() {
+                  A.$x = {y: 2};
+                };
+                A.$x = null;
+                A.x = null;
+                """)));
   }
 
   @Test
   public void testInlineEs6Getter() {
     test(
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "  }",
-            "  static get x() {",
-            "    return A.$clinit(), A.$x",
-            "  }",
-            "  static set x(value) {",
-            "    A.$clinit(), A.$x = value;",
-            "  }",
-            "}",
-            "A.$x = 3;",
-            "var xx = A.x"),
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "  }",
-            "}",
-            "A.$x = 3;",
-            "var xx = (A.$clinit(), A.$x);"));
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+          }
+          static get x() {
+            return A.$clinit(), A.$x
+          }
+          static set x(value) {
+            A.$clinit(), A.$x = value;
+          }
+        }
+        A.$x = 3;
+        var xx = A.x
+        """,
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+          }
+        }
+        A.$x = 3;
+        var xx = (A.$clinit(), A.$x);
+        """);
   }
 
   @Test
   public void testInlineEs6GetterNoSetter() {
     test(
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "  }",
-            "  static get x() {",
-            "    return A.$clinit(), A.$x",
-            "  }",
-            "}",
-            "A.$x = 3;",
-            "var xx = A.x"),
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "  }",
-            "}",
-            "A.$x = 3;",
-            "var xx = (A.$clinit(), A.$x);"));
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+          }
+          static get x() {
+            return A.$clinit(), A.$x
+          }
+        }
+        A.$x = 3;
+        var xx = A.x
+        """,
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+          }
+        }
+        A.$x = 3;
+        var xx = (A.$clinit(), A.$x);
+        """);
   }
 
   @Test
   public void testInlineEs6Setter() {
     test(
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "  }",
-            "  static get x() {",
-            "    return A.$clinit(), A.$x",
-            "  }",
-            "  static set x(value) {",
-            "    A.$clinit(), A.$x = value;",
-            "  }",
-            "}",
-            "A.$x = 3;",
-            "A.x = 5;"),
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "  }",
-            "}",
-            "A.$x = 3;",
-            "{(A.$clinit(), A.$x = 5)}"));
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+          }
+          static get x() {
+            return A.$clinit(), A.$x
+          }
+          static set x(value) {
+            A.$clinit(), A.$x = value;
+          }
+        }
+        A.$x = 3;
+        A.x = 5;
+        """,
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+          }
+        }
+        A.$x = 3;
+        {(A.$clinit(), A.$x = 5)}
+        """);
   }
 
   @Test
   public void testInlineEs6GetterSetter_multiple() {
     test(
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "    A.$y = 3;",
-            "  }",
-            "  static get x() {",
-            "    return A.$clinit(), A.$x",
-            "  }",
-            "  static set y(value) {",
-            "    A.$clinit(), A.$y = value;",
-            "  }",
-            "  static get y() {",
-            "    return A.$clinit(), A.$y",
-            "  }",
-            "  static set x(value) {",
-            "    A.$clinit(), A.$x = value;",
-            "  }",
-            "}",
-            "var xx = A.x;",
-            "var yy = A.y",
-            "A.x = 5;",
-            "A.y = 5;"),
-        lines(
-            "class A {",
-            "  static $clinit() {",
-            "    A.$clinit = function() {};",
-            "    A.$x = 2;",
-            "    A.$y = 3;",
-            "  }",
-            "}",
-            "var xx = (A.$clinit(), A.$x);",
-            "var yy = (A.$clinit(), A.$y)",
-            "{(A.$clinit(), A.$x = 5)}",
-            "{(A.$clinit(), A.$y = 5)}"));
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+            A.$y = 3;
+          }
+          static get x() {
+            return A.$clinit(), A.$x
+          }
+          static set y(value) {
+            A.$clinit(), A.$y = value;
+          }
+          static get y() {
+            return A.$clinit(), A.$y
+          }
+          static set x(value) {
+            A.$clinit(), A.$x = value;
+          }
+        }
+        var xx = A.x;
+        var yy = A.y
+        A.x = 5;
+        A.y = 5;
+        """,
+        """
+        class A {
+          static $clinit() {
+            A.$clinit = function() {};
+            A.$x = 2;
+            A.$y = 3;
+          }
+        }
+        var xx = (A.$clinit(), A.$x);
+        var yy = (A.$clinit(), A.$y)
+        {(A.$clinit(), A.$x = 5)}
+        {(A.$clinit(), A.$y = 5)}
+        """);
   }
 }

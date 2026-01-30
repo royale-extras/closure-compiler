@@ -22,11 +22,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for DiagnosticGroup.
- *
- * @author nicksantos@google.com (Nick Santos)
- */
+/** Tests for DiagnosticGroup. */
 @RunWith(JUnit4.class)
 public final class DiagnosticGroupTest {
 

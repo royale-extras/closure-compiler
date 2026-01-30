@@ -36,7 +36,7 @@ public class RegExpTreeTest {
   private RuntimeException exceptionFrom(String regex, String flags) {
     try {
       String printed = parseRegExpAndPrintPattern(regex, flags);
-      assertWithMessage("Expected exception, but none was thrown. Instead got back: " + printed)
+      assertWithMessage("Expected exception, but none was thrown. Instead got back: %s", printed)
           .fail();
       throw new AssertionError(); // unreachable
     } catch (RuntimeException thrownException) {
@@ -192,5 +192,34 @@ public class RegExpTreeTest {
     // Even though enclosed in (?<>), 'foo' not a capture name definition
     // (?: ) in expected output serves same purpose as above test
     assertRegexCompilesTo("[(?<foo>)]\\k<foo>", "", "(?:[()<>?fo]k)<foo>");
+  }
+
+  @Test
+  public void testValidUnicodeEscape() {
+    assertRegexCompilesTo("\\u0061", "", "a");
+    assertRegexCompilesTo("\\u10b1", "u", "\\u10b1");
+    assertRegexCompilesTo("\\u{61}", "u", "a");
+    assertRegexCompilesTo("\\u{10b1}", "u", "\\u10b1");
+    assertRegexCompilesTo("\\u{1bc}", "u", "\\u01bc");
+    assertRegexCompilesTo("\\u{100A3}", "u", "\\ud800\\udca3");
+  }
+
+  @Test
+  public void testInvalidUnicodeEscape() {
+    assertRegexThrowsExceptionThat("\\u{a012", "u")
+        .hasMessageThat()
+        .isEqualTo("Malformed unicode escape: expected '}' after {a012");
+    assertRegexThrowsExceptionThat("\\u{}", "u") //
+        .hasMessageThat()
+        .isEqualTo("Empty unicode escape");
+    assertRegexThrowsExceptionThat("\\u{10za}", "u") //
+        .hasMessageThat()
+        .isEqualTo("za}");
+    assertRegexThrowsExceptionThat("\\u{FFFFFF}", "u")
+        .hasMessageThat()
+        .isEqualTo("Unicode must be at most 0x10FFFF: FFFFFF");
+    assertRegexThrowsExceptionThat("\\u{FF00FFFF}", "u")
+        .hasMessageThat()
+        .isEqualTo("Cannot parse hexadecimal encoding wider than 28 bits: FF00FFFF");
   }
 }

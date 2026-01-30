@@ -41,7 +41,7 @@
 package com.google.javascript.rhino;
 
 import com.google.common.collect.ImmutableList;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Abstraction over a qualified name. Unifies Node-based qualified names and string-based names,
@@ -61,7 +61,8 @@ public abstract class QualifiedName {
     ImmutableList.Builder<String> builder = ImmutableList.builder();
     do {
       index = string.indexOf('.', lastIndex);
-      builder.add(string.substring(lastIndex, index < 0 ? string.length() : index).intern());
+      String term = string.substring(lastIndex, index < 0 ? string.length() : index);
+      builder.add(RhinoStringPool.addOrGet(term));
       lastIndex = index + 1;
     } while (index >= 0);
     ImmutableList<String> terms = builder.build();
@@ -72,8 +73,7 @@ public abstract class QualifiedName {
    * Returns the qualified name of the owner, or null for simple names. For the name "foo.bar.baz",
    * this returns an object representing "foo.bar".
    */
-  @Nullable
-  public abstract QualifiedName getOwner();
+  public abstract @Nullable QualifiedName getOwner();
 
   /**
    * Returns outer-most term of this qualified name, or the entire name for simple names. For the
@@ -128,6 +128,8 @@ public abstract class QualifiedName {
     return sb.toString();
   }
 
+  public abstract int getComponentCount();
+
   /**
    * Returns a new qualified name object with {@code this} name as the owner and the given string as
    * the property name.
@@ -147,7 +149,7 @@ public abstract class QualifiedName {
     }
 
     @Override
-    public QualifiedName getOwner() {
+    public @Nullable QualifiedName getOwner() {
       return size > 1 ? new StringListQname(terms, size - 1) : null;
     }
 
@@ -177,11 +179,15 @@ public abstract class QualifiedName {
     }
 
     @Override
+    public int getComponentCount() {
+      return size;
+    }
+
+    @Override
     public boolean matches(Node n) {
       int pos = size - 1;
       while (pos > 0 && n.isGetProp()) {
-        // NOTE: these strings are all interned, so we can do identity comparison.
-        if (n.getLastChild().getString() != terms.get(pos)) {
+        if (!RhinoStringPool.uncheckedEquals(n.getString(), terms.get(pos))) {
           return false;
         }
         pos--;
@@ -190,17 +196,14 @@ public abstract class QualifiedName {
       if (pos > 0) {
         return false;
       }
-      switch (n.getToken()) {
-        case NAME:
-        case MEMBER_FUNCTION_DEF:
-          return terms.get(0) == n.getString();
-        case THIS:
-          return terms.get(0) == THIS;
-        case SUPER:
-          return terms.get(0) == SUPER;
-        default:
-          return false;
-      }
+
+      String term = this.terms.get(0);
+      return switch (n.getToken()) {
+        case NAME, MEMBER_FUNCTION_DEF -> RhinoStringPool.uncheckedEquals(term, n.getString());
+        case THIS -> RhinoStringPool.uncheckedEquals(term, THIS);
+        case SUPER -> RhinoStringPool.uncheckedEquals(term, SUPER);
+        default -> false;
+      };
     }
   }
 
@@ -211,7 +214,7 @@ public abstract class QualifiedName {
 
     GetpropQname(QualifiedName owner, String prop) {
       this.owner = owner;
-      this.prop = prop.intern();
+      this.prop = RhinoStringPool.addOrGet(prop);
     }
 
     @Override
@@ -238,8 +241,13 @@ public abstract class QualifiedName {
     @Override
     public boolean matches(Node n) {
       return n.isGetProp()
-          && n.getLastChild().getString() == prop
+          && RhinoStringPool.uncheckedEquals(n.getString(), prop)
           && owner.matches(n.getFirstChild());
+    }
+
+    @Override
+    public int getComponentCount() {
+      return owner.getComponentCount() + 1;
     }
   }
 
@@ -255,25 +263,18 @@ public abstract class QualifiedName {
     }
 
     @Override
-    public QualifiedName getOwner() {
+    public @Nullable QualifiedName getOwner() {
       return node.isGetProp() ? new NodeQname(node.getFirstChild()) : null;
     }
 
     @Override
     public String getComponent() {
-      switch (node.getToken()) {
-        case GETPROP:
-          return node.getLastChild().getString();
-        case THIS:
-          return THIS;
-        case SUPER:
-          return SUPER;
-        case NAME:
-        case MEMBER_FUNCTION_DEF:
-          return node.getString();
-        default:
-          throw new IllegalStateException("Not a qualified name: " + node);
-      }
+      return switch (node.getToken()) {
+        case THIS -> THIS;
+        case SUPER -> SUPER;
+        case NAME, GETPROP, MEMBER_FUNCTION_DEF -> node.getString();
+        default -> throw new IllegalStateException("Not a qualified name: " + node);
+      };
     }
 
     @Override
@@ -295,8 +296,19 @@ public abstract class QualifiedName {
     public boolean matches(Node n) {
       return n.matchesQualifiedName(node);
     }
+
+    @Override
+    public int getComponentCount() {
+      int count = 1;
+      Node current = this.node;
+      while (current.isGetProp()) {
+        count++;
+        current = current.getFirstChild();
+      }
+      return count;
+    }
   }
 
-  private static final String THIS = "this".intern();
-  private static final String SUPER = "super".intern();
+  private static final String THIS = RhinoStringPool.addOrGet("this");
+  private static final String SUPER = RhinoStringPool.addOrGet("super");
 }

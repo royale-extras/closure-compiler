@@ -15,13 +15,16 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
+import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.modules.ModuleMap;
 import com.google.javascript.jscomp.modules.ModuleMetadataMap;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import org.jspecify.annotations.Nullable;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -30,7 +33,7 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
 
-  private Node polymerCall;
+  private @Nullable Node polymerCall;
 
   @Override
   @Before
@@ -45,41 +48,42 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
   public void testSimpleBehavior() {
     PolymerClassDefinition def =
         parseAndExtractClassDefFromCall(
-            lines(
-                "/** @polymerBehavior */",
-                "var FunBehavior = {",
-                "  properties: {",
-                "    /** @type {boolean} */",
-                "    isFun: {",
-                "      type: Boolean,",
-                "      value: true,",
-                "    }",
-                "  },",
-                "  listeners: {",
-                "    click: 'doSomethingFun',",
-                "  },",
-                "  /** @type {string} */",
-                "  foo: 'hooray',",
-                "",
-                "  /** @param {string} funAmount */",
-                "  doSomethingFun: function(funAmount) {",
-                "    alert('Something ' + funAmount + ' fun!');",
-                "  },",
-                "",
-                "  /** @override */",
-                "  created: function() {}",
-                "};",
-                "var A = Polymer({",
-                "  is: 'x-element',",
-                "  properties: {",
-                "    pets: {",
-                "      type: Array,",
-                "      notify: true,",
-                "    },",
-                "    name: String,",
-                "  },",
-                "  behaviors: [ FunBehavior ],",
-                "});"));
+            """
+            /** @polymerBehavior */
+            var FunBehavior = {
+              properties: {
+                /** @type {boolean} */
+                isFun: {
+                  type: Boolean,
+                  value: true,
+                }
+              },
+              listeners: {
+                click: 'doSomethingFun',
+              },
+              /** @type {string} */
+              foo: 'hooray',
+
+              /** @param {string} funAmount */
+              doSomethingFun: function(funAmount) {
+                alert('Something ' + funAmount + ' fun!');
+              },
+
+              /** @override */
+              created: function() {}
+            };
+            var A = Polymer({
+              is: 'x-element',
+              properties: {
+                pets: {
+                  type: Array,
+                  notify: true,
+                },
+                name: String,
+              },
+              behaviors: [ FunBehavior ],
+            });
+            """);
 
     assertThat(def).isNotNull();
     assertThat(def.defType).isEqualTo(PolymerClassDefinition.DefinitionType.ObjectLiteral);
@@ -96,22 +100,22 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
 
   @Test
   public void testBasicClass() {
-    compiler.getOptions().setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     PolymerClassDefinition def =
         parseAndExtractClassDefFromClass(
-            lines(
-                "class A extends Polymer.Element {",
-                "  static get is() { return 'x-element'; }",
-                "  static get properties() {",
-                "    return {",
-                "      pets: {",
-                "        type: Array,",
-                "        notify: true,",
-                "      },",
-                "      name: String",
-                "    };",
-                "  }",
-                "}"));
+            """
+            class A extends Polymer.Element {
+              static get is() { return 'x-element'; }
+              static get properties() {
+                return {
+                  pets: {
+                    type: Array,
+                    notify: true,
+                  },
+                  name: String
+                };
+              }
+            }
+            """);
 
     assertThat(def).isNotNull();
     assertThat(def.defType).isEqualTo(PolymerClassDefinition.DefinitionType.ES6Class);
@@ -125,52 +129,95 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
   }
 
   @Test
+  public void testClassMethods() {
+    PolymerClassDefinition def =
+        parseAndExtractClassDefFromClass(
+            """
+            class A extends Polymer.Element {
+              static get is() { return 'x-element'; }
+              method() {}
+              /** @type {function()} */
+              fieldWithFunction = function() {};
+              fieldWithArrowFunction = () => {};
+              fieldWithNumber = 1;
+              fieldWithoutInitializer;
+              constructor() {
+                super();
+                this.propertyWithFunction = function() {};
+                this.propertyWithArrowFunction = () => {};
+                this.propertyWithNumber = 2;
+              }
+            }
+            """);
+
+    assertThat(def).isNotNull();
+    ImmutableList<String> methodNames =
+        def.methods.stream().map(m -> m.name.getString()).collect(toImmutableList());
+    assertThat(methodNames)
+        .containsExactly(
+            "method",
+            "fieldWithFunction",
+            "fieldWithArrowFunction",
+            "constructor",
+            "propertyWithFunction",
+            "propertyWithArrowFunction");
+  }
+
+  @Test
   public void testDynamicDescriptor() {
-    PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        lines(
-            "var A = Polymer({",
-            "  is: x,",
-            "});"));
+    PolymerClassDefinition def =
+        parseAndExtractClassDefFromCall(
+            """
+            var A = Polymer({
+              is: x,
+            });
+            """);
 
     assertThat(def.target.getString()).isEqualTo("A");
   }
 
   @Test
   public void testDynamicDescriptor1() {
-    PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        lines(
-            "Polymer({",
-            "  is: x,",
-            "});"));
+    PolymerClassDefinition def =
+        parseAndExtractClassDefFromCall(
+            """
+            Polymer({
+              is: x,
+            });
+            """);
 
     assertThat(def.target.getString()).isEqualTo("XElement");
   }
 
   @Test
   public void testDynamicDescriptor2() {
-    PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        lines(
-            "Polymer({",
-            "  is: foo.bar,",
-            "});"));
+    PolymerClassDefinition def =
+        parseAndExtractClassDefFromCall(
+            """
+            Polymer({
+              is: foo.bar,
+            });
+            """);
 
     assertThat(def.target.getString()).isEqualTo("Foo$barElement");
   }
 
   @Test
   public void testDynamicDescriptor3() {
-    PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        lines(
-            "Polymer({",
-            "  is: this.bar,",
-            "});"));
+    PolymerClassDefinition def =
+        parseAndExtractClassDefFromCall(
+            """
+            Polymer({
+              is: this.bar,
+            });
+            """);
 
     assertThat(def.target.getString()).isEqualTo("This$barElement");
   }
 
   private PolymerClassDefinition parseAndExtractClassDefFromCall(String code) {
     Node rootNode = compiler.parseTestCode(code);
-    GlobalNamespace globalNamespace =  new GlobalNamespace(compiler, rootNode);
+    GlobalNamespace globalNamespace = new GlobalNamespace(compiler, rootNode);
 
     NodeUtil.visitPostOrder(
         rootNode,
@@ -197,7 +244,6 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
 
   private PolymerClassDefinition parseAndExtractClassDefFromClass(String code) {
     Node rootNode = compiler.parseTestCode(code);
-    GlobalNamespace globalNamespace = new GlobalNamespace(compiler, rootNode);
 
     NodeUtil.visitPostOrder(
         rootNode,
@@ -211,6 +257,6 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
         });
 
     assertThat(polymerCall).isNotNull();
-    return PolymerClassDefinition.extractFromClassNode(polymerCall, compiler, globalNamespace);
+    return PolymerClassDefinition.extractFromClassNode(polymerCall, compiler);
   }
 }

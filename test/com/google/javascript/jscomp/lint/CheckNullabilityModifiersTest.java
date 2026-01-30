@@ -45,6 +45,7 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
   public void testPrimitiveType() {
     checkRedundantWarning("/** @type {!boolean} */ var x;");
     checkRedundantWarning("/** @type {!number} */ var x;");
+    checkRedundantWarning("/** @type {!bigint} */ var x;");
     checkRedundantWarning("/** @type {!string} */ var x;");
     checkRedundantWarning("/** @type {!symbol} */ var x;");
     checkRedundantWarning("/** @type {!undefined} */ var x;");
@@ -109,6 +110,7 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
   public void testEnumType() {
     checkRedundantWarning("/** @enum {!boolean} */ var x;");
     checkRedundantWarning("/** @enum {!number} */ var x;");
+    checkRedundantWarning("/** @enum {!bigint} */ var x;");
     checkRedundantWarning("/** @enum {!string} */ var x;");
     checkRedundantWarning("/** @enum {!symbol} */ var x;");
 
@@ -124,33 +126,36 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
     checkNoWarning("/** @param {T} x @template T */", "function f(x){}");
     checkNoWarning("/** @param {S} x @return {T} @template S,T */", "function f(x){}");
     checkNoWarning(
-        lines(
-            "/** @constructor @template T */ function Foo(){}",
-            "/** @param {T} x */ Foo.prototype.bar = function(x){};"));
+        """
+        /** @constructor @template T */ function Foo(){}
+        /** @param {T} x */ Foo.prototype.bar = function(x){};
+        """);
   }
 
   @Test
   public void testTemplateDefinitionTypeWithTtl() {
     checkNoWarning(
-        lines(
-            "/**",
-            " * @param {T} x",
-            " * @param {U} y",
-            " * @template T",
-            " * @template U := T =:",
-            " */",
-            "function f(x, y) {}"));
+        """
+        /**
+         * @param {T} x
+         * @param {U} y
+         * @template T
+         * @template U := T =:
+         */
+        function f(x, y) {}
+        """);
 
     checkNoWarning(
-        lines(
-            "/**",
-            " * @param {T} x",
-            " * @param {U} y",
-            " * @template T",
-            // note that "Object" below is /not/ nullable
-            " * @template U := cond(isUnknown(T), \"Object\", T) =:",
-            " */",
-            "function f(x, y) {}"));
+        """
+        /**
+         * @param {T} x
+         * @param {U} y
+         * @template T
+        // note that "Object" below is /not/ nullable
+         * @template U := cond(isUnknown(T), "Object", T) =:
+         */
+        function f(x, y) {}
+        """);
   }
 
   @Test
@@ -225,20 +230,6 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
   }
 
   @Test
-  public void testThrowsType() {
-    // TODO(tjgq): The style guide forbids throwing anything other than Error subclasses, so an
-    // @throws should never contain a primitive type. Should we suppress the warning in this case?
-    checkRedundantWarning("/** @throws {!string} */ function f(){}");
-
-    checkMissingWarning("/** @throws {Object} */ function f(){}");
-
-    checkNoWarning("/** @throws {string} */ function f(){}");
-    checkNoWarning("/** @throws {?string} */ function f(){}");
-    checkNoWarning("/** @throws {?Object} */ function f(){}");
-    checkNoWarning("/** @throws {!Object} */ function f(){}");
-  }
-
-  @Test
   public void testTypeOf() {
     checkNoWarning("/** @type {typeof Object} */ var x;");
   }
@@ -266,26 +257,33 @@ public final class CheckNullabilityModifiersTest extends CompilerTestCase {
         "/** @constructor */ function C() {} /** @private {Object} */ C.prop = null;");
     checkNullMissingWarning(
         "/** @constructor */ function C() { /** @private {Object} */ this.foo = null; }");
+    checkNullMissingWarning(
+        "/** @constructor */ function C() { /** @private {Object|string} */ this.foo = null; }");
+    checkNullMissingWarning(
+        "/** @constructor */ function C() { /** @private {!String|Symbol} */ this.foo = null; }");
 
     checkNoWarning("/** @type {?Object} */ var x = null;");
     checkNoWarning("/** @constructor */ function C() {} /** @private {?Symbol} */ C.prop = null;");
     checkNoWarning(
         "/** @constructor */ function C() { /** @private {?Object} */ this.foo = null; }");
+    // don't recommend making 'Type' nullable since it's not the root of the type expression
+    checkMissingWarning("/** @type {!Array<Type>} */ let arr = null;");
+    checkMissingWarning("/** @type {?{prop: Type}} */ let o = null;");
   }
 
   private void checkNoWarning(String... js) {
-    testSame(js);
+    testSame(srcs(js));
   }
 
   private void checkMissingWarning(String... js) {
-    testWarning(js, CheckNullabilityModifiers.MISSING_NULLABILITY_MODIFIER_JSDOC);
+    testWarning(srcs(js), CheckNullabilityModifiers.MISSING_NULLABILITY_MODIFIER_JSDOC);
   }
 
   private void checkNullMissingWarning(String... js) {
-    testWarning(js, CheckNullabilityModifiers.NULL_MISSING_NULLABILITY_MODIFIER_JSDOC);
+    testWarning(srcs(js), CheckNullabilityModifiers.NULL_MISSING_NULLABILITY_MODIFIER_JSDOC);
   }
 
   private void checkRedundantWarning(String... js) {
-    testWarning(js, CheckNullabilityModifiers.REDUNDANT_NULLABILITY_MODIFIER_JSDOC);
+    testWarning(srcs(js), CheckNullabilityModifiers.REDUNDANT_NULLABILITY_MODIFIER_JSDOC);
   }
 }

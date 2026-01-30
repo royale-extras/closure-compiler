@@ -36,7 +36,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** @author johnlenz@google.com (John Lenz) */
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 @RunWith(JUnit4.class)
 public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
@@ -47,7 +49,7 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
   @Override
   protected Format getSourceMapFormat() {
-    return SourceMap.Format.V3;
+    return Format.V3;
   }
 
   private static String getEncodedFileName() {
@@ -85,15 +87,14 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
   @Test
   public void testLiteralMappings() throws Exception {
-    compileAndCheck("function __BASIC__(__PARAM1__, __PARAM2__) { " +
-                    "var __VAR__ = '__STR__'; }");
+    compileAndCheck("function __BASIC__(__PARAM1__, __PARAM2__) { var __VAR__ = '__STR__'; }");
   }
 
   @Test
   public void testLiteralMappingsGoldenOutput() throws Exception {
     // Empty source map test
     checkSourceMap(
-        "function __BASIC__(__PARAM1__, __PARAM2__) { " + "var __VAR__ = '__STR__'; }",
+        "function __BASIC__(__PARAM1__, __PARAM2__) { var __VAR__ = '__STR__'; }",
         TestJsonBuilder.create()
             .setVersion(3)
             .setFile("testcode")
@@ -106,31 +107,39 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
   @Test
   public void testMultilineMapping() throws Exception {
-    compileAndCheck("function __BASIC__(__PARAM1__, __PARAM2__) {\n" +
-                    "var __VAR__ = '__STR__';\n" +
-                    "var __ANO__ = \"__STR2__\";\n" +
-                    "}");
+    compileAndCheck(
+        """
+        function __BASIC__(__PARAM1__, __PARAM2__) {
+        var __VAR__ = '__STR__';
+        var __ANO__ = "__STR2__";
+        }
+        """);
   }
 
   @Test
   public void testMultilineMapping2() throws Exception {
-    compileAndCheck("function __BASIC__(__PARAM1__, __PARAM2__) {\n" +
-                    "var __VAR__ = 1;\n" +
-                    "var __ANO__ = 2;\n" +
-                    "}");
+    compileAndCheck(
+        """
+        function __BASIC__(__PARAM1__, __PARAM2__) {
+        var __VAR__ = 1;
+        var __ANO__ = 2;
+        }
+        """);
   }
 
   @Test
   public void testMultiFunctionMapping() throws Exception {
-    compileAndCheck("function __BASIC__(__PARAM1__, __PARAM2__) {\n" +
-                    "var __VAR__ = '__STR__';\n" +
-                    "var __ANO__ = \"__STR2__\";\n" +
-                    "}\n" +
-
-                    "function __BASIC2__(__PARAM3__, __PARAM4__) {\n" +
-                    "var __VAR2__ = '__STR2__';\n" +
-                    "var __ANO2__ = \"__STR3__\";\n" +
-                    "}\n");
+    compileAndCheck(
+        """
+        function __BASIC__(__PARAM1__, __PARAM2__) {
+        var __VAR__ = '__STR__';
+        var __ANO__ = "__STR2__";
+        }
+        function __BASIC2__(__PARAM3__, __PARAM4__) {
+        var __VAR2__ = '__STR2__';
+        var __ANO2__ = "__STR3__";
+        }
+        """);
   }
 
   @Test
@@ -187,9 +196,11 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
             .setFile("testcode")
             .setLineCount(1)
             .setMappings(
-                "A,aAAAA,QAASA,EAAC,CAACC,GAAD,CAAMC,GAAN,"
-                    + "CAAW,CAAED,GAAA,CAAMA,GAAN,CAAYC,GAAZ,CAAkB,CAAG,"
-                    + "OAAOD,IAA9B;")
+                """
+                A,aAAAA,QAASA,EAAC,CAACC,GAAD,CAAMC,GAAN,\
+                CAAW,CAAED,GAAA,CAAMA,GAAN,CAAYC,GAAZ,CAAkB,CAAG,\
+                OAAOD,IAA9B;\
+                """)
             .setSources("testcode")
             .setNames("f", "foo", "bar")
             .build());
@@ -203,9 +214,11 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
             .setFile("testcode")
             .setLineCount(1)
             .setMappings(
-                "A,aAAAA,QAASA,EAATA,CAAWC,GAAXD,CAAgBE,"
-                    + "GAAhBF,EAAuBC,GAAvBD,CAA6BC,GAA7BD,CAAmCE,GAAnCF,"
-                    + "SAAmDC,IAAnDD;")
+                """
+                A,aAAAA,QAASA,EAATA,CAAWC,GAAXD,CAAgBE,\
+                GAAhBF,EAAuBC,GAAvBD,CAA6BC,GAA7BD,CAAmCE,GAAnCF,\
+                SAAmDC,IAAnDD;\
+                """)
             .setSources("testcode")
             .setNames("f", "foo", "bar")
             .build());
@@ -219,9 +232,11 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
             .setFile("testcode")
             .setLineCount(1)
             .setMappings(
-                "A,aAAAA,QAASA,EAATA,CAAWC,GAAXD,CAAgBE,"
-                    + "GAAhBF,EAAuBC,GAAvBD,CAA6BC,GAA7BD,CAAmCE,GAAnCF,"
-                    + "SAAmDC,IAAnDD;")
+                """
+                A,aAAAA,QAASA,EAATA,CAAWC,GAAXD,CAAgBE,\
+                GAAhBF,EAAuBC,GAAvBD,CAA6BC,GAA7BD,CAAmCE,GAAnCF,\
+                SAAmDC,IAAnDD;\
+                """)
             .setSources("testcode")
             .setSourcesContent("function f(foo, bar) { foo = foo + bar + 2; return foo; }")
             .setNames("f", "foo", "bar")
@@ -237,9 +252,11 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
             .setFile("testcode")
             .setLineCount(1)
             .setMappings(
-                "A,aAAAA,QAASA,EAAC,CAACC,GAAD,CAAMC,GAAN,"
-                    + "CAAW,CAIrBD,GAAA,CAAMA,GAAN,CAAYC,GAAZ,CAAkBD,"
-                    + "GAClB,OAAOA,IALc;")
+                """
+                A,aAAAA,QAASA,EAAC,CAACC,GAAD,CAAMC,GAAN,\
+                CAAW,CAIrBD,GAAA,CAAMA,GAAN,CAAYC,GAAZ,CAAkBD,\
+                GAClB,OAAOA,IALc;\
+                """)
             .setSources("testcode")
             .setNames("f", "foo", "bar")
             .build());
@@ -281,88 +298,92 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
     checkSourceMap(
         "c:\\myfile.js",
-        "/** @preserve\n"
-            + " * this is a test.\n"
-            + " */\n"
-            + "var foo=a + 'this is a really long line that will force the"
-            + " mapping to span multiple lines 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + "' + c + d + e;",
+        """
+        /** @preserve
+         * this is a test.
+         */
+        console.log(a + 'this is a really long line that will force the\
+         mapping to span multiple lines 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+        ' + c + d + e);\
+        """,
         TestJsonBuilder.create()
             .setVersion(3)
             .setFile("testcode")
             .setLineCount(6)
             .setMappings(
-                "A;;;;aAGA,IAAIA,IAAIC,CAAJD,CAAQ,mxCAARA;AAA8xCE,"
-                    + "CAA9xCF,CAAkyCG,CAAlyCH,CAAsyCI;")
+                "A;;;;aAGAA,OAAQC,CAAAA,GAAR,CAAYC,CAAZ,CAAgB,mxCAAhB;AAAsyCC,CAAtyC,CAA0yCC,CAA1yC,CAA8yCC,CAA9yC;")
             .setSources(getEncodedFileName())
-            .setNames("foo", "a", "c", "d", "e")
+            .setNames("console", "log", "a", "c", "d", "e")
             .build());
 
     detailLevel = SourceMap.DetailLevel.SYMBOLS;
 
     checkSourceMap(
         "c:\\myfile.js",
-        "/** @preserve\n"
-            + " * this is a test.\n"
-            + " */\n"
-            + "var foo=a + 'this is a really long line that will force the"
-            + " mapping to span multiple lines 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + " 123456789 123456789 123456789 123456789 123456789"
-            + "' + c + d + e;",
+        """
+        /** @preserve
+         * this is a test.
+         */
+        console.log(a + 'this is a really long line that will force the\
+         mapping to span multiple lines 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+         123456789 123456789 123456789 123456789 123456789\
+        ' + c + d + e);\
+        """,
         TestJsonBuilder.create()
             .setVersion(3)
             .setFile("testcode")
             .setLineCount(6)
-            .setMappings("A;;;;iBAGIA,IAAIC,CAAJD;AAA8xCE,CAA9xCF,CAAkyCG,CAAlyCH,CAAsyCI;")
+            .setMappings(
+                "A;;;;aAGAA,OAAQC,CAAAA,GAAR,CAAYC,CAAZ;AAAsyCC,CAAtyC,CAA0yCC,CAA1yC,CAA8yCC,CAA9yC;")
             .setSources(getEncodedFileName())
-            .setNames("foo", "a", "c", "d", "e")
+            .setNames("console", "log", "a", "c", "d", "e")
             .build());
   }
 
@@ -373,15 +394,16 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
     // expression, and are thus preserved.
     checkSourceMap(
         "c:\\myfile.js",
-        lines(
-            "var myMultilineTemplate = `Item ${a}", //
-            "Item ${b}",
-            "Item ${c}`;"),
+        """
+        var myMultilineTemplate = `Item ${a}
+        Item ${b}
+        Item ${c}`;
+        """,
         TestJsonBuilder.create()
             .setVersion(3)
             .setFile("testcode")
             .setLineCount(3)
-            .setMappings("A,aAAA,IAAIA,oBAAsB,QAAQC,CAAR;OACnBC,CADmB;OAEnBC,CAFmB;")
+            .setMappings("A,aAAA,IAAIA,oBAAuB,QAAOC,CAAP;OACpBC,CADoB;OAEpBC,CAFoB;")
             .setSources(getEncodedFileName())
             .setNames("myMultilineTemplate", "a", "b", "c")
             .build());
@@ -409,42 +431,46 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
   public void testWriteMetaMap() throws IOException {
     StringWriter out = new StringWriter();
     String name = "./app.js";
-    List<SourceMapSection> appSections = ImmutableList.of(
-        SourceMapSection.forURL("src1", 0, 0),
-        SourceMapSection.forURL("src2", 100, 10),
-        SourceMapSection.forURL("src3", 150, 5));
+    ImmutableList<SourceMapSection> appSections =
+        ImmutableList.of(
+            SourceMapSection.forURL("src1", 0, 0),
+            SourceMapSection.forURL("src2", 100, 10),
+            SourceMapSection.forURL("src3", 150, 5));
 
     SourceMapGeneratorV3 generator = new SourceMapGeneratorV3();
     generator.appendIndexMapTo(out, name, appSections);
 
     assertThat(out.toString())
-        .isEqualTo("{\n"
-            + "\"version\":3,\n"
-            + "\"file\":\"./app.js\",\n"
-            + "\"sections\":[\n"
-            + "{\n"
-            + "\"offset\":{\n"
-            + "\"line\":0,\n"
-            + "\"column\":0\n"
-            + "},\n"
-            + "\"url\":\"src1\"\n"
-            + "},\n"
-            + "{\n"
-            + "\"offset\":{\n"
-            + "\"line\":100,\n"
-            + "\"column\":10\n"
-            + "},\n"
-            + "\"url\":\"src2\"\n"
-            + "},\n"
-            + "{\n"
-            + "\"offset\":{\n"
-            + "\"line\":150,\n"
-            + "\"column\":5\n"
-            + "},\n"
-            + "\"url\":\"src3\"\n"
-            + "}\n"
-            + "]\n"
-            + "}\n");
+        .isEqualTo(
+            """
+            {
+            "version":3,
+            "file":"./app.js",
+            "sections":[
+            {
+            "offset":{
+            "line":0,
+            "column":0
+            },
+            "url":"src1"
+            },
+            {
+            "offset":{
+            "line":100,
+            "column":10
+            },
+            "url":"src2"
+            },
+            {
+            "offset":{
+            "line":150,
+            "column":5
+            },
+            "url":"src3"
+            }
+            ]
+            }
+            """);
   }
 
   private static String getEmptyMapFor(String name) throws IOException {
@@ -458,43 +484,47 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
   public void testWriteMetaMap2() throws IOException {
     StringWriter out = new StringWriter();
     String name = "./app.js";
-    List<SourceMapSection> appSections = ImmutableList.of(
-        // Map and URLs can be mixed.
-        SourceMapSection.forMap(getEmptyMapFor("./part.js"), 0, 0),
-        SourceMapSection.forURL("src2", 100, 10));
+    ImmutableList<SourceMapSection> appSections =
+        ImmutableList.of(
+            // Map and URLs can be mixed.
+            SourceMapSection.forMap(getEmptyMapFor("./part.js"), 0, 0),
+            SourceMapSection.forURL("src2", 100, 10));
 
     SourceMapGeneratorV3 generator = new SourceMapGeneratorV3();
     generator.appendIndexMapTo(out, name, appSections);
 
     assertThat(out.toString())
-        .isEqualTo("{\n"
-            + "\"version\":3,\n"
-            + "\"file\":\"./app.js\",\n"
-            + "\"sections\":[\n"
-            + "{\n"
-            + "\"offset\":{\n"
-            + "\"line\":0,\n"
-            + "\"column\":0\n"
-            + "},\n"
-            + "\"map\":{\n"
-            + "\"version\":3,\n"
-            + "\"file\":\"./part.js\",\n"
-            + "\"lineCount\":1,\n"
-            + "\"mappings\":\";\",\n"
-            + "\"sources\":[],\n"
-            + "\"names\":[]\n"
-            + "}\n"
-            + "\n"
-            + "},\n"
-            + "{\n"
-            + "\"offset\":{\n"
-            + "\"line\":100,\n"
-            + "\"column\":10\n"
-            + "},\n"
-            + "\"url\":\"src2\"\n"
-            + "}\n"
-            + "]\n"
-            + "}\n");
+        .isEqualTo(
+            """
+            {
+            "version":3,
+            "file":"./app.js",
+            "sections":[
+            {
+            "offset":{
+            "line":0,
+            "column":0
+            },
+            "map":{
+            "version":3,
+            "file":"./part.js",
+            "lineCount":1,
+            "mappings":";",
+            "sources":[],
+            "names":[]
+            }
+
+            },
+            {
+            "offset":{
+            "line":100,
+            "column":10
+            },
+            "url":"src2"
+            }
+            ]
+            }
+            """);
   }
 
   @Test
@@ -519,19 +549,22 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
     FilePosition offset = appendAndCount(output, result1.generatedSource);
     sections.add(SourceMapSection.forURL(MAP1, 0, 0));
     output.append(result2.generatedSource);
-    sections.add(
-        SourceMapSection.forURL(MAP2, offset.getLine(), offset.getColumn()));
+    sections.add(SourceMapSection.forURL(MAP2, offset.getLine(), offset.getColumn()));
 
     SourceMapGeneratorV3 generator = new SourceMapGeneratorV3();
     StringBuilder mapContents = new StringBuilder();
     generator.appendIndexMapTo(mapContents, "out.js", sections);
 
-    check(inputs, output.toString(), mapContents.toString(),
-      new SourceMapSupplier() {
-        @Override
-        public String getSourceMap(String url){
-          return maps.get(url);
-      }});
+    check(
+        inputs,
+        output.toString(),
+        mapContents.toString(),
+        new SourceMapSupplier() {
+          @Override
+          public String getSourceMap(String url) {
+            return maps.get(url);
+          }
+        });
   }
 
   @Test
@@ -551,8 +584,7 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
     SourceMapGeneratorV3 generator = new SourceMapGeneratorV3();
 
     generator.mergeMapSection(0, 0, result1.sourceMapFileContent);
-    generator.mergeMapSection(offset.getLine(), offset.getColumn(),
-        result2.sourceMapFileContent);
+    generator.mergeMapSection(offset.getLine(), offset.getColumn(), result2.sourceMapFileContent);
 
     StringBuilder mapContents = new StringBuilder();
     generator.appendTo(mapContents, "out.js");
@@ -561,8 +593,61 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
   }
 
   @Test
+  public void testSourceMerging1() throws SourceMapParseException, IOException {
+    // construct first source map
+    SourceMapGeneratorV3 sourceMapGeneratorV3 = new SourceMapGeneratorV3();
+    sourceMapGeneratorV3.addMapping(
+        "sourceName1",
+        "symbolName1",
+        new FilePosition(1, 1),
+        new FilePosition(2, 2),
+        new FilePosition(3, 3));
+    StringWriter w = new StringWriter();
+    sourceMapGeneratorV3.appendTo(w, "foo.js.sourcemap");
+    String sourceMap1 = w.toString();
+
+    // construct second source map
+    sourceMapGeneratorV3 = new SourceMapGeneratorV3();
+    sourceMapGeneratorV3.addMapping(
+        "sourceName2",
+        "symbolName2",
+        new FilePosition(1, 4),
+        new FilePosition(2, 5),
+        new FilePosition(3, 6));
+    w = new StringWriter();
+    sourceMapGeneratorV3.appendTo(w, "bar.js.sourcemap");
+    String sourceMap2 = w.toString();
+
+    // combine the two
+    sourceMapGeneratorV3 = new SourceMapGeneratorV3();
+    sourceMapGeneratorV3.mergeMapSection(0, 0, sourceMap1);
+    sourceMapGeneratorV3.mergeMapSection(4, 0, sourceMap2);
+    sourceMapGeneratorV3.appendTo(w, "foobar.js.sourcemap");
+    String combinedMap = w.toString();
+
+    // Construct the same map manually
+    sourceMapGeneratorV3 = new SourceMapGeneratorV3();
+    sourceMapGeneratorV3.addMapping(
+        "sourceName1",
+        "symbolName1",
+        new FilePosition(1, 1),
+        new FilePosition(2, 2),
+        new FilePosition(3, 3));
+    sourceMapGeneratorV3.addMapping(
+        "sourceName2",
+        "symbolName2",
+        new FilePosition(1, 4),
+        new FilePosition(6, 5),
+        new FilePosition(7, 6));
+    sourceMapGeneratorV3.appendTo(w, "foobar.js.sourcemap");
+    String manuallyCombined = w.toString();
+    // TODO(b/62591567): these should be equal, but combinedMap is missing the last mapping.
+    assertThat(combinedMap).isNotEqualTo(manuallyCombined);
+  }
+
+  @Test
   public void testSourceMapExtensions() throws Exception {
-    //generating the json
+    // generating the json
     SourceMapGeneratorV3 mapper = new SourceMapGeneratorV3();
     mapper.addExtension("x_google_foo", new JsonObject());
     mapper.addExtension("x_google_test", parseJsonObject("{\"number\" : 1}"));
@@ -576,14 +661,14 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
     assertThat(mapper.hasExtension("x_google_test")).isTrue();
 
-    //reading & checking the extension properties
+    // reading & checking the extension properties
     JsonObject sourceMap = parseJsonObject(out.toString());
 
     assertThat(sourceMap.has("x_google_foo")).isFalse();
     assertThat(sourceMap.has("google_test")).isFalse();
     assertThat(sourceMap.get("x_google_test").getAsJsonObject().get("number").getAsInt())
         .isEqualTo(1);
-    assertThat(sourceMap.get("x_google_array").getAsJsonArray().size()).isEqualTo(0);
+    assertThat(sourceMap.get("x_google_array").getAsJsonArray()).isEmpty();
     assertThat(sourceMap.get("x_google_int").getAsInt()).isEqualTo(2);
     assertThat(sourceMap.get("x_google_str").getAsString()).isEqualTo("Some text");
   }
@@ -594,38 +679,43 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
     mapper.mergeMapSection(
         0,
         0,
-        "{\n"
-            + "\"version\":3,\n"
-            + "\"file\":\"testcode\",\n"
-            + "\"lineCount\":1,\n"
-            + "\"mappings\":\"AAAAA,a,QAASA,UAAS,EAAG;\",\n"
-            + "\"sources\":[\"testcode\"],\n"
-            + "\"names\":[\"__BASIC__\"],\n"
-            + "\"x_company_foo\":2\n"
-            + "}\n");
+        """
+        {
+        "version":3,
+        "file":"testcode",
+        "lineCount":1,
+        "mappings":"AAAAA,a,QAASA,UAAS,EAAG;",
+        "sources":["testcode"],
+        "names":["__BASIC__"],
+        "x_company_foo":2
+        }
+        """);
 
     assertThat(mapper.hasExtension("x_company_foo")).isFalse();
 
     mapper.addExtension("x_company_baz", 2);
 
-    mapper.mergeMapSection(0, 0,
-        "{\n" +
-            "\"version\":3,\n" +
-            "\"file\":\"testcode2\",\n" +
-            "\"lineCount\":0,\n" +
-            "\"mappings\":\"\",\n" +
-            "\"sources\":[\"testcode2\"],\n" +
-            "\"names\":[],\n" +
-            "\"x_company_baz\":3,\n" +
-            "\"x_company_bar\":false\n" +
-            "}\n", new ExtensionMergeAction() {
-      @Override
-      public Object merge(String extensionKey, Object currentValue,
-          Object newValue) {
-        return (Integer) currentValue
-            + ((JsonPrimitive) newValue).getAsInt();
-      }
-    });
+    mapper.mergeMapSection(
+        0,
+        0,
+        """
+        {
+        "version":3,
+        "file":"testcode2",
+        "lineCount":0,
+        "mappings":"",
+        "sources":["testcode2"],
+        "names":[],
+        "x_company_baz":3,
+        "x_company_bar":false
+        }
+        """,
+        new ExtensionMergeAction() {
+          @Override
+          public Object merge(String extensionKey, Object currentValue, Object newValue) {
+            return (Integer) currentValue + ((JsonPrimitive) newValue).getAsInt();
+          }
+        });
 
     assertThat(mapper.getExtension("x_company_baz")).isEqualTo(5);
     assertThat(((JsonPrimitive) mapper.getExtension("x_company_bar")).getAsBoolean()).isFalse();
@@ -635,7 +725,7 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
   public void testSourceRoot() throws Exception {
     SourceMapGeneratorV3 mapper = new SourceMapGeneratorV3();
 
-    //checking absence of sourceRoot
+    // checking absence of sourceRoot
     StringBuilder out = new StringBuilder();
     mapper.appendTo(out, "out.js");
     JsonObject mapping = parseJsonObject(out.toString());
@@ -650,7 +740,7 @@ public final class SourceMapGeneratorV3Test extends SourceMapTestCase {
 
     assertThat(mapping.has("sourceRoot")).isFalse();
 
-    //checking sourceRoot
+    // checking sourceRoot
     out = new StringBuilder();
     mapper.setSourceRoot("http://url/path");
     mapper.appendTo(out, "out3.js");

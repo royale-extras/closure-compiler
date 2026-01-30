@@ -18,6 +18,7 @@ package com.google.javascript.jscomp;
 
 import static com.google.javascript.jscomp.VariableReferenceCheck.EARLY_REFERENCE;
 import static com.google.javascript.jscomp.VariableReferenceCheck.UNUSED_LOCAL_ASSIGNMENT;
+import static com.google.javascript.jscomp.deps.ModuleLoader.INVALID_MODULE_PATH;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -26,10 +27,15 @@ import org.junit.runners.JUnit4;
 /**
  * Test that warnings are generated in appropriate cases and appropriate cases only by
  * VariableReferenceCheck
- *
  */
 @RunWith(JUnit4.class)
 public final class UnusedLocalsCheckTest extends CompilerTestCase {
+
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    ignoreWarnings(INVALID_MODULE_PATH);
+  }
 
   @Override
   public CompilerOptions getOptions() {
@@ -76,23 +82,25 @@ public final class UnusedLocalsCheckTest extends CompilerTestCase {
   @Test
   public void testAliasInModule() {
     testSame(
-        lines(
-            "goog.module('m');",
-            "const x = goog.require('x');",
-            "const y = x.y;",
-            "/** @type {y} */ var z;",
-            "alert(z);"));
+        """
+        goog.module('m');
+        const x = goog.require('x');
+        const y = x.y;
+        /** @type {y} */ var z;
+        alert(z);
+        """);
   }
 
   @Test
   public void testAliasInES6Module() {
     testSame(
-        lines(
-            "import 'm';",
-            "import x from 'x';",
-            "export const y = x.y;",
-            "export /** @type {y} */ var z;",
-            "alert(z);"));
+        """
+        import 'm';
+        import x from 'x';
+        export const y = x.y;
+        export /** @type {y} */ var z;
+        alert(z);
+        """);
   }
 
   @Test
@@ -103,7 +111,11 @@ public final class UnusedLocalsCheckTest extends CompilerTestCase {
 
   @Test
   public void testExportedType() {
-    testSame(lines("export class Foo {}", "export /** @type {Foo} */ var y;"));
+    testSame(
+        """
+        export class Foo {}
+        export /** @type {Foo} */ var y;
+        """);
   }
 
   /** Inside a goog.scope, don't warn because the alias might be used in a type annotation. */
@@ -246,40 +258,44 @@ public final class UnusedLocalsCheckTest extends CompilerTestCase {
     assertNoWarning("var x = 0; function f() { return x += 1; }");
     assertNoWarning("var x = 0; var f = () => x += 1;");
     assertNoWarning(
-        lines(
-            "function f(elapsed) {",
-            "  let fakeMs = 0;",
-            "  stubs.replace(goog, 'now', () => fakeMs += elapsed);",
-            "}"));
+        """
+        function f(elapsed) {
+          let fakeMs = 0;
+          stubs.replace(Date, 'now', () => fakeMs += elapsed);
+        }
+        """);
     assertNoWarning(
-        lines(
-            "function f(elapsed) {",
-            "  let fakeMs = 0;",
-            "  stubs.replace(goog, 'now', () => fakeMs -= elapsed);",
-            "}"));
+        """
+        function f(elapsed) {
+          let fakeMs = 0;
+          stubs.replace(Date, 'now', () => fakeMs -= elapsed);
+        }
+        """);
   }
 
   @Test
   public void testUnusedCompoundAssign_withES6Modules() {
     assertNoWarning(
-        lines(
-            "export function f(elapsed) {",
-            "  let fakeMs = 0;",
-            "  stubs.replace(goog, 'now', () => fakeMs -= elapsed);",
-            "}"));
+        """
+        export function f(elapsed) {
+          let fakeMs = 0;
+          stubs.replace(Date, 'now', () => fakeMs -= elapsed);
+        }
+        """);
   }
 
   @Test
   public void testChainedAssign() {
     assertNoWarning("var a, b = 0, c; a = b = c; alert(a);");
     assertUnused(
-        lines(
-            "function foo() {",
-            "  var a, b = 0, c;",
-            "  a = b = c;",
-            "  alert(a); ",
-            "}",
-            "foo();"));
+        """
+        function foo() {
+          var a, b = 0, c;
+          a = b = c;
+          alert(a);
+        }
+        foo();
+        """);
   }
 
   @Test
@@ -301,12 +317,18 @@ public final class UnusedLocalsCheckTest extends CompilerTestCase {
 
   @Test
   public void testGoogModule_bundled() {
-    assertNoWarning("goog.loadModule(function(exports) { 'use strict';"
-                    + "goog.module('example'); var X = 3; use(X);"
-                    + "return exports; });");
-    assertUnused("goog.loadModule(function(exports) { 'use strict';"
-                 + "goog.module('example'); var X = 3;"
-                 + "return exports; });");
+    assertNoWarning(
+        """
+        goog.loadModule(function(exports) { 'use strict';
+        goog.module('example'); var X = 3; use(X);
+        return exports; });
+        """);
+    assertUnused(
+        """
+        goog.loadModule(function(exports) { 'use strict';
+        goog.module('example'); var X = 3;
+        return exports; });
+        """);
   }
 
   @Test
@@ -338,13 +360,14 @@ public final class UnusedLocalsCheckTest extends CompilerTestCase {
   @Test
   public void testGoogModule_forwardDeclare() {
     assertNoWarning(
-        lines(
-            "goog.module('example');",
-            "",
-            "var X = goog.forwardDeclare('foo.X');",
-            "",
-            "/** @type {X} */ var x = 0;",
-            "alert(x);"));
+        """
+        goog.module('example');
+
+        var X = goog.forwardDeclare('foo.X');
+
+        /** @type {X} */ var x = 0;
+        alert(x);
+        """);
 
     assertNoWarning("goog.module('example'); var X = goog.forwardDeclare('foo.X');");
   }
@@ -370,16 +393,13 @@ public final class UnusedLocalsCheckTest extends CompilerTestCase {
   private void assertEarlyReferenceWarning(String js) {
     testWarning(js, EARLY_REFERENCE);
   }
-  /**
-   * Expects the JS to generate one unused local error.
-   */
+
+  /** Expects the JS to generate one unused local error. */
   private void assertUnused(String js) {
     testWarning(js, UNUSED_LOCAL_ASSIGNMENT);
   }
 
-  /**
-   * Expects the JS to generate no errors or warnings.
-   */
+  /** Expects the JS to generate no errors or warnings. */
   private void assertNoWarning(String js) {
     testSame(js);
   }

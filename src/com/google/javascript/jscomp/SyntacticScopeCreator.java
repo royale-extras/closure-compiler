@@ -21,7 +21,7 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The syntactic scope creator scans the parse tree to create a Scope object containing all the
@@ -30,10 +30,10 @@ import javax.annotation.Nullable;
  *
  * <p>This implementation is not thread-safe.
  */
-public class SyntacticScopeCreator implements ScopeCreator {
+public final class SyntacticScopeCreator implements ScopeCreator {
   private final AbstractCompiler compiler;
   private final RedeclarationHandler redeclarationHandler;
-  private final ScopeFactory scopeFactory;
+  private final boolean treatProvidesAsRedeclarations;
 
   // The arguments variable is special, in that it's declared for every function,
   // but not explicitly declared.
@@ -46,69 +46,59 @@ public class SyntacticScopeCreator implements ScopeCreator {
     this(compiler, DEFAULT_REDECLARATION_HANDLER);
   }
 
-  public SyntacticScopeCreator(AbstractCompiler compiler, ScopeFactory scopeFactory) {
-    this(compiler, DEFAULT_REDECLARATION_HANDLER, scopeFactory);
-  }
-
   SyntacticScopeCreator(AbstractCompiler compiler, RedeclarationHandler redeclarationHandler) {
-    this(compiler, redeclarationHandler, new DefaultScopeFactory());
+    this(compiler, redeclarationHandler, /* treatProvidesAsRedeclarations= */ false);
   }
 
+  /**
+   * @param treatProvidesAsRedeclarations whether to report goog.provide/legacy goog.module
+   *     initializations of a namespace to the redeclaration handler. For example, `var foo;
+   *     goog.provide('foo.bar');` will report the provide as a redeclaration if this is enabled.
+   */
   SyntacticScopeCreator(
       AbstractCompiler compiler,
       RedeclarationHandler redeclarationHandler,
-      ScopeFactory scopeFactory) {
+      boolean treatProvidesAsRedeclarations) {
     this.compiler = compiler;
     this.redeclarationHandler = redeclarationHandler;
-    this.scopeFactory = scopeFactory;
-  }
-
-  /** A simple API for injecting the use of alternative Scope classes */
-  public interface ScopeFactory {
-    Scope create(Scope parent, Node n);
-  }
-
-  private static class DefaultScopeFactory implements ScopeFactory {
-    @Override
-    public Scope create(Scope parent, Node n) {
-      return (parent == null)
-        ? Scope.createGlobalScope(n)
-        : Scope.createChildScope(parent, n);
-    }
+    this.treatProvidesAsRedeclarations = treatProvidesAsRedeclarations;
   }
 
   @Override
   public Scope createScope(Node n, AbstractScope<?, ?> parent) {
-    Scope scope = scopeFactory.create((Scope) parent, n);
-    new ScopeScanner(compiler, redeclarationHandler, scope, null).populate();
+    return this.createScope(n, (Scope) parent);
+  }
+
+  public Scope createScope(Node n, Scope parent) {
+    Scope scope = (parent == null) ? Scope.createGlobalScope(n) : Scope.createChildScope(parent, n);
+    new ScopeScanner(compiler, redeclarationHandler, scope, null, treatProvidesAsRedeclarations)
+        .populate();
     return scope;
   }
 
-  /**
-   * A class to traverse the AST looking for name definitions and add them to the Scope.
-   */
-  static class ScopeScanner {
+  /** A class to traverse the AST looking for name definitions and add them to the Scope. */
+  private static class ScopeScanner {
     private final Scope scope;
     private final AbstractCompiler compiler;
     private final RedeclarationHandler redeclarationHandler;
+    private final boolean treatProvidesAsRedeclarations;
 
     // Will be null, when a detached node is traversed.
-    @Nullable
-    private InputId inputId;
+    private @Nullable InputId inputId;
     private final Set<Node> changeRootSet;
 
-    ScopeScanner(AbstractCompiler compiler, Scope scope) {
-      this(compiler, DEFAULT_REDECLARATION_HANDLER, scope, null);
-    }
-
-    ScopeScanner(
-        AbstractCompiler compiler, RedeclarationHandler redeclarationHandler, Scope scope,
-        Set<Node> changeRootSet) {
+    private ScopeScanner(
+        AbstractCompiler compiler,
+        RedeclarationHandler redeclarationHandler,
+        Scope scope,
+        @Nullable Set<Node> changeRootSet,
+        boolean treatProvidesAsRedeclarations) {
       this.compiler = compiler;
       this.redeclarationHandler = redeclarationHandler;
       this.scope = scope;
       this.changeRootSet = changeRootSet;
       checkState(changeRootSet == null || scope.isGlobal());
+      this.treatProvidesAsRedeclarations = treatProvidesAsRedeclarations;
     }
 
     void populate() {
@@ -117,7 +107,7 @@ public class SyntacticScopeCreator implements ScopeCreator {
       // as we enter each SCRIPT node.
       inputId = NodeUtil.getInputId(n);
       switch (n.getToken()) {
-        case FUNCTION: {
+        case FUNCTION -> {
           final Node fnNameNode = n.getFirstChild();
           final Node args = fnNameNode.getNext();
 
@@ -135,8 +125,7 @@ public class SyntacticScopeCreator implements ScopeCreator {
           // Since we create a separate scope for body, stop scanning here
           return;
         }
-
-        case CLASS: {
+        case CLASS -> {
           final Node classNameNode = n.getFirstChild();
           // Bleed the class name into the scope, if it hasn't
           // been declared in the outer scope.
@@ -145,42 +134,44 @@ public class SyntacticScopeCreator implements ScopeCreator {
           }
           return;
         }
-
-        case ROOT:
-        case SCRIPT:
+        case ROOT, SCRIPT -> {
           // n is the global scope
           checkState(scope.isGlobal(), scope);
           scanVars(n, scope, scope);
           return;
-
-        case MODULE_BODY:
+        }
+        case MODULE_BODY -> {
           scanVars(n, scope, scope);
           return;
-
-        case FOR:
-        case FOR_OF:
-        case FOR_AWAIT_OF:
-        case FOR_IN:
-        case SWITCH:
+        }
+        case FOR, FOR_OF, FOR_AWAIT_OF, FOR_IN, SWITCH_BODY -> {
           scanVars(n, null, scope);
           return;
-
-        case BLOCK:
-          if (NodeUtil.isFunctionBlock(n)) {
+        }
+        case BLOCK -> {
+          if (NodeUtil.isFunctionBlock(n) || NodeUtil.isClassStaticBlock(n)) {
             scanVars(n, scope, scope);
           } else {
             scanVars(n, null, scope);
           }
           return;
-
-        default:
-          throw new RuntimeException("Illegal scope root: " + n);
+        }
+        case COMPUTED_FIELD_DEF, MEMBER_FIELD_DEF -> {
+          // MEMBER_FIELD_DEF and COMPUTED_FIELD_DEF scopes only created to scope `this` and `super`
+          // correctly
+          return;
+        }
+        default -> throw new RuntimeException("Illegal scope root: " + n);
       }
     }
 
     private void declareLHS(Scope s, Node n) {
-      for (Node lhs : NodeUtil.findLhsNodesInNode(n)) {
-        declareVar(s, lhs);
+      if (n.hasOneChild() && n.getFirstChild().isName()) {
+        // NAME is most common and trivial case.  This code is hot so it is worth special casing.
+        // to avoid extra GC and cpu cycles.
+        declareVar(s, n.getFirstChild());
+      } else {
+        NodeUtil.visitLhsNodesInNode(n, (lhs) -> declareVar(s, lhs));
       }
     }
 
@@ -194,31 +185,30 @@ public class SyntacticScopeCreator implements ScopeCreator {
      */
     private void scanVars(Node n, @Nullable Scope hoistScope, @Nullable Scope blockScope) {
       switch (n.getToken()) {
-        case VAR:
+        case VAR -> {
           if (hoistScope != null) {
             declareLHS(hoistScope, n);
           }
           return;
-
-        case LET:
-        case CONST:
+        }
+        case LET, CONST -> {
           // Only declare when scope is the current lexical scope
           if (blockScope != null) {
             declareLHS(blockScope, n);
           }
           return;
-
-        case IMPORT:
+        }
+        case IMPORT -> {
           declareLHS(hoistScope, n);
           return;
-
-        case EXPORT:
+        }
+        case EXPORT -> {
           // The first child of an EXPORT can be a declaration, in the case of
           // export var/let/const/function/class name ...
           scanVars(n.getFirstChild(), hoistScope, blockScope);
           return;
-
-        case FUNCTION:
+        }
+        case FUNCTION -> {
           if (NodeUtil.isFunctionExpression(n) || blockScope == null) {
             return;
           }
@@ -229,9 +219,9 @@ public class SyntacticScopeCreator implements ScopeCreator {
             return;
           }
           declareVar(blockScope, n.getFirstChild());
-          return;   // should not examine function's children
-
-        case CLASS:
+          return; // should not examine function's children
+        }
+        case CLASS -> {
           if (NodeUtil.isClassExpression(n) || blockScope == null) {
             return;
           }
@@ -241,9 +231,9 @@ public class SyntacticScopeCreator implements ScopeCreator {
             return;
           }
           declareVar(blockScope, n.getFirstChild());
-          return;  // should not examine class's children
-
-        case CATCH:
+          return; // should not examine class's children
+        }
+        case CATCH -> {
           checkState(n.hasTwoChildren(), n);
           // the first child is the catch var and the second child
           // is the code block
@@ -255,8 +245,8 @@ public class SyntacticScopeCreator implements ScopeCreator {
           final Node block = n.getSecondChild();
           scanVars(block, hoistScope, blockScope);
           return; // only one child to scan
-
-        case SCRIPT:
+        }
+        case SCRIPT -> {
           if (changeRootSet != null && !changeRootSet.contains(n)) {
             // If there is a changeRootSet configured, that means
             // a partial update is being done and we should skip
@@ -264,17 +254,36 @@ public class SyntacticScopeCreator implements ScopeCreator {
             return;
           }
           inputId = n.getInputId();
-          break;
-
-        case MODULE_BODY:
-          // Module bodies are not part of global scope.
+        }
+        case MODULE_BODY -> {
+          // Module bodies are not part of global scope, but may declare an implicit goog namespace.
           if (hoistScope.isGlobal()) {
+            Node expr = n.getFirstChild();
+            if (expr != null && isLegacyGoogModule(expr)) {
+              declareImplicitGoogNamespaceFromCall(hoistScope, expr);
+            }
             return;
           }
-          break;
-
-        default:
-          break;
+        }
+        case EXPR_RESULT -> {
+          if (!n.getParent().isScript()) {
+            break;
+          }
+          if (NodeUtil.isGoogProvideCall(n)) {
+            declareImplicitGoogNamespaceFromCall(hoistScope.getGlobalScope(), n);
+          } else if (NodeUtil.isBundledGoogModuleCall(n.getFirstChild())
+              && n.getFirstChild().getSecondChild().isFunction()) {
+            // e.g.
+            // goog.loadModule(function(exports) {
+            //   goog.module('foo.bar');
+            Node fn = n.getFirstChild().getSecondChild();
+            Node moduleCall = NodeUtil.getFunctionBody(fn).getFirstChild();
+            if (isLegacyGoogModule(moduleCall)) {
+              declareImplicitGoogNamespaceFromCall(hoistScope.getGlobalScope(), moduleCall);
+            }
+          }
+        }
+        default -> {}
       }
 
       boolean isBlockStart = blockScope != null && n == blockScope.getRootNode();
@@ -286,7 +295,7 @@ public class SyntacticScopeCreator implements ScopeCreator {
 
       // Variables can only occur in statement-level nodes, so
       // we only need to traverse children in a couple special cases.
-      if (NodeUtil.isControlStructure(n) || NodeUtil.isStatementBlock(n)) {
+      if (NodeUtil.isShallowStatementTree(n)) {
         for (Node child = n.getFirstChild(); child != null;) {
           Node next = child.getNext();
           scanVars(child, hoistScope, enteringNewBlock ? null : blockScope);
@@ -310,8 +319,14 @@ public class SyntacticScopeCreator implements ScopeCreator {
       // TODO(johnlenz): Hash lookups are not free and building scopes are already expensive.
       // Restructure the scope building to avoid this check.
       Var v = s.getOwnSlot(name);
-      if (v != null && v.getNode() == n) {
-        return;
+      if (v != null) {
+        if (v.getNode() == n) {
+          return;
+        } else if (v.isImplicitGoogNamespace()) {
+          // this is replacing an implicit provide. treat this as the actual declaration.
+          s.undeclare(v);
+          v = null;
+        }
       }
 
       CompilerInput input = compiler.getInput(inputId);
@@ -325,6 +340,37 @@ public class SyntacticScopeCreator implements ScopeCreator {
       }
     }
 
+    /**
+     * Declares the implicit namespace 'a' from 'goog.provide('a.b.c');
+     *
+     * <p>Explicit syntactical definitions like 'var a = {};' supersede this definition if present.
+     *
+     * @param exprCall a goog.module or goog.provide call
+     */
+    private void declareImplicitGoogNamespaceFromCall(Scope s, Node exprCall) {
+      Node namespaceNode = exprCall.getFirstChild().getSecondChild();
+      if (namespaceNode == null || !namespaceNode.isString()) {
+        // invalid call missing an argument, we warn elsewhere
+        return;
+      }
+      String namespace = namespaceNode.getString();
+      String root = NodeUtil.getRootOfQualifiedName(namespace);
+
+      if (root.isEmpty()) {
+        return;
+      }
+      // Conditionally report a redeclaration if the root name has already been declared as a normal
+      // variable (normal meaning a var/function/class/etc. declaration).
+      if (this.treatProvidesAsRedeclarations) {
+        Var existing = s.getOwnSlot(root);
+        if (existing != null && !existing.isImplicitGoogNamespace()) {
+          redeclarationHandler.onRedeclaration(
+              s, root, existing.getNode(), compiler.getInput(inputId));
+        }
+      }
+      s.declareImplicitGoogNamespaceIfAbsent(root, namespaceNode);
+    }
+
     // Function body declarations are not allowed to shadow
     // function parameters.
     private static boolean isShadowingAllowed(String name, Scope s) {
@@ -333,6 +379,13 @@ public class SyntacticScopeCreator implements ScopeCreator {
         return maybeParam == null || !maybeParam.isParam();
       }
       return true;
+    }
+
+    private static boolean isLegacyGoogModule(Node n) {
+      if (!NodeUtil.isGoogModuleCall(n)) {
+        return false;
+      }
+      return n.getNext() != null && NodeUtil.isGoogModuleDeclareLegacyNamespaceCall(n.getNext());
     }
   }
 

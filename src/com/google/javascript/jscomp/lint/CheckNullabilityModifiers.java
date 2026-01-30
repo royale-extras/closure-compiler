@@ -27,7 +27,8 @@ import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Checks for missing or redundant nullability modifiers.
@@ -62,15 +63,16 @@ public class CheckNullabilityModifiers extends AbstractPostOrderCallback impleme
 
   /** The set of primitive type names. Note that `void` is a synonym for `undefined`. */
   private static final ImmutableSet<String> PRIMITIVE_TYPE_NAMES =
-      ImmutableSet.of("boolean", "number", "string", "symbol", "undefined", "void", "null");
+      ImmutableSet.of(
+          "boolean", "number", "bigint", "string", "symbol", "undefined", "void", "null");
 
   private final AbstractCompiler compiler;
 
   // Store the candidate warnings and template types found while traversing a single script node.
-  private final HashSet<Node> redundantCandidates = new HashSet<>();
-  private final HashSet<Node> missingCandidates = new HashSet<>();
-  private final HashSet<Node> nullMissingCandidates = new HashSet<>();
-  private final HashSet<String> templateTypeNames = new HashSet<>();
+  private final LinkedHashSet<Node> redundantCandidates = new LinkedHashSet<>();
+  private final LinkedHashSet<Node> missingCandidates = new LinkedHashSet<>();
+  private final LinkedHashSet<Node> nullMissingCandidates = new LinkedHashSet<>();
+  private final LinkedHashSet<String> templateTypeNames = new LinkedHashSet<>();
 
   public CheckNullabilityModifiers(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -112,9 +114,6 @@ public class CheckNullabilityModifiers extends AbstractPostOrderCallback impleme
         // primitive or literal type; otherwise it will trigger a spurious redundant modifier
         // warning.
         visitTypeExpression(info.getThisType(), true);
-      }
-      for (JSTypeExpression expr : info.getThrownTypes()) {
-        visitTypeExpression(expr, false);
       }
       // JSDocInfoParser enforces the @extends and @implements types to be unqualified in the source
       // code, so we don't need to check them.
@@ -169,7 +168,7 @@ public class CheckNullabilityModifiers extends AbstractPostOrderCallback impleme
     // but it makes this check possible in the absence of type information. If the style guide ever
     // mandates template types (and nothing else) to be all-caps, we can use that assumption to make
     // this check more precise.
-    return !n.isString() || !templateTypeNames.contains(n.getString());
+    return !n.isStringLit() || !templateTypeNames.contains(n.getString());
   }
 
   private void visitTypeExpression(JSTypeExpression expr, boolean hasArtificialTopLevelBang) {
@@ -177,7 +176,7 @@ public class CheckNullabilityModifiers extends AbstractPostOrderCallback impleme
   }
 
   private void visitTypeExpression(
-      JSTypeExpression expr, boolean hasArtificialTopLevelBang, Node rValue) {
+      JSTypeExpression expr, boolean hasArtificialTopLevelBang, @Nullable Node rValue) {
     Node root = expr.getRoot();
     NodeUtil.visitPreOrder(
         root,
@@ -201,8 +200,13 @@ public class CheckNullabilityModifiers extends AbstractPostOrderCallback impleme
           // Whether the node is the type name in a typeof expression.
           boolean isTypeOfType = parent != null && parent.isTypeOf();
 
+          // Whether the node is definitely a possible type for the rValue e.g. 'Type' in @type
+          // {Type} or @type {Type|number} but not in @type {!Array<Type>}
+          boolean isAppliedToRValue =
+              node == root || (parent != null && parent.getToken() == Token.PIPE);
+
           if (isReference && !hasBang && !hasQmark && !isNewOrThis && !isTypeOfType) {
-            if (rValue != null && rValue.isNull()) {
+            if (isAppliedToRValue && rValue != null && rValue.isNull()) {
               nullMissingCandidates.add(node);
             } else {
               missingCandidates.add(node);
@@ -214,11 +218,11 @@ public class CheckNullabilityModifiers extends AbstractPostOrderCallback impleme
   }
 
   private static boolean isPrimitiveType(Node node) {
-    return node.isString() && PRIMITIVE_TYPE_NAMES.contains(node.getString());
+    return node.isStringLit() && PRIMITIVE_TYPE_NAMES.contains(node.getString());
   }
 
   private static boolean isReferenceType(Node node) {
-    return node.isString() && !PRIMITIVE_TYPE_NAMES.contains(node.getString());
+    return node.isStringLit() && !PRIMITIVE_TYPE_NAMES.contains(node.getString());
   }
 
   private static boolean isFunctionLiteral(Node node) {

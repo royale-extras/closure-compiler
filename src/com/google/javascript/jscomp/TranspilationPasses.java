@@ -16,31 +16,26 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES2018;
-import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES6;
-import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES7;
-import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES8;
-import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES_NEXT;
-import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES_NEXT_IN;
+import static com.google.common.base.Preconditions.checkState;
 
+import com.google.javascript.jscomp.CompilerOptions.ChunkOutputType;
 import com.google.javascript.jscomp.Es6RewriteDestructuring.ObjectDestructuringRewriteMode;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
+import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Provides a single place to manage transpilation passes.
- */
+/** Provides a single place to manage transpilation passes. */
 public class TranspilationPasses {
+
   private TranspilationPasses() {}
 
   public static void addEs6ModulePass(
-      List<PassFactory> passes,
+      PassListBuilder passes,
       final PreprocessorSymbolTable.CachedInstanceFactory preprocessorTableFactory) {
-    passes.add(
-        PassFactory.builderForHotSwap()
+    passes.maybeAdd(
+        PassFactory.builder()
             .setName("es6RewriteModule")
             .setInternalFactory(
                 (compiler) -> {
@@ -50,110 +45,177 @@ public class TranspilationPasses {
                       compiler.getModuleMetadataMap(),
                       compiler.getModuleMap(),
                       preprocessorTableFactory.getInstanceOrNull(),
-                      compiler.getTopScope());
+                      compiler.getTopScope(),
+                      compiler.getOptions().getChunkOutputType());
                 })
-            .setFeatureSet(ES_NEXT_IN)
             .build());
   }
 
-  public static void addTranspilationRuntimeLibraries(
-      List<PassFactory> passes, CompilerOptions options) {
+  public static void addTranspilationRuntimeLibraries(PassListBuilder passes) {
     // Inject runtime libraries needed for the transpilation we will have to do. Should run before
     // typechecking.
-    passes.add(injectTranspilationRuntimeLibraries);
+    passes.maybeAdd(injectTranspilationRuntimeLibraries);
   }
 
-  public static void addEs6ModuleToCjsPass(List<PassFactory> passes) {
-    passes.add(es6RewriteModuleToCjs);
+  public static void addEs6ModuleToCjsPass(PassListBuilder passes) {
+    passes.maybeAdd(es6RewriteModuleToCjs);
   }
 
-  public static void addEs6RewriteImportPathPass(List<PassFactory> passes) {
-    passes.add(es6RelativizeImportPaths);
+  public static void addEs6RewriteImportPathPass(PassListBuilder passes) {
+    passes.maybeAdd(es6RelativizeImportPaths);
   }
 
-  /** Adds transpilation passes that should run after all checks are done. */
-  public static void addPostCheckTranspilationPasses(
-      List<PassFactory> passes, CompilerOptions options) {
-    // Note that, for features >ES8 we detect feature by feature rather than by yearly languages
-    // in order to handle FeatureSet.BROWSER_2020, which is ES2019 without the new RegExp features.
-    if (options.needsTranspilationOf(Feature.NUMERIC_SEPARATOR)) {
-      // Numeric separators are flagged as present by the parser,
-      // but never actually represented in the AST.
-      // The only thing we need to do is mark them as not present in the AST.
-      passes.add(
-          createFeatureRemovalPass("markNumericSeparatorsRemoved", Feature.NUMERIC_SEPARATOR));
+  /**
+   * Adds transpilation passes.
+   *
+   * <p>Passes added in this method either use {@code TranspilationPasses.processTranspile} or
+   * early-exit by checking their feature in the script's featureset. So they get run if the feature
+   * they're responsible for removing exists in the script.
+   */
+  public static void addTranspilationPasses(PassListBuilder passes, CompilerOptions options) {
+
+    // bag of small, local, independent rewritings being done in a single traversal
+    passes.maybeAdd(peepholeTranspilationsPasses);
+
+    passes.maybeAdd(createUnifiedFeatureRemovalPass("featureRemovalPasses", options));
+
+    // Es6NormalizeClasses is always run so that future passes can make assumptions about classes.
+    // Always does the following:
+    // -  Extracts classes defined in expression contexts (e.g. `foo(class {})` and
+    //    `class C extends class {} {}`).
+    // -  Removes all static initialization (i.e. removes static initialization blocks and moves
+    //    static field initializers into a generated static method).
+    // -  Provides a single name for classes (i.e. removes the inner class name).
+    // -  Moves computed field expressions into named variables.
+    // If transpilation is needed for Feature.PUBLIC_CLASS_FIELDS:
+    // -  Rewrites public fields as assignments in the constructor.
+    // -  Removes all field declarations (public and static).
+    passes.maybeAdd(es6NormalizeClasses);
+
+    if (options.needsTranspilationOf(Feature.LOGICAL_ASSIGNMENT)) {
+      passes.maybeAdd(rewriteLogicalAssignmentOperatorsPass);
+    }
+
+    if (options.needsTranspilationOf(Feature.OPTIONAL_CHAINING)) {
+      passes.maybeAdd(rewriteOptionalChainingOperator);
     }
 
     if (options.needsTranspilationOf(Feature.NULL_COALESCE_OP)) {
-      passes.add(rewriteNullishCoalesceOperator);
+      passes.maybeAdd(rewriteNullishCoalesceOperator);
     }
 
-    if (options.needsTranspilationOf(Feature.OPTIONAL_CATCH_BINDING)) {
-      passes.add(rewriteCatchWithNoBinding);
+    // NOTE: This needs to be _before_ await and yield are transpiled away.
+    if (options.getInstrumentAsyncContext()) {
+      passes.maybeAdd(instrumentAsyncContext);
     }
 
     if (options.needsTranspilationOf(Feature.FOR_AWAIT_OF)
         || options.needsTranspilationOf(Feature.ASYNC_GENERATORS)) {
-      passes.add(rewriteAsyncIteration);
+      passes.maybeAdd(rewriteAsyncIteration);
     }
 
     if (options.needsTranspilationOf(Feature.OBJECT_LITERALS_WITH_SPREAD)
         || options.needsTranspilationOf(Feature.OBJECT_PATTERN_REST)) {
-      passes.add(rewriteObjectSpread);
+      passes.maybeAdd(rewriteObjectSpread);
+      if (!options.needsTranspilationOf(Feature.OBJECT_DESTRUCTURING)
+          && options.needsTranspilationOf(Feature.OBJECT_PATTERN_REST)) {
+        passes.maybeAdd(
+            getEs6RewriteDestructuring(ObjectDestructuringRewriteMode.REWRITE_OBJECT_REST));
+      }
     }
 
-    if (options.needsTranspilationFrom(ES8)) {
-      passes.add(removeTrailingCommaFromParamList);
-      passes.add(rewriteAsyncFunctions);
+    if (options.needsTranspilationOf(Feature.ASYNC_FUNCTIONS)) {
+      passes.maybeAdd(rewriteAsyncFunctions);
     }
 
-    if (options.needsTranspilationFrom(ES7)) {
-      passes.add(rewriteExponentialOperator);
+    if (options.needsTranspilationOf(Feature.EXPONENT_OP)) {
+      passes.maybeAdd(rewriteExponentialOperator);
     }
 
-    if (options.needsTranspilationFrom(ES6)) {
-      // TODO(b/73387406): Move passes here as typechecking & other check passes are updated to cope
-      // with the features they transpile and as the passes themselves are updated to propagate type
-      // information to the transpiled code.
-      // Binary and octal literals are effectively transpiled by the parser.
-      // There's no transpilation we can do for the new regexp flags.
-      passes.add(
-          createFeatureRemovalPass(
-              "markEs6FeaturesNotRequiringTranspilationAsRemoved",
-              Feature.BINARY_LITERALS,
-              Feature.OCTAL_LITERALS,
-              Feature.REGEXP_FLAG_U,
-              Feature.REGEXP_FLAG_Y));
+    if (options.needsTranspilationOf(Feature.CLASSES)) {
+      passes.maybeAdd(es6ConvertSuper);
+    }
 
-      passes.add(es6NormalizeShorthandProperties);
-      passes.add(es6RewriteClassExtends);
-      passes.add(es6ConvertSuper);
-      passes.add(es6RenameVariablesInParamLists);
-      passes.add(es6SplitVariableDeclarations);
-      passes.add(
+    if (options.needsTranspilationFrom(
+        FeatureSet.BARE_MINIMUM.with(Feature.ARRAY_DESTRUCTURING, Feature.OBJECT_DESTRUCTURING))) {
+      passes.maybeAdd(
           getEs6RewriteDestructuring(ObjectDestructuringRewriteMode.REWRITE_ALL_OBJECT_PATTERNS));
-      passes.add(rewriteNewDotTarget);
-      passes.add(es6RewriteArrowFunction);
-      passes.add(es6ExtractClasses);
-      passes.add(es6RewriteClass);
-      passes.add(es6RewriteRestAndSpread);
-      passes.add(lateConvertEs6ToEs3);
-      passes.add(es6ForOf);
-      passes.add(rewriteBlockScopedFunctionDeclaration);
-      passes.add(rewriteBlockScopedDeclaration);
-      passes.add(rewriteGenerators);
-    } else if (options.needsTranspilationOf(Feature.OBJECT_PATTERN_REST)) {
-      passes.add(es6RenameVariablesInParamLists);
-      passes.add(es6SplitVariableDeclarations);
-      passes.add(getEs6RewriteDestructuring(ObjectDestructuringRewriteMode.REWRITE_OBJECT_REST));
     }
+
+    if (options.needsTranspilationOf(Feature.ARROW_FUNCTIONS)) {
+      passes.maybeAdd(es6RewriteArrowFunction);
+    }
+
+    if (options.needsTranspilationOf(Feature.CLASSES)) {
+      passes.maybeAdd(es6RewriteClass);
+    }
+
+    if (options.needsTranspilationFrom(
+        FeatureSet.BARE_MINIMUM.with(Feature.REST_PARAMETERS, Feature.SPREAD_EXPRESSIONS))) {
+      passes.maybeAdd(es6RewriteRestAndSpread);
+    }
+
+    if (options.needsTranspilationFrom(
+        FeatureSet.BARE_MINIMUM.with(
+            Feature.COMPUTED_PROPERTIES, Feature.MEMBER_DECLARATIONS, Feature.TEMPLATE_LITERALS))) {
+      passes.maybeAdd(lateConvertEs6ToEs3);
+    }
+
+    if (options.needsTranspilationOf(Feature.FOR_OF)) {
+      passes.maybeAdd(es6ForOf);
+    }
+
+    if (options.needsTranspilationOf(Feature.BLOCK_SCOPED_FUNCTION_DECLARATION)) {
+      passes.maybeAdd(rewriteBlockScopedFunctionDeclaration);
+    }
+
+    if (options.needsTranspilationFrom(
+        FeatureSet.BARE_MINIMUM.with(Feature.LET_DECLARATIONS, Feature.CONST_DECLARATIONS))) {
+      passes.maybeAdd(rewriteBlockScopedDeclaration);
+    }
+
+    if (options.needsTranspilationOf(Feature.GENERATORS)) {
+      passes.maybeAdd(rewriteGenerators);
+    }
+    // This pass must run at the end of all transpiler passes. It validates that only supported
+    // features remain in the compiler's featureSet
+    passes.maybeAdd(
+        TranspilationPasses.createPostTranspileUnsupportedFeaturesRemovedCheck(
+            "postTranspileUnsupportedFeaturesRemovedCheck"));
   }
 
-  /**
-   * Adds the pass to inject ES6 polyfills, which goes after the late ES6 passes.
-   */
-  public static void addRewritePolyfillPass(List<PassFactory> passes) {
-    passes.add(rewritePolyfills);
+  private static final PassFactory peepholeTranspilationsPasses =
+      PassFactory.builder()
+          .setName("peepholeTranspilationsPasses")
+          .setInternalFactory(
+              (compiler) -> {
+                List<AbstractPeepholeTranspilation> peepholeTranspilations = new ArrayList<>();
+                peepholeTranspilations.add(
+                    new ReportUntranspilableFeatures(
+                        compiler,
+                        compiler.getOptions().getBrowserFeaturesetYearObject(),
+                        compiler.getOptions().getOutputFeatureSet()));
+                if (compiler.getOptions().needsTranspilationOf(Feature.PRIVATE_CLASS_PROPERTIES)) {
+                  peepholeTranspilations.add(new RewritePrivateClassProperties(compiler));
+                }
+                if (compiler.getOptions().needsTranspilationOf(Feature.OPTIONAL_CATCH_BINDING)) {
+                  peepholeTranspilations.add(new RewriteCatchWithNoBinding(compiler));
+                }
+                if (compiler
+                    .getOptions()
+                    .needsTranspilationOf(Feature.SHORTHAND_OBJECT_PROPERTIES)) {
+                  peepholeTranspilations.add(new Es6NormalizeShorthandProperties(compiler));
+                }
+                if (compiler.getOptions().needsTranspilationOf(Feature.NEW_TARGET)) {
+                  peepholeTranspilations.add(new RewriteNewDotTarget(compiler));
+                }
+                return PeepholeTranspilationsPass.create(compiler, peepholeTranspilations);
+              })
+          .build();
+
+  /** Adds the pass to inject ES2015 polyfills, which goes after the late ES2015 passes. */
+  public static void addRewritePolyfillPass(PassListBuilder passes) {
+    passes.maybeAdd(rewritePolyfills);
   }
 
   /** Rewrites ES6 modules */
@@ -161,7 +223,6 @@ public class TranspilationPasses {
       PassFactory.builder()
           .setName("es6RewriteModuleToCjs")
           .setInternalFactory(Es6RewriteModulesToCommonJsModules::new)
-          .setFeatureSet(FeatureSet.latest())
           .build();
 
   /** Rewrites ES6 modules import paths to be browser compliant */
@@ -169,334 +230,373 @@ public class TranspilationPasses {
       PassFactory.builder()
           .setName("es6RelativizeImportPaths")
           .setInternalFactory(Es6RelativizeImportPaths::new)
-          .setFeatureSet(FeatureSet.latest())
           .build();
 
-  private static final PassFactory rewriteAsyncFunctions =
-      PassFactory.builderForHotSwap()
+  static final PassFactory rewriteAsyncFunctions =
+      PassFactory.builder()
           .setName("rewriteAsyncFunctions")
-          .setInternalFactory(
-              (compiler) ->
-                  new RewriteAsyncFunctions.Builder(compiler)
-                      // If ES6 classes will not be transpiled away later,
-                      // transpile away property references that use `super` in async functions.
-                      // See explanation in RewriteAsyncFunctions.
-                      .rewriteSuperPropertyReferencesWithoutSuper(
-                          !compiler.getOptions().needsTranspilationFrom(FeatureSet.ES6))
-                      .build())
-          .setFeatureSet(ES_NEXT)
+          .setInternalFactory(RewriteAsyncFunctions::create)
           .build();
 
-  private static final PassFactory rewriteAsyncIteration =
-      PassFactory.builderForHotSwap()
+  static final PassFactory rewriteAsyncIteration =
+      PassFactory.builder()
           .setName("rewriteAsyncIteration")
-          .setInternalFactory(
-              (compiler) ->
-                  new RewriteAsyncIteration.Builder(compiler)
-                      // If ES6 classes will not be transpiled away later,
-                      // transpile away property references that use `super` in async iteration.
-                      // See explanation in RewriteAsyncIteration.
-                      .rewriteSuperPropertyReferencesWithoutSuper(
-                          !compiler.getOptions().needsTranspilationFrom(FeatureSet.ES6))
-                      .build())
-          .setFeatureSet(ES_NEXT)
+          .setInternalFactory(RewriteAsyncIteration::create)
           .build();
 
   private static final PassFactory rewriteObjectSpread =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("rewriteObjectSpread")
           .setInternalFactory(RewriteObjectSpread::new)
-          .setFeatureSet(ES_NEXT)
-          .build();
-
-  private static final PassFactory rewriteCatchWithNoBinding =
-      PassFactory.builderForHotSwap()
-          .setName("rewriteCatchWithNoBinding")
-          .setInternalFactory(RewriteCatchWithNoBinding::new)
-          .setFeatureSet(ES_NEXT)
-          .build();
-
-  private static final PassFactory rewriteNewDotTarget =
-      PassFactory.builderForHotSwap()
-          .setName("rewriteNewDotTarget")
-          .setInternalFactory(RewriteNewDotTarget::new)
-          .setFeatureSet(ES_NEXT)
-          .build();
-
-  private static final PassFactory removeTrailingCommaFromParamList =
-      PassFactory.builderForHotSwap()
-          .setName("removeTrailingCommaFromParamList")
-          .setInternalFactory(RemoveTrailingCommaFromParamList::new)
-          .setFeatureSet(ES_NEXT)
           .build();
 
   private static final PassFactory rewriteExponentialOperator =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("rewriteExponentialOperator")
           .setInternalFactory(Es7RewriteExponentialOperator::new)
-          .setFeatureSet(ES2018)
           .build();
 
-  private static final PassFactory es6NormalizeShorthandProperties =
-      PassFactory.builderForHotSwap()
-          .setName("es6NormalizeShorthandProperties")
-          .setInternalFactory(Es6NormalizeShorthandProperties::new)
-          .setFeatureSet(ES2018)
-          .build();
-
-  static final PassFactory es6RewriteClassExtends =
-      PassFactory.builderForHotSwap()
-          .setName(PassNames.ES6_REWRITE_CLASS_EXTENDS)
-          .setInternalFactory(Es6RewriteClassExtendsExpressions::new)
-          .setFeatureSet(ES2018)
-          .build();
-
-  static final PassFactory es6ExtractClasses =
-      PassFactory.builderForHotSwap()
-          .setName(PassNames.ES6_EXTRACT_CLASSES)
-          .setInternalFactory(Es6ExtractClasses::new)
-          .setFeatureSet(ES8)
+  static final PassFactory es6NormalizeClasses =
+      PassFactory.builder()
+          .setName(PassNames.ES6_NORMALIZE_CLASSES)
+          .setInternalFactory(Es6NormalizeClasses::new)
           .build();
 
   static final PassFactory es6RewriteClass =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("Es6RewriteClass")
-          .setInternalFactory(Es6RewriteClass::new)
-          .setFeatureSet(ES8)
+          .setInternalFactory(
+              (compiler) ->
+                  new Es6RewriteClass(
+                      compiler, compiler.getOptions().getEs6SubclassTranspilation()))
           .build();
 
   static final PassFactory getEs6RewriteDestructuring(ObjectDestructuringRewriteMode rewriteMode) {
-    return PassFactory.builderForHotSwap()
+    return PassFactory.builder()
         .setName("Es6RewriteDestructuring")
         .setInternalFactory(
-            (compiler) -> {
-              return new Es6RewriteDestructuring.Builder(compiler)
-                  .setDestructuringRewriteMode(rewriteMode)
-                  .build();
-            })
-        .setFeatureSet(ES2018)
+            (compiler) ->
+                new Es6RewriteDestructuring.Builder(compiler)
+                    .setDestructuringRewriteMode(rewriteMode)
+                    .build())
         .build();
   }
 
-  static final PassFactory es6RenameVariablesInParamLists =
-      PassFactory.builderForHotSwap()
-          .setName("Es6RenameVariablesInParamLists")
-          .setInternalFactory(Es6RenameVariablesInParamLists::new)
-          .setFeatureSet(ES2018)
-          .build();
-
   static final PassFactory es6RewriteArrowFunction =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("Es6RewriteArrowFunction")
           .setInternalFactory(Es6RewriteArrowFunction::new)
-          .setFeatureSet(ES8)
           .build();
 
   static final PassFactory rewritePolyfills =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("RewritePolyfills")
           .setInternalFactory(
               (compiler) ->
                   new RewritePolyfills(
                       compiler,
                       compiler.getOptions().getRewritePolyfills(),
-                      compiler.getOptions().getIsolatePolyfills()))
-          .setFeatureSet(FeatureSet.latest())
+                      compiler.getOptions().getIsolatePolyfills(),
+                      compiler.getOptions().getInjectPolyfillsNewerThan()))
           .build();
 
-  static final PassFactory es6SplitVariableDeclarations =
-      PassFactory.builderForHotSwap()
-          .setName("Es6SplitVariableDeclarations")
-          .setInternalFactory(Es6SplitVariableDeclarations::new)
-          .setFeatureSet(FeatureSet.latest())
+  static final PassFactory instrumentAsyncContext =
+      PassFactory.builder()
+          .setName("instrumentAsyncContext")
+          .setInternalFactory(
+              (compiler) ->
+                  new InstrumentAsyncContext(
+                      compiler,
+                      compiler
+                          .getOptions()
+                          .getOutputFeatureSet()
+                          .contains(Feature.ASYNC_FUNCTIONS)))
           .build();
 
   static final PassFactory es6ConvertSuper =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("es6ConvertSuper")
           .setInternalFactory(Es6ConvertSuper::new)
-          .setFeatureSet(ES2018)
           .build();
 
-  /** Injects runtime library code needed for transpiled ES6+ code. */
+  /** Injects runtime library code needed for transpiled ES2015+ code. */
   static final PassFactory injectTranspilationRuntimeLibraries =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("es6InjectRuntimeLibraries")
           .setInternalFactory(InjectTranspilationRuntimeLibraries::new)
-          .setFeatureSet(ES_NEXT_IN)
           .build();
 
   /** Transpiles REST parameters and SPREAD in both array literals and function calls. */
   static final PassFactory es6RewriteRestAndSpread =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("es6RewriteRestAndSpread")
           .setInternalFactory(Es6RewriteRestAndSpread::new)
-          .setFeatureSet(FeatureSet.latest())
           .build();
 
   /**
-   * Does the main ES6 to ES3 conversion. There are a few other passes which run before this one, to
-   * convert constructs which are not converted by this pass. This pass can run after NTI
+   * Does the main ES2015 to ES3 conversion. There are a few other passes which run before this one,
+   * to convert constructs which are not converted by this pass.
    */
   static final PassFactory lateConvertEs6ToEs3 =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("lateConvertEs6")
           .setInternalFactory(LateEs6ToEs3Converter::new)
-          .setFeatureSet(FeatureSet.latest())
           .build();
 
   static final PassFactory es6ForOf =
-      PassFactory.builderForHotSwap()
-          .setName("es6ForOf")
-          .setInternalFactory(Es6ForOfConverter::new)
-          .setFeatureSet(ES8)
-          .build();
+      PassFactory.builder().setName("es6ForOf").setInternalFactory(Es6ForOfConverter::new).build();
 
   static final PassFactory rewriteBlockScopedFunctionDeclaration =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("Es6RewriteBlockScopedFunctionDeclaration")
           .setInternalFactory(Es6RewriteBlockScopedFunctionDeclaration::new)
-          .setFeatureSet(ES8)
           .build();
 
   static final PassFactory rewriteBlockScopedDeclaration =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("Es6RewriteBlockScopedDeclaration")
           .setInternalFactory(Es6RewriteBlockScopedDeclaration::new)
-          .setFeatureSet(ES8)
           .build();
 
   static final PassFactory rewriteGenerators =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("rewriteGenerators")
           .setInternalFactory(Es6RewriteGenerators::new)
-          .setFeatureSet(ES8)
+          .build();
+
+  static final PassFactory rewriteLogicalAssignmentOperatorsPass =
+      PassFactory.builder()
+          .setName("rewriteLogicalAssignmentOperatorsPass")
+          .setInternalFactory(RewriteLogicalAssignmentOperatorsPass::new)
+          .build();
+
+  static final PassFactory rewriteOptionalChainingOperator =
+      PassFactory.builder()
+          .setName("rewriteOptionalChainingOperator")
+          .setInternalFactory(RewriteOptionalChainingOperator::new)
           .build();
 
   static final PassFactory rewriteNullishCoalesceOperator =
-      PassFactory.builderForHotSwap()
+      PassFactory.builder()
           .setName("rewriteNullishCoalesceOperator")
           .setInternalFactory(RewriteNullishCoalesceOperator::new)
-          .setFeatureSet(ES_NEXT_IN)
-          // TODO(annieyw) change to ES2020 when avail
           .build();
 
   /**
-   * @param script The SCRIPT node representing a JS file
-   * @return If the file has any features which are part of ES6 or higher but not part of ES5.
+   * Returns true if the script's featureSet contains any feature from the given featureSet.
+   *
+   * <p>The script's featureSet gets accurately maintained during transpile. It can be relied upon
+   * to check if a feature exists in the AST or not.
    */
-  static boolean isScriptEs6OrHigher(Node script) {
+  static boolean doesScriptHaveAnyOfTheseFeatures(Node script, FeatureSet featureSet) {
     FeatureSet features = NodeUtil.getFeatureSetOfScript(script);
-    return features != null && !FeatureSet.ES5.contains(features);
+    return features != null && features.containsAtLeastOneOf(featureSet);
   }
 
   /**
-   * @param script The SCRIPT node representing a JS file
-   * @return If the file has any features not in {@code supportedFeatures}
-   */
-  static boolean doesScriptHaveUnsupportedFeatures(Node script, FeatureSet supportedFeatures) {
-    FeatureSet features = NodeUtil.getFeatureSetOfScript(script);
-    return features != null && !supportedFeatures.contains(features);
-  }
-
-  /**
-   * Process transpilations if the input language needs transpilation from certain features, on any
-   * JS file that has features not present in the compiler's output language mode.
+   * Runs the given transpilation callbacks on every source script if the given {@code
+   * featuresToRunFor} are unsupported in the output language and exist in that script.
    *
    * @param compiler An AbstractCompiler
-   * @param combinedRoot The combined root for all JS files.
-   * @param featureSet The features which this pass helps transpile.
-   * @param callbacks The callbacks that should be invoked if a file has ES6 features.
+   * @param combinedRoot The combined root for all JS files
+   * @param featuresToRunFor features for which these callbacks run
+   * @param callbacks The callbacks that should be invoked if a file has output-unsupported
+   *     features.
+   * @deprecated Please use a regular NodeTraversal object directly, using `shouldTraverse` to skip
+   *     SCRIPT node if desired.
    */
+  @Deprecated
   static void processTranspile(
-      AbstractCompiler compiler, Node combinedRoot, FeatureSet featureSet, Callback... callbacks) {
-    if (compiler.getOptions().needsTranspilationFrom(featureSet)) {
-      FeatureSet languageOutFeatures = compiler.getOptions().getOutputFeatureSet();
-      for (Node singleRoot : combinedRoot.children()) {
+      AbstractCompiler compiler,
+      Node combinedRoot,
+      FeatureSet featuresToRunFor,
+      NodeTraversal.Callback... callbacks) {
+    FeatureSet languageOutFeatures = compiler.getOptions().getOutputFeatureSet();
+    if (languageOutFeatures.contains(featuresToRunFor)) {
+      // all featuresToRunFor are supported by languageOut and don't need to get transpiled.
+      return;
+    }
 
-        // Only run the transpilation if this file has features not in the compiler's target output
-        // language. For example, if this file is purely ES6 and the output language is ES6, don't
-        // run any transpilation passes on it.
-        // TODO(lharker): We could save time by being more selective about what files we transpile.
-        // e.g. if a file has async functions but not `**`, don't run `**` transpilation on it.
-        // Right now we know what features were in a file at parse time, but not what features were
-        // added to that file by other transpilation passes.
-        if (doesScriptHaveUnsupportedFeatures(singleRoot, languageOutFeatures)) {
-          for (Callback callback : callbacks) {
-            singleRoot.putBooleanProp(Node.TRANSPILED, true);
-            NodeTraversal.traverse(compiler, singleRoot, callback);
-          }
+    for (Node singleRoot = combinedRoot.getFirstChild();
+        singleRoot != null;
+        singleRoot = singleRoot.getNext()) {
+      checkState(singleRoot.isScript());
+      // only run the callbacks if any feature from the given featureSet exists in the script
+      if (doesScriptHaveAnyOfTheseFeatures(singleRoot, featuresToRunFor)) {
+        for (NodeTraversal.Callback callback : callbacks) {
+          NodeTraversal.traverse(compiler, singleRoot, callback);
         }
       }
     }
   }
 
   /**
-   * Hot-swap ES6+ transpilations if the input language needs transpilation from certain features,
-   * on any JS file that has features not present in the compiler's output language mode.
-   *
-   * @param compiler An AbstractCompiler
-   * @param scriptRoot The SCRIPT root for the JS file.
-   * @param featureSet The features which this pass helps transpile.
-   * @param callbacks The callbacks that should be invoked if the file has ES6 features.
+   * Removes the given features from the FEATURE_SET prop of all scripts under root. Also removes
+   * from the compiler's featureset.
    */
-  static void hotSwapTranspile(
-      AbstractCompiler compiler, Node scriptRoot, FeatureSet featureSet, Callback... callbacks) {
-    if (compiler.getOptions().needsTranspilationFrom(featureSet)) {
-      FeatureSet languageOutFeatures = compiler.getOptions().getOutputFeatureSet();
-      if (doesScriptHaveUnsupportedFeatures(scriptRoot, languageOutFeatures)) {
-        for (Callback callback : callbacks) {
-          scriptRoot.putBooleanProp(Node.TRANSPILED, true);
-          NodeTraversal.traverse(compiler, scriptRoot, callback);
-        }
-      }
-    }
-  }
-
-  static void maybeMarkFeaturesAsTranspiledAway(
-      AbstractCompiler compiler, FeatureSet transpiledFeatures) {
+  static void maybeMarkFeatureAsTranspiledAway(
+      AbstractCompiler compiler, Node root, Feature feature) {
     // We don't bother to do this if the compiler has halting errors, which avoids unnecessary
     // warnings from AstValidator warning that the features are still there.
     if (!compiler.hasHaltingErrors()) {
-      compiler.setFeatureSet(compiler.getFeatureSet().without(transpiledFeatures));
-    }
-  }
-
-  static void maybeMarkFeaturesAsTranspiledAway(
-      AbstractCompiler compiler, Feature transpiledFeature, Feature... moreTranspiledFeatures) {
-    if (!compiler.hasHaltingErrors()) {
-      compiler.setFeatureSet(
-          compiler.getFeatureSet().without(transpiledFeature, moreTranspiledFeatures));
+      compiler.markFeatureNotAllowed(feature);
+      NodeUtil.removeFeatureFromAllScripts(root, feature, compiler);
     }
   }
 
   /**
-   * Returns a pass that just removes features from the AST FeatureSet.
+   * Removes the given features from the FEATURE_SET prop of all scripts under root. Also removes
+   * from the compiler's featureset.
+   */
+  static void maybeMarkFeaturesAsTranspiledAway(
+      AbstractCompiler compiler, Node root, FeatureSet transpiledFeatures) {
+    // We don't bother to do this if the compiler has halting errors, which avoids unnecessary
+    // warnings from AstValidator warning that the features are still there.
+    if (!compiler.hasHaltingErrors()) {
+      // remove the features from the compiler's featureSet and remove the features from every
+      // script's featureset
+      NodeUtil.removeFeaturesFromAllScripts(root, transpiledFeatures, compiler);
+    }
+  }
+
+  static void postTranspileCheckUnsupportedFeaturesRemoved(AbstractCompiler compiler) {
+    FeatureSet outputFeatures = compiler.getOptions().getOutputFeatureSet();
+    FeatureSet currentFeatures = compiler.getAllowableFeatures();
+    // features modules, importMeta and Dynamic module import may exist in the output even though
+    // unsupported
+    if (compiler.getOptions().getChunkOutputType() == ChunkOutputType.ES_MODULES) {
+      currentFeatures =
+          currentFeatures
+              .without(Feature.MODULES)
+              .without(Feature.IMPORT_META)
+              .without(Feature.DYNAMIC_IMPORT);
+    }
+
+    if (outputFeatures.getFeatures().isEmpty()) {
+      // In some cases (e.g. targets built using `gen_closurized_js`), the outputFeatures is not
+      // set. Only when set, confirm that the output featureSet is respected by JSCompiler.
+      return;
+    }
+
+    if (!outputFeatures.contains(currentFeatures)) {
+      // Confirm that the output featureSet is respected by JSCompiler.
+      FeatureSet diff = currentFeatures.without(outputFeatures);
+      throw new IllegalStateException(
+          "Unsupported feature(s) leaked to output code:" + diff.getFeatures());
+    }
+  }
+
+  /**
+   * Returns a pass that just removes features from the source scripts' FeatureSet and the
+   * compiler's featureset.
    *
    * <p>Doing this indicates that the AST no longer contains uses of the features, or that they are
    * no longer of concern for some other reason.
    */
   private static PassFactory createFeatureRemovalPass(
-      String passName, final Feature featureToRemove, final Feature... moreFeaturesToRemove) {
-    return PassFactory.builderForHotSwap()
+      String passName, final FeatureSet featuresToRemove) {
+    return PassFactory.builder()
         .setName(passName)
         .setInternalFactory(
-            (compiler) -> {
-              return new HotSwapCompilerPass() {
-                @Override
-                public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-                  maybeMarkFeaturesAsTranspiledAway(
-                      compiler, featureToRemove, moreFeaturesToRemove);
-                }
-
-                @Override
-                public void process(Node externs, Node root) {
-                  maybeMarkFeaturesAsTranspiledAway(
-                      compiler, featureToRemove, moreFeaturesToRemove);
-                }
-              };
-            })
-        .setFeatureSet(FeatureSet.ES_NEXT_IN)
+            (compiler) ->
+                ((Node externs, Node root) ->
+                    maybeMarkFeaturesAsTranspiledAway(compiler, root, featuresToRemove)))
         .build();
+  }
+
+  /**
+   * Returns a pass that just checks that post-transpile only supported features exist in the code.
+   */
+  private static PassFactory createPostTranspileUnsupportedFeaturesRemovedCheck(String passName) {
+    return PassFactory.builder()
+        .setName(passName)
+        .setInternalFactory(
+            (compiler) ->
+                ((Node externs, Node root) ->
+                    postTranspileCheckUnsupportedFeaturesRemoved(compiler)))
+        .build();
+  }
+
+  /**
+   * Create a single pass to mark all transpiled features as removed from the source scripts'
+   * FeatureSet and the compiler's featureset.
+   *
+   * <p>Doing this indicates that the AST no longer contains uses of the features, or that they are
+   * no longer of concern for some other reason.
+   */
+  private static PassFactory createUnifiedFeatureRemovalPass(
+      String passName, CompilerOptions options) {
+
+    FeatureSet featuresToMarkRemoved = FeatureSet.BARE_MINIMUM;
+
+    // The compiler doesn't transpile regex features.
+    if (options.needsTranspilationOf(Feature.REGEXP_FLAG_D)) {
+      featuresToMarkRemoved = featuresToMarkRemoved.with(Feature.REGEXP_FLAG_D);
+    }
+    if (options.needsTranspilationOf(Feature.BIGINT)) {
+      featuresToMarkRemoved = featuresToMarkRemoved.with(Feature.BIGINT);
+    }
+    if (options.needsTranspilationOf(Feature.NUMERIC_SEPARATOR)) {
+      // Numeric separators are flagged as present by the parser,
+      // but never actually represented in the AST.
+      // The only thing we need to do is mark them as not present in the AST.
+      featuresToMarkRemoved = featuresToMarkRemoved.with(Feature.NUMERIC_SEPARATOR);
+    }
+    if (options.getChunkOutputType() != ChunkOutputType.ES_MODULES) {
+      // Default output mode of JSCompiler is a script, unless chunkOutputType is set to
+      // `ES_MODULES` where each output chunk is an ES module.
+      featuresToMarkRemoved = featuresToMarkRemoved.with(Feature.MODULES);
+      // Since import.meta cannot be transpiled, it is passed-through when the output format
+      // is a module. Otherwise it must be marked removed.
+      featuresToMarkRemoved = featuresToMarkRemoved.with(Feature.IMPORT_META);
+      // Dynamic imports are preserved for open source output only when the chunk output type is
+      // ES_MODULES
+      featuresToMarkRemoved = featuresToMarkRemoved.with(Feature.DYNAMIC_IMPORT);
+    }
+
+    if (options.needsTranspilationFrom(
+        FeatureSet.BARE_MINIMUM.with(
+            Feature.BINARY_LITERALS,
+            Feature.OCTAL_LITERALS,
+            Feature.REGEXP_FLAG_U,
+            Feature.REGEXP_FLAG_Y))) {
+      // Binary and octal literals are effectively transpiled by the parser.
+      // There's no transpilation we can do for the new regexp flags.
+      featuresToMarkRemoved =
+          featuresToMarkRemoved.with(
+              Feature.BINARY_LITERALS,
+              Feature.OCTAL_LITERALS,
+              Feature.REGEXP_FLAG_U,
+              Feature.REGEXP_FLAG_Y);
+    }
+
+    if (options.needsTranspilationFrom(FeatureSet.ES5)) {
+      // this means we're transpiling to ES3 output
+      featuresToMarkRemoved =
+          featuresToMarkRemoved.with(
+              // TODO(b/354075108): Stop tracking these 2 features. These don't get transpiled and
+              // are not supported in ES3. But they get possibly inlined / renamed by the optimizer.
+              Feature.ES3_KEYWORDS_AS_IDENTIFIERS, // does not get transpiled
+              Feature.KEYWORDS_AS_PROPERTIES, // does not get transpiled
+              // GETTERs and SETTERs get reported in lateConvertEs6ToEs3 for ES3 output. If
+              // we're here it means that GETTERs and SETTERs don't exist.
+              Feature.GETTER,
+              Feature.SETTER);
+    }
+
+    // these ES5 features are transpiled away unconditionally regardless of output level.
+    featuresToMarkRemoved =
+        featuresToMarkRemoved.with(
+            Feature.STRING_CONTINUATION, // transpiled away during parsing
+            Feature.TRAILING_COMMA // transpiled away during Normalization
+            );
+
+    // ES_NEXT_RUNTIME and ES_UNSTABLE_RUNTIME are not "real" features. They only exist to ensure
+    // that FeatureSet.ES_NEXT and FeatureSet.ES_UNSTABLE have distinct version names as some
+    // polyfills target "es_next" and "es_unstable" for their fromLang.
+    featuresToMarkRemoved =
+        featuresToMarkRemoved.with(Feature.ES_NEXT_RUNTIME, Feature.ES_UNSTABLE_RUNTIME);
+
+    return createFeatureRemovalPass(passName, featuresToMarkRemoved);
   }
 }

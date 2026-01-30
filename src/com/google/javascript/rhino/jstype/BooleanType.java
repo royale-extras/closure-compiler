@@ -39,16 +39,13 @@
 
 package com.google.javascript.rhino.jstype;
 
-import static com.google.javascript.rhino.jstype.TernaryValue.FALSE;
-import static com.google.javascript.rhino.jstype.TernaryValue.UNKNOWN;
-
+import com.google.javascript.jscomp.base.Tri;
 
 /**
  * Boolean type.
+ *
  */
-public class BooleanType extends ValueType {
-  private static final long serialVersionUID = 1L;
-
+public final class BooleanType extends ValueType {
   BooleanType(JSTypeRegistry registry) {
     super(registry);
   }
@@ -59,8 +56,8 @@ public class BooleanType extends ValueType {
   }
 
   @Override
-  public TernaryValue testForEquality(JSType that) {
-    TernaryValue result = super.testForEquality(that);
+  public Tri testForEquality(JSType that) {
+    Tri result = super.testForEquality(that);
     if (result != null) {
       return result;
     }
@@ -68,9 +65,9 @@ public class BooleanType extends ValueType {
         || that.isSubtypeOf(getNativeType(JSTypeNative.NUMBER_STRING_BOOLEAN))
         || that.isSubtypeOf(getNativeType(JSTypeNative.BIGINT_TYPE))
         || that.isObject()) {
-      return UNKNOWN;
+      return Tri.UNKNOWN;
     }
-    return FALSE;
+    return Tri.FALSE;
   }
 
   @Override

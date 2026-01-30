@@ -21,9 +21,7 @@ import static java.util.function.Function.identity;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSetMultimap;
-import com.google.javascript.jscomp.CheckLevel;
-import com.google.javascript.jscomp.JSError;
-import com.google.javascript.jscomp.PropertyRenamingDiagnostics;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.javascript.rhino.Node;
 import java.util.Map;
 import java.util.Objects;
@@ -34,19 +32,12 @@ final class UseSiteRenamer {
 
   private static final String INVALIDATED_NAME_VALUE = "<INVALIDATED>";
 
-  private final ImmutableMap<String, CheckLevel> propsToCheckLevel;
-  private final Consumer<JSError> errorCb;
   private final Consumer<Node> mutationCb;
 
   private final ImmutableSetMultimap.Builder<String, String> renamingIndex =
       ImmutableSetMultimap.builder();
 
-  UseSiteRenamer(
-      ImmutableMap<String, CheckLevel> propsToCheckLevel,
-      Consumer<JSError> errorCb,
-      Consumer<Node> mutationCb) {
-    this.propsToCheckLevel = propsToCheckLevel;
-    this.errorCb = errorCb;
+  UseSiteRenamer(Consumer<Node> mutationCb) {
     this.mutationCb = mutationCb;
   }
 
@@ -55,39 +46,41 @@ final class UseSiteRenamer {
    *
    * <p>If {@code prop} is invalid or should otherwise not be renamed, the AST will not be changed.
    */
-  void renameUses(PropertyClustering prop) {
+  @CanIgnoreReturnValue
+  RenameUsesResult renameUses(PropertyClustering prop) {
     if (prop.isInvalidated()) {
       this.renamingIndex.put(prop.getName(), INVALIDATED_NAME_VALUE);
-
-      CheckLevel level = this.propsToCheckLevel.getOrDefault(prop.getName(), CheckLevel.OFF);
-      if (!level.equals(CheckLevel.OFF)) {
-        this.errorCb.accept(createInvalidationError(level, prop.getName()));
-      }
-
-      return;
+      return RenameUsesResult.INVALIDATED;
     }
 
-    ImmutableMap<FlatType, String> clusterNames = createAllClusterNames(prop);
+    ImmutableMap<ColorGraphNode, String> clusterNames = createAllClusterNames(prop);
 
     if (clusterNames.size() <= 1) {
-      /**
+      /*
        * Don't bother renaming clusters with a single element. Renaming won't actaully disambiguate
        * anything in this case, so skip the work.
        */
       this.renamingIndex.put(prop.getName(), prop.getName());
-      return;
+      return RenameUsesResult.ONLY_ONE_CLUSTER;
     }
 
     this.renamingIndex.putAll(prop.getName(), clusterNames.values());
-    for (Map.Entry<Node, FlatType> usage : prop.getUseSites().entrySet()) {
+    for (Map.Entry<Node, ColorGraphNode> usage : prop.getUseSites().entrySet()) {
       Node site = usage.getKey();
-      FlatType flatRep = prop.getClusters().find(usage.getValue());
+      ColorGraphNode flatRep = prop.getClusters().find(usage.getValue());
       String newName = clusterNames.get(flatRep);
       if (!Objects.equals(newName, site.getString())) {
         site.setString(newName);
         this.mutationCb.accept(site);
       }
     }
+    return RenameUsesResult.DISAMBIGUATED;
+  }
+
+  public enum RenameUsesResult {
+    INVALIDATED,
+    ONLY_ONE_CLUSTER,
+    DISAMBIGUATED;
   }
 
   ImmutableSetMultimap<String, String> getRenamingIndex() {
@@ -98,21 +91,17 @@ final class UseSiteRenamer {
    * Creates a unique name for each cluster in {@code prop} and maps it to the cluster
    * representative.
    */
-  private static ImmutableMap<FlatType, String> createAllClusterNames(PropertyClustering prop) {
+  private static ImmutableMap<ColorGraphNode, String> createAllClusterNames(
+      PropertyClustering prop) {
     return prop.getClusters().allRepresentatives().stream()
         .collect(toImmutableMap(identity(), (r) -> createClusterName(prop, r)));
   }
 
-  private static String createClusterName(PropertyClustering prop, FlatType rep) {
-    if (Objects.equals(prop.getExternsClusterRep(), rep)) {
+  private static String createClusterName(PropertyClustering prop, ColorGraphNode rep) {
+    if (Objects.equals(prop.getOriginalNameClusterRep(), rep)) {
       return prop.getName();
     }
 
-    return "JSC$" + rep.getId() + "_" + prop.getName();
-  }
-
-  private static JSError createInvalidationError(CheckLevel level, String name) {
-    return JSError.make(
-        null, -1, -1, level, PropertyRenamingDiagnostics.INVALIDATION, name, "", "", "");
+    return "JSC$" + rep.getIndex() + "_" + prop.getName();
   }
 }

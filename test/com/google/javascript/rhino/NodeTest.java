@@ -40,10 +40,18 @@ package com.google.javascript.rhino;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
+import static org.junit.Assert.assertThrows;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.colors.StandardColors;
+import com.google.javascript.jscomp.serialization.NodeProperty;
+import com.google.javascript.rhino.Node.SideEffectFlags;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.testing.TestErrorReporter;
+import java.math.BigInteger;
+import java.util.function.Consumer;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -51,25 +59,170 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class NodeTest {
   @Test
-  public void testMergeExtractNormal() {
-    testMergeExtract(5, 6);
-    testMergeExtract(456, 3423);
-    testMergeExtract(0, 0);
+  public void testValidatePropertiesForRoot() {
+    final Node n = IR.root();
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+
+    // ROOT nodes shouldn't have properties, not even a source file
+    n.setSourceFileForTesting("file.js");
+    assertThat(getMessagesFromValidateProperties(n)).containsExactly("ROOT has properties");
+  }
+
+  private ImmutableList<String> getMessagesFromValidateProperties(Node n) {
+    final ImmutableList.Builder<String> listBuilder = ImmutableList.builder();
+    Consumer<String> violationMessageConsumer = listBuilder::add;
+    n.validateProperties(violationMessageConsumer);
+
+    return listBuilder.build();
   }
 
   @Test
-  public void testMergeExtractErroneous() {
-    assertThat(Node.mergeLineCharNo(-5, 90)).isEqualTo(-1);
-    assertThat(Node.mergeLineCharNo(0, -1)).isEqualTo(-1);
-    assertThat(Node.extractLineno(-1)).isEqualTo(-1);
-    assertThat(Node.extractCharno(-1)).isEqualTo(-1);
+  public void testSideEffectFlagsSerialization() {
+    // Test each individual flag
+    checkSideEffectFlagsRoundTrip(SideEffectFlags.MUTATES_GLOBAL_STATE);
+    checkSideEffectFlagsRoundTrip(SideEffectFlags.MUTATES_THIS);
+    checkSideEffectFlagsRoundTrip(SideEffectFlags.MUTATES_ARGUMENTS);
+    checkSideEffectFlagsRoundTrip(SideEffectFlags.THROWS);
+    // Test an arbitrary combination of 2 flags
+    checkSideEffectFlagsRoundTrip(SideEffectFlags.THROWS | SideEffectFlags.MUTATES_THIS);
+  }
+
+  public void checkSideEffectFlagsRoundTrip(int testFlags) {
+    final Node original = IR.call(IR.name("f"));
+    // serialization only works for nodes that actually have a source file,
+    // because in actual execution they always must have that.
+    original.setSourceFileForTesting("sourcefile");
+
+    // Simulate the situation where we've deserialized the node itself, but not its non-source-file
+    // properties yet, by cloning the orignal node before adding the side effect flags to it.
+    final Node restored = original.cloneNode();
+
+    original.setSideEffectFlags(testFlags);
+    final long serializedProperties = original.serializeProperties();
+
+    restored.deserializeProperties(serializedProperties, false);
+    assertThat(restored.getSideEffectFlags()).isEqualTo(testFlags);
+  }
+
+  @Test
+  public void testValidatePropertiesForIsParenthesized() {
+    Node n = IR.string("");
+    n.setSourceFileForTesting("file.js"); // avoid error about missing source file
+
+    n.setIsParenthesized(true);
+    n.setToken(Token.STRING_KEY);
+    assertThat(getMessagesFromValidateProperties(n))
+        .containsExactly("non-expression is parenthesized");
+  }
+
+  @Test
+  public void testValidatePropertiesForFunctionProperties() {
+    Node n = IR.empty();
+    n.setSourceFileForTesting("file.js"); // avoid error about missing source file
+
+    // Change the Node type so we won't get thrown errors when we try to set the function-only
+    // properties.
+    n.setToken(Token.FUNCTION);
+    n.setIsArrowFunction(true);
+    n.setIsAsyncFunction(true);
+
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.EMPTY);
+    assertThat(getMessagesFromValidateProperties(n))
+        .containsExactly("invalid ARROW_FN prop", "invalid ASYNC_FN prop");
+  }
+
+  @Test
+  public void testValidatePropertiesForSyntheticProperty() {
+    Node n = IR.block();
+    n.setSourceFileForTesting("file.js"); // avoid error about missing source file
+    n.setIsSyntheticBlock(true);
+
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.EMPTY);
+    assertThat(getMessagesFromValidateProperties(n)).containsExactly("invalid SYNTHETIC prop");
+  }
+
+  @Test
+  public void testValidatePropertiesForColorFromCast() {
+    Node n = IR.name("a");
+    n.setSourceFileForTesting("file.js"); // avoid error about missing source file
+    n.setColor(StandardColors.NUMBER);
+    n.setColorFromTypeCast();
+
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setColor(null);
+    assertThat(getMessagesFromValidateProperties(n))
+        .containsExactly("COLOR_FROM_CAST with no Color");
+  }
+
+  @Test
+  public void testValidatePropertiesForOptChain() {
+    Node n = IR.empty();
+    n.setSourceFileForTesting("file.js"); // avoid error about missing source file
+
+    n.setToken(Token.OPTCHAIN_CALL);
+    n.setIsOptionalChainStart(true);
+
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.OPTCHAIN_GETELEM);
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.OPTCHAIN_GETELEM);
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.EMPTY);
+    assertThat(getMessagesFromValidateProperties(n))
+        .containsExactly("START_OF_OPT_CHAIN on non-optional Node");
+  }
+
+  @Test
+  public void testValidatePropertiesForConstVarFlags() {
+    Node n = IR.name("a");
+    n.setSourceFileForTesting("file.js"); // avoid error about missing source file
+    n.setDeclaredConstantVar(true);
+    n.setInferredConstantVar(true);
+
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.IMPORT_STAR);
+    assertThat(getMessagesFromValidateProperties(n)).isEmpty();
+    n.setToken(Token.STRINGLIT);
+    assertThat(getMessagesFromValidateProperties(n)).containsExactly("invalid CONST_VAR_FLAGS");
+  }
+
+  @Test
+  public void testLinenoCharnoNormal() {
+    assertLinenoCharno(5, 6, 5, 6);
+    assertLinenoCharno(456, 3423, 456, 3423);
+    assertLinenoCharno(0, 0, 0, 0);
+  }
+
+  @Test
+  public void testLinenoCharnoErroneous() {
+    assertLinenoCharno(-5, 90, -1, -1);
+    assertLinenoCharno(90, -1, -1, -1);
   }
 
   @Test
   public void testMergeOverflowGraciously() {
-    int linecharno = Node.mergeLineCharNo(89, 4096);
-    assertThat(Node.extractLineno(linecharno)).isEqualTo(89);
-    assertThat(Node.extractCharno(linecharno)).isEqualTo(4095);
+    assertLinenoCharno(89, 4096, 89, 4095);
+  }
+
+  private void assertLinenoCharno(int linenoIn, int charnoIn, int linenoOut, int charnoOut) {
+    Node test = IR.block();
+    test.setLinenoCharno(linenoIn, charnoIn);
+    assertThat(test.getLineno()).isEqualTo(linenoOut);
+    assertThat(test.getCharno()).isEqualTo(charnoOut);
+  }
+
+  @Test
+  public void isEquivalentToConsidersStartOfOptionalChainProperty() {
+    // `a?.b.c`
+    Node singleSegmentOptChain =
+        IR.continueOptChainGetprop(IR.startOptChainGetprop(IR.name("a"), "b"), "c");
+    assertNode(singleSegmentOptChain).isEquivalentTo(singleSegmentOptChain.cloneTree());
+
+    Node twoSegmentOptChain = singleSegmentOptChain.cloneTree();
+    twoSegmentOptChain.setIsOptionalChainStart(true);
+    assertNode(singleSegmentOptChain).isNotEquivalentTo(twoSegmentOptChain);
   }
 
   @Test
@@ -129,11 +282,81 @@ public class NodeTest {
   }
 
   @Test
-  public void testIsEquivalentTo_withSlashV_isDifferent() {
-    Node node1 = Node.newString("\u000B");
-    node1.putBooleanProp(Node.SLASH_V, true);
-    Node node2 = Node.newString("\u000B");
-    assertThat(node1.isEquivalentTo(node2)).isFalse();
+  public void testIsEquivalentTo_considersDifferentEsModuleExports() {
+    Node exportAllFrom = new Node(Token.EXPORT); // export * from './other/module'
+    exportAllFrom.putBooleanProp(Node.EXPORT_ALL_FROM, true);
+    Node exportDefault = new Node(Token.EXPORT); // export default function foo() {
+    exportDefault.putBooleanProp(Node.EXPORT_DEFAULT, true);
+    Node simpleExport = new Node(Token.EXPORT); // export {x} or export const x = 0;
+
+    assertThat(exportAllFrom.isEquivalentTo(exportDefault)).isFalse();
+    assertThat(exportAllFrom.isEquivalentTo(simpleExport)).isFalse();
+    assertThat(exportDefault.isEquivalentTo(simpleExport)).isFalse();
+  }
+
+  @Test
+  public void testIsEquivalentToNumber() {
+    assertThat(Node.newNumber(1).isEquivalentTo(Node.newNumber(1))).isTrue();
+    assertThat(Node.newNumber(1).isEquivalentTo(Node.newNumber(2))).isFalse();
+  }
+
+  @Test
+  public void isEquivalentToConsidersPresenceOfClosureUnawareShadow() {
+    Node nameShadow1 = IR.name("x");
+    Node nameShadow2 = IR.name("x");
+    Node nameNoShadow = IR.name("x");
+
+    nameShadow1.setClosureUnawareShadow(IR.root());
+    nameShadow2.setClosureUnawareShadow(IR.root());
+
+    assertThat(nameShadow1.isEquivalentTo(nameShadow2)).isTrue();
+    assertThat(nameShadow1.isEquivalentTo(nameNoShadow)).isFalse();
+    assertThat(nameNoShadow.isEquivalentTo(nameShadow1)).isFalse();
+  }
+
+  @Test
+  public void testNumberRejects_isNaN() {
+    assertNumberNodeRejects(Double.NaN);
+    assertNumberNodeRejects(-Double.NaN);
+  }
+
+  @Test
+  public void testNumberRejects_negativeValues() {
+    assertNumberNodeRejects(-1394793.114);
+    assertNumberNodeRejects(-1.0);
+    assertNumberNodeRejects(-0.0);
+    assertNumberNodeRejects(Double.NEGATIVE_INFINITY);
+  }
+
+  private void assertNumberNodeRejects(double d) {
+    assertThrows(Exception.class, () -> Node.newNumber(d));
+    assertThrows(Exception.class, () -> Node.newNumber(0.0).setDouble(d));
+  }
+
+  @Test
+  public void testBigintRejects_negativeValues() {
+    assertBigIntNodeRejects(new BigInteger("-1394793"));
+    assertBigIntNodeRejects(new BigInteger("-1"));
+    assertThat(Node.newBigInt(new BigInteger("-0"))).isNotNull();
+  }
+
+  private void assertBigIntNodeRejects(BigInteger x) {
+    assertThrows(Exception.class, () -> Node.newBigInt(x));
+    assertThrows(Exception.class, () -> Node.newBigInt(BigInteger.ZERO).setBigInt(x));
+  }
+
+  @Test
+  public void testIsEquivalentToBigInt() {
+    assertThat(Node.newBigInt(BigInteger.ONE).isEquivalentTo(Node.newBigInt(BigInteger.ONE)))
+        .isTrue();
+    assertThat(Node.newBigInt(BigInteger.ONE).isEquivalentTo(Node.newBigInt(BigInteger.TEN)))
+        .isFalse();
+  }
+
+  @Test
+  public void testIsEquivalentToString() {
+    assertThat(Node.newString("1").isEquivalentTo(Node.newString("1"))).isTrue();
+    assertThat(Node.newString("1").isEquivalentTo(Node.newString("2"))).isFalse();
   }
 
   @Test
@@ -178,10 +401,37 @@ public class NodeTest {
     testErrorReporter.verifyHasEncounteredAllWarningsAndErrors();
   }
 
-  private void testMergeExtract(int lineno, int charno) {
-    int linecharno = Node.mergeLineCharNo(lineno, charno);
-    assertThat(Node.extractLineno(linecharno)).isEqualTo(lineno);
-    assertThat(Node.extractCharno(linecharno)).isEqualTo(charno);
+  @Test
+  public void testCheckTreeTypeAwareEqualsColorsSame() {
+    Node node1 = Node.newString(Token.NAME, "f");
+    node1.setColor(StandardColors.NUMBER);
+    Node node2 = Node.newString(Token.NAME, "f");
+    node2.setColor(StandardColors.NUMBER);
+    assertThat(node1.isEquivalentToTyped(node2)).isTrue();
+  }
+
+  @Test
+  public void testCheckTreeTypeAwareEqualsColorsSameNull() {
+    Node node1 = Node.newString(Token.NAME, "f");
+    Node node2 = Node.newString(Token.NAME, "f");
+    assertThat(node1.isEquivalentToTyped(node2)).isTrue();
+  }
+
+  @Test
+  public void testCheckTreeTypeAwareEqualsColorsDifferent() {
+    Node node1 = Node.newString(Token.NAME, "f");
+    node1.setColor(StandardColors.NUMBER);
+    Node node2 = Node.newString(Token.NAME, "f");
+    node2.setColor(StandardColors.STRING);
+    assertThat(node1.isEquivalentToTyped(node2)).isFalse();
+  }
+
+  @Test
+  public void testCheckTreeTypeAwareEqualsColorsDifferentNull() {
+    Node node1 = Node.newString(Token.NAME, "f");
+    node1.setColor(StandardColors.NUMBER);
+    Node node2 = Node.newString(Token.NAME, "f");
+    assertThat(node1.isEquivalentToTyped(node2)).isFalse();
   }
 
   @Test
@@ -189,25 +439,25 @@ public class NodeTest {
     assertThat(IR.name("a").isQualifiedName()).isTrue();
     assertThat(IR.name("$").isQualifiedName()).isTrue();
     assertThat(IR.name("_").isQualifiedName()).isTrue();
-    assertThat(IR.getprop(IR.name("a"), IR.string("b")).isQualifiedName()).isTrue();
-    assertThat(IR.getprop(IR.thisNode(), IR.string("b")).isQualifiedName()).isTrue();
+    assertThat(IR.getprop(IR.name("a"), "b").isQualifiedName()).isTrue();
+    assertThat(IR.getprop(IR.thisNode(), "b").isQualifiedName()).isTrue();
     assertThat(IR.number(0).isQualifiedName()).isFalse();
     assertThat(IR.arraylit().isQualifiedName()).isFalse();
     assertThat(IR.objectlit().isQualifiedName()).isFalse();
     assertThat(IR.string("").isQualifiedName()).isFalse();
     assertThat(IR.getelem(IR.name("a"), IR.string("b")).isQualifiedName()).isFalse();
     assertThat( // a[b].c
-            IR.getprop(IR.getelem(IR.name("a"), IR.string("b")), IR.string("c")).isQualifiedName())
+            IR.getprop(IR.getelem(IR.name("a"), IR.string("b")), "c").isQualifiedName())
         .isFalse();
     assertThat( // a.b[c]
-            IR.getelem(IR.getprop(IR.name("a"), IR.string("b")), IR.string("c")).isQualifiedName())
+            IR.getelem(IR.getprop(IR.name("a"), "b"), IR.string("c")).isQualifiedName())
         .isFalse();
     assertThat(IR.call(IR.name("a")).isQualifiedName()).isFalse();
     assertThat( // a().b
-            IR.getprop(IR.call(IR.name("a")), IR.string("b")).isQualifiedName())
+            IR.getprop(IR.call(IR.name("a")), "b").isQualifiedName())
         .isFalse();
     assertThat( // (a.b)()
-            IR.call(IR.getprop(IR.name("a"), IR.string("b"))).isQualifiedName())
+            IR.call(IR.getprop(IR.name("a"), "b")).isQualifiedName())
         .isFalse();
     assertThat(IR.string("a").isQualifiedName()).isFalse();
     assertThat(IR.regexp(IR.string("x")).isQualifiedName()).isFalse();
@@ -260,19 +510,17 @@ public class NodeTest {
     assertThat(IR.string("").matchesQualifiedName("a.b")).isFalse();
     assertThat(IR.getelem(IR.name("a"), IR.string("b")).matchesQualifiedName("a.b")).isFalse();
     assertThat( // a[b].c
-            IR.getprop(IR.getelem(IR.name("a"), IR.string("b")), IR.string("c"))
-                .matchesQualifiedName("a.b.c"))
+            IR.getprop(IR.getelem(IR.name("a"), IR.string("b")), "c").matchesQualifiedName("a.b.c"))
         .isFalse();
     assertThat( // a.b[c]
-            IR.getelem(IR.getprop(IR.name("a"), IR.string("b")), IR.string("c"))
-                .matchesQualifiedName("a.b.c"))
+            IR.getelem(IR.getprop(IR.name("a"), "b"), IR.string("c")).matchesQualifiedName("a.b.c"))
         .isFalse();
     assertThat(IR.call(IR.name("a")).matchesQualifiedName("a")).isFalse();
     assertThat( // a().b
-            IR.getprop(IR.call(IR.name("a")), IR.string("b")).matchesQualifiedName("a.b"))
+            IR.getprop(IR.call(IR.name("a")), "b").matchesQualifiedName("a.b"))
         .isFalse();
     assertThat( // (a.b)()
-            IR.call(IR.getprop(IR.name("a"), IR.string("b"))).matchesQualifiedName("a.b"))
+            IR.call(IR.getprop(IR.name("a"), "b")).matchesQualifiedName("a.b"))
         .isFalse();
     assertThat(IR.string("a").matchesQualifiedName("a")).isFalse();
     assertThat(IR.regexp(IR.string("x")).matchesQualifiedName("x")).isFalse();
@@ -309,19 +557,18 @@ public class NodeTest {
     assertThat(IR.getelem(IR.name("a"), IR.string("b")).matchesQualifiedName(qname("a.b")))
         .isFalse();
     assertThat( // a[b].c
-            IR.getprop(IR.getelem(IR.name("a"), IR.string("b")), IR.string("c"))
+            IR.getprop(IR.getelem(IR.name("a"), IR.string("b")), "c")
                 .matchesQualifiedName(qname("a.b.c")))
         .isFalse();
     assertThat( // a.b[c]
-            IR.getelem(IR.getprop(IR.name("a"), IR.string("b")), IR.string("c"))
-                .matchesQualifiedName("a.b.c"))
+            IR.getelem(IR.getprop(IR.name("a"), "b"), IR.string("c")).matchesQualifiedName("a.b.c"))
         .isFalse();
     assertThat(IR.call(IR.name("a")).matchesQualifiedName(qname("a"))).isFalse();
     assertThat( // a().b
-            IR.getprop(IR.call(IR.name("a")), IR.string("b")).matchesQualifiedName(qname("a.b")))
+            IR.getprop(IR.call(IR.name("a")), "b").matchesQualifiedName(qname("a.b")))
         .isFalse();
     assertThat( // (a.b)()
-            IR.call(IR.getprop(IR.name("a"), IR.string("b"))).matchesQualifiedName(qname("a.b")))
+            IR.call(IR.getprop(IR.name("a"), "b")).matchesQualifiedName(qname("a.b")))
         .isFalse();
     assertThat(IR.string("a").matchesQualifiedName(qname("a"))).isFalse();
     assertThat(IR.regexp(IR.string("x")).matchesQualifiedName(qname("x"))).isFalse();
@@ -368,11 +615,8 @@ public class NodeTest {
     do {
       startPos = endPos + 1;
       endPos = name.indexOf('.', startPos);
-      String part = (endPos == -1
-                     ? name.substring(startPos)
-                     : name.substring(startPos, endPos));
-      Node propNode = IR.string(part);
-      node = IR.getprop(node, propNode);
+      String part = (endPos == -1 ? name.substring(startPos) : name.substring(startPos, endPos));
+      node = IR.getprop(node, part);
     } while (endPos != -1);
 
     return node;
@@ -389,6 +633,22 @@ public class NodeTest {
     Node nodeClone = n.cloneNode();
     assertThat(nodeClone.getBooleanProp(Node.IS_CONSTANT_NAME)).isTrue();
     assertThat(nodeClone.getLength()).isEqualTo(1);
+  }
+
+  @Test
+  public void testCloneValues() {
+    Node number = Node.newNumber(100.0);
+    assertThat(number.cloneNode().getDouble()).isEqualTo(100.0);
+
+    Node string = Node.newString(new String("a"));
+    assertThat(string.cloneNode().getString()).isSameInstanceAs(string.getString());
+
+    Node template = Node.newTemplateLitString(new String("a"), new String("b"));
+    assertThat(template.cloneNode().getCookedString()).isSameInstanceAs(template.getCookedString());
+    assertThat(template.cloneNode().getRawString()).isSameInstanceAs(template.getRawString());
+
+    Node bigint = Node.newBigInt(new BigInteger("100"));
+    assertThat(bigint.cloneNode().getBigInt()).isSameInstanceAs(bigint.getBigInt());
   }
 
   @Test
@@ -467,6 +727,67 @@ public class NodeTest {
     assertThat(nodeClone.getBooleanProp(Node.IS_CONSTANT_NAME)).isTrue();
   }
 
+  private long bitsetFromNodeProperties(ImmutableSet<NodeProperty> props) {
+    long bitset = 0;
+    for (NodeProperty prop : props) {
+      bitset = Node.setNodePropertyBit(bitset, prop);
+    }
+    return bitset;
+  }
+
+  @Test
+  public void testSerializeProperties() {
+    Node node = IR.function(IR.name(""), IR.paramList(), IR.block());
+    node.setIsAsyncFunction(true);
+    node.setIsGeneratorFunction(true);
+    long result = node.serializeProperties();
+
+    assertThat(result)
+        .isEqualTo(
+            bitsetFromNodeProperties(
+                ImmutableSet.of(NodeProperty.GENERATOR_FN, NodeProperty.ASYNC_FN)));
+  }
+
+  @Test
+  public void testSerializeProperties_isDeclaredConstant() {
+    Node node = new Node(Token.NAME);
+    node.setDeclaredConstantVar(true);
+    long result = node.serializeProperties();
+    assertThat(result)
+        .isEqualTo(bitsetFromNodeProperties(ImmutableSet.of(NodeProperty.IS_DECLARED_CONSTANT)));
+  }
+
+  @Test
+  public void testSerializeProperties_isInferredConstant() {
+    Node node = new Node(Token.NAME);
+    node.setInferredConstantVar(true);
+    long result = node.serializeProperties();
+    assertThat(result)
+        .isEqualTo(bitsetFromNodeProperties(ImmutableSet.of(NodeProperty.IS_INFERRED_CONSTANT)));
+  }
+
+  @Test
+  public void testSerializeProperties_untranslatableRhinoProp() {
+    Node node = getCall("A");
+    node.setUseStrict(true);
+    long result = node.serializeProperties();
+    // Rhino node prop USE_STRICT does not have a corresponding NodeProperty
+    assertThat(node.isUseStrict()).isTrue();
+    assertThat(result).isEqualTo(0);
+  }
+
+  @Test
+  public void testSerializeProperties_typeBeforeCast() {
+    TestErrorReporter testErrorReporter = new TestErrorReporter();
+    JSTypeRegistry registry = new JSTypeRegistry(testErrorReporter);
+    Node node = Node.newString(Token.NAME, "f");
+    node.setJSTypeBeforeCast(registry.getNativeType(JSTypeNative.NUMBER_TYPE));
+    long result = node.serializeProperties();
+    // Special case: Rhino node prop TYPE_BEFORE_CAST is converted to NodeProperty.COLOR_FROM_CAST
+    assertThat(result)
+        .isEqualTo(bitsetFromNodeProperties(ImmutableSet.of(NodeProperty.COLOR_FROM_CAST)));
+  }
+
   @Test
   public void testGetIndexOfChild() {
     Node assign = getAssignExpr("b", "c");
@@ -482,38 +803,38 @@ public class NodeTest {
   }
 
   @Test
-  public void testUseSourceInfoIfMissingFrom() {
+  public void testSrcrefIfMissing() {
     Node assign = getAssignExpr("b", "c");
-    assign.setSourceEncodedPosition(99);
+    assign.setLinenoCharno(99, 0);
     assign.setSourceFileForTesting("foo.js");
 
     Node lhs = assign.getFirstChild();
-    lhs.useSourceInfoIfMissingFrom(assign);
-    assertThat(lhs.getSourcePosition()).isEqualTo(99);
+    lhs.srcrefIfMissing(assign);
+    assertNode(lhs).hasLineno(99);
     assertThat(lhs.getSourceFileName()).isEqualTo("foo.js");
 
-    assign.setSourceEncodedPosition(101);
+    assign.setLinenoCharno(101, 0);
     assign.setSourceFileForTesting("bar.js");
-    lhs.useSourceInfoIfMissingFrom(assign);
-    assertThat(lhs.getSourcePosition()).isEqualTo(99);
+    lhs.srcrefIfMissing(assign);
+    assertNode(lhs).hasLineno(99);
     assertThat(lhs.getSourceFileName()).isEqualTo("foo.js");
   }
 
   @Test
-  public void testUseSourceInfoFrom() {
+  public void testSrcref() {
     Node assign = getAssignExpr("b", "c");
-    assign.setSourceEncodedPosition(99);
+    assign.setLinenoCharno(99, 0);
     assign.setSourceFileForTesting("foo.js");
 
     Node lhs = assign.getFirstChild();
-    lhs.useSourceInfoFrom(assign);
-    assertThat(lhs.getSourcePosition()).isEqualTo(99);
+    lhs.srcref(assign);
+    assertNode(lhs).hasLineno(99);
     assertThat(lhs.getSourceFileName()).isEqualTo("foo.js");
 
-    assign.setSourceEncodedPosition(101);
+    assign.setLinenoCharno(101, 0);
     assign.setSourceFileForTesting("bar.js");
-    lhs.useSourceInfoFrom(assign);
-    assertThat(lhs.getSourcePosition()).isEqualTo(101);
+    lhs.srcref(assign);
+    assertNode(lhs).hasLineno(101);
     assertThat(lhs.getSourceFileName()).isEqualTo("bar.js");
   }
 
@@ -521,7 +842,7 @@ public class NodeTest {
   public void testInvalidSourceOffset() {
     Node string = Node.newString("a");
 
-    string.setSourceEncodedPosition(-1);
+    string.setLinenoCharno(-1, -1);
     assertThat(string.getSourceOffset()).isLessThan(0);
 
     string.setSourceFileForTesting("foo.js");
@@ -534,16 +855,16 @@ public class NodeTest {
     assertThat(IR.name("a").getQualifiedName()).isEqualTo("a");
     assertThat(IR.thisNode().getQualifiedName()).isEqualTo("this");
     assertThat(IR.superNode().getQualifiedName()).isEqualTo("super");
-    assertThat(IR.getprop(IR.name("a"), IR.string("b")).getQualifiedName()).isEqualTo("a.b");
-    assertThat(IR.getprop(IR.thisNode(), IR.string("b")).getQualifiedName()).isEqualTo("this.b");
-    assertThat(IR.getprop(IR.superNode(), IR.string("b")).getQualifiedName()).isEqualTo("super.b");
-    assertThat(IR.getprop(IR.call(IR.name("a")), IR.string("b")).getQualifiedName()).isNull();
+    assertThat(IR.getprop(IR.name("a"), "b").getQualifiedName()).isEqualTo("a.b");
+    assertThat(IR.getprop(IR.thisNode(), "b").getQualifiedName()).isEqualTo("this.b");
+    assertThat(IR.getprop(IR.superNode(), "b").getQualifiedName()).isEqualTo("super.b");
+    assertThat(IR.getprop(IR.call(IR.name("a")), "b").getQualifiedName()).isNull();
   }
 
   @Test
   public void testJSDocInfoClone() {
     Node original = IR.var(IR.name("varName"));
-    JSDocInfoBuilder builder = new JSDocInfoBuilder(false);
+    JSDocInfo.Builder builder = JSDocInfo.builder();
     builder.recordType(new JSTypeExpression(IR.name("TypeName"), "blah"));
     JSDocInfo info = builder.build();
     original.getFirstChild().setJSDocInfo(info);
@@ -575,30 +896,27 @@ public class NodeTest {
 
     root.addChildToFront(nodeToAdd);
 
-    assertThat(nodeToAdd.parent).isEqualTo(root);
+    assertThat(nodeToAdd.getParent()).isEqualTo(root);
     assertThat(nodeToAdd).isEqualTo(root.getFirstChild());
     assertThat(nodeToAdd).isEqualTo(root.getLastChild());
-    assertThat(nodeToAdd).isEqualTo(nodeToAdd.previous);
-    assertThat(nodeToAdd.next).isNull();
+    assertThat(nodeToAdd.getNext()).isNull();
   }
 
   @Test
   public void testAddChildToFrontWithLargerTree() {
     Node left = Node.newString("left");
-    Node m1 = Node.newString("m1");
-    Node m2 = Node.newString("m2");
+    Node mid = Node.newString("mid");
     Node right = Node.newString("right");
-    Node root = new Node(Token.SCRIPT, left, m1, m2, right);
+    Node root = new Node(Token.SCRIPT, left, mid, right);
     Node nodeToAdd = new Node(Token.SCRIPT);
 
     root.addChildToFront(nodeToAdd);
 
-    assertThat(nodeToAdd.parent).isEqualTo(root);
+    assertThat(nodeToAdd.getParent()).isEqualTo(root);
     assertThat(nodeToAdd).isEqualTo(root.getFirstChild());
-    assertThat(right).isEqualTo(root.getLastChild());
-    assertThat(root.getLastChild()).isEqualTo(nodeToAdd.previous);
-    assertThat(nodeToAdd.next).isEqualTo(left);
-    assertThat(left.previous).isEqualTo(nodeToAdd);
+    assertThat(nodeToAdd.getPrevious()).isNull();
+    assertThat(nodeToAdd.getNext()).isEqualTo(left);
+    assertThat(left.getPrevious()).isEqualTo(nodeToAdd);
   }
 
   @Test
@@ -608,15 +926,14 @@ public class NodeTest {
     Node right = Node.newString("right");
     Node root = new Node(Token.SCRIPT, left, mid, right);
 
-    assertThat(mid.parent).isEqualTo(root);
-    assertThat(mid.previous).isEqualTo(left);
-    assertThat(mid.next).isEqualTo(right);
+    assertThat(mid.getParent()).isEqualTo(root);
+    assertThat(mid.getPrevious()).isEqualTo(left);
+    assertThat(mid.getNext()).isEqualTo(right);
 
     mid.detach();
 
-    assertThat(mid.parent).isNull();
-    assertThat(mid.previous).isNull();
-    assertThat(mid.next).isNull();
+    assertThat(mid.getParent()).isNull();
+    assertThat(mid.getNext()).isNull();
 
     assertThat(right.getPrevious()).isEqualTo(left);
     assertThat(left.getNext()).isEqualTo(right);
@@ -657,5 +974,19 @@ public class NodeTest {
 
   private static Node getCall(String name1) {
     return new Node(Token.CALL, getVarRef(name1));
+  }
+
+  @Test
+  public void testValidateMemoryGuarantees_checksForDifferentSourceFileInstances() {
+    Node b1 = IR.block();
+    Node b2 = IR.block();
+    Node other = IR.block();
+
+    b1.setSourceFileForTesting("file.js");
+    b2.setStaticSourceFileFrom(b1);
+    other.setStaticSourceFile(b1.getStaticSourceFile());
+
+    assertThat(Node.validateMemorySensitivePropertyGuarantees(b1, false, b2, false)).isTrue();
+    assertThat(Node.validateMemorySensitivePropertyGuarantees(b1, false, other, false)).isFalse();
   }
 }

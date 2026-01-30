@@ -16,13 +16,12 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.annotations.GwtIncompatible;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPreOrderCallback;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.rhino.Node;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 
 /**
  * Rewrites ES6 import paths to be relative after resolving according to the compiler's module
@@ -31,7 +30,6 @@ import java.nio.file.Paths;
  * <p>Useful for servers that wish to preserve ES6 modules, meaning their paths need to be valid in
  * the browser.
  */
-@GwtIncompatible("java.net.URI")
 public class Es6RelativizeImportPaths implements CompilerPass {
 
   private final AbstractCompiler compiler;
@@ -42,10 +40,9 @@ public class Es6RelativizeImportPaths implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-    for (Node script : root.children()) {
+    for (Node script = root.getFirstChild(); script != null; script = script.getNext()) {
       if (Es6RewriteModules.isEs6ModuleRoot(script)) {
         NodeTraversal.traverse(compiler, script, new Rewriter());
-        script.putBooleanProp(Node.TRANSPILED, true);
       }
     }
   }
@@ -53,20 +50,18 @@ public class Es6RelativizeImportPaths implements CompilerPass {
   private static class Rewriter extends AbstractPreOrderCallback {
     @Override
     public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
-      switch (n.getToken()) {
-        case ROOT:
-        case MODULE_BODY:
-        case SCRIPT:
-          return true;
-        case IMPORT:
+      return switch (n.getToken()) {
+        case ROOT, MODULE_BODY, SCRIPT -> true;
+        case IMPORT -> {
           visitImport(nodeTraversal, n);
-          return false;
-        case EXPORT:
+          yield false;
+        }
+        case EXPORT -> {
           visitExport(nodeTraversal, n);
-          return false;
-        default:
-          return false;
-      }
+          yield false;
+        }
+        default -> false;
+      };
     }
 
     private void visitImport(NodeTraversal t, Node importDecl) {
@@ -104,11 +99,7 @@ public class Es6RelativizeImportPaths implements CompilerPass {
         newSpecifier = "/" + newSpecifier;
       }
 
-      newSpecifier =
-          Paths.get(scriptPath)
-              .getParent()
-              .relativize(Paths.get(newSpecifier))
-              .toString();
+      newSpecifier = Path.of(scriptPath).getParent().relativize(Path.of(newSpecifier)).toString();
 
       // Relativizing two paths with the same directory yields an ambiguous path rather than one
       // starting with "./".

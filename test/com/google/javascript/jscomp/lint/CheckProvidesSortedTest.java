@@ -19,7 +19,6 @@ import static com.google.javascript.jscomp.lint.CheckProvidesSorted.PROVIDES_NOT
 
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.CompilerTestCase;
 import com.google.javascript.jscomp.NodeTraversal;
@@ -52,7 +51,6 @@ public final class CheckProvidesSortedTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    options.setLanguage(LanguageMode.ECMASCRIPT_NEXT);
     options.setParseJsDocDocumentation(JsDocParsing.INCLUDE_DESCRIPTIONS_WITH_WHITESPACE);
     options.setPreserveDetailedSourceInfo(true);
     options.setPrettyPrint(true);
@@ -65,41 +63,50 @@ public final class CheckProvidesSortedTest extends CompilerTestCase {
   @Test
   public void testNoWarning() {
     testNoWarning(
-        lines(
-            "/** @fileoverview foo */",
-            "",
-            "goog.provide('a');",
-            "goog.provide('b');",
-            "goog.provide('c');",
-            "",
-            "alert(1);"));
+        """
+        /** @fileoverview foo */
+
+        goog.provide('a');
+        goog.provide('b');
+        goog.provide('c');
+
+        alert(1);
+        """);
   }
 
   @Test
   public void testNoWarning_noProvides() {
     testNoWarning(
-        lines("/** @fileoverview foo */", "", "goog.module('m');", "", "goog.require('x');"));
+        """
+        /** @fileoverview foo */
+
+        goog.module('m');
+
+        goog.require('x');
+        """);
   }
 
   @Test
   public void testWarning() {
     test(
         srcs(
-            lines(
-                "/** @fileoverview foo */",
-                "",
-                "goog.provide('b');",
-                "goog.provide('a');",
-                "goog.provide('c');",
-                "",
-                "alert(1);")),
+            """
+            /** @fileoverview foo */
+
+            goog.provide('b');
+            goog.provide('a');
+            goog.provide('c');
+
+            alert(1);
+            """),
         warning(PROVIDES_NOT_SORTED)
             .withMessageContaining(
-                lines(
-                    "The correct order is:",
-                    "",
-                    "goog.provide('a');",
-                    "goog.provide('b');",
-                    "goog.provide('c');")));
+                """
+                The correct order is:
+
+                goog.provide('a');
+                goog.provide('b');
+                goog.provide('c');
+                """));
   }
 }

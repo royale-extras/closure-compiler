@@ -18,10 +18,9 @@ package com.google.javascript.jscomp;
 
 import java.io.Serializable;
 import java.util.Set;
-import javax.annotation.Nullable;
 
 /** A class that generates unique JavaScript variable/property names. */
-interface NameGenerator extends Serializable {
+public interface NameGenerator extends Serializable {
 
   /**
    * Reconfigures this NameGenerator, and resets it to the initial state.
@@ -30,9 +29,9 @@ interface NameGenerator extends Serializable {
    *     names. This set is referenced rather than copied, so changes to the set will be reflected
    *     in how names are generated.
    * @param prefix all generated names begin with this prefix.
-   * @param reservedCharacters If specified these characters won't be used in generated names
+   * @param reservedCharacters characters that won't be used in generated names
    */
-  void reset(Set<String> reservedNames, String prefix, @Nullable char[] reservedCharacters);
+  void reset(Set<String> reservedNames, String prefix, Set<Character> reservedCharacters);
 
   /**
    * Reconfigures this NameGenerator, and resets it to the initial state.
@@ -42,26 +41,19 @@ interface NameGenerator extends Serializable {
    *     in how names are generated.
    * @param prefix all generated names begin with this prefix.
    * @param reservedFirstCharacters If specified these characters won't be used as the first
-   *     character in generated names
+   *     character in generated names.
    * @param reservedNonFirstCharacters If specified these characters won't be used for characters
-   *     (after the first) in generated names
+   *     (after the first) in generated names.
    */
   void reset(
       Set<String> reservedNames,
       String prefix,
-      @Nullable char[] reservedFirstCharacters,
-      @Nullable char[] reservedNonFirstCharacters);
+      Set<Character> reservedFirstCharacters,
+      Set<Character> reservedNonFirstCharacters);
 
-  /**
-   * Returns a clone of this NameGenerator, reconfigured and reset.
-   */
-  NameGenerator clone(
-      Set<String> reservedNames,
-      String prefix,
-      @Nullable char[] reservedCharacters);
+  /** Returns a clone of this NameGenerator, reconfigured and reset. */
+  NameGenerator clone(Set<String> reservedNames, String prefix, Set<Character> reservedCharacters);
 
-  /**
-   * Generates the next name.
-   */
-  String generateNextName();
+  /** Generates the next name. */
+  public String generateNextName();
 }

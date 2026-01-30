@@ -16,65 +16,67 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Checks for certain uses of the {@code this} keyword that are considered
- * unsafe because they are likely to reference the global {@code this} object
- * unintentionally.
+ * Checks for certain uses of the {@code this} keyword that are considered unsafe because they are
+ * likely to reference the global {@code this} object unintentionally.
  *
- * <p>A use of {@code this} is considered unsafe if it's on the left side of an
- * assignment or a property access, and not inside one of the following:
+ * <p>A use of {@code this} is considered unsafe if it's on the left side of an assignment or a
+ * property access, and not inside one of the following:
+ *
  * <ol>
- * <li>a prototype method
- * <li>a function annotated with {@code @constructor}
- * <li>a function annotated with {@code @this}.
- * <li>a function where there's no logical place to put a
- *     {@code this} annotation.
+ *   <li>a class static initialization block
+ *   <li>a prototype method
+ *   <li>a function annotated with {@code @constructor}
+ *   <li>a function annotated with {@code @this}.
+ *   <li>a function where there's no logical place to put a {@code this} annotation.
  * </ol>
  *
- * <p>Note that this check does not track assignments of {@code this} to
- * variables or objects. The code
+ * <p>Note that this check does not track assignments of {@code this} to variables or objects. The
+ * code
+ *
  * <pre>
  * function evil() {
  *   var a = this;
  *   a.useful = undefined;
  * }
  * </pre>
+ *
  * will not get flagged, even though it is semantically equivalent to
+ *
  * <pre>
  * function evil() {
  *   this.useful = undefined;
  * }
  * </pre>
+ *
  * which would get flagged.
  */
-final class CheckGlobalThis implements Callback {
+final class CheckGlobalThis implements NodeTraversal.Callback {
 
-  static final DiagnosticType GLOBAL_THIS = DiagnosticType.warning(
-      "JSC_USED_GLOBAL_THIS",
-      "dangerous use of the global 'this' object");
+  static final DiagnosticType GLOBAL_THIS =
+      DiagnosticType.warning("JSC_USED_GLOBAL_THIS", "dangerous use of the global 'this' object");
 
   private final AbstractCompiler compiler;
 
   /**
-   * If {@code assignLhsChild != null}, then the node being traversed is
-   * a descendant of the first child of an ASSIGN node. assignLhsChild's
-   * parent is this ASSIGN node.
+   * If {@code assignLhsChild != null}, then the node being traversed is a descendant of the first
+   * child of an ASSIGN node. assignLhsChild's parent is this ASSIGN node.
    */
-  private Node assignLhsChild = null;
+  private @Nullable Node assignLhsChild = null;
 
   CheckGlobalThis(AbstractCompiler compiler) {
     this.compiler = compiler;
   }
 
   /**
-   * Since this pass reports errors only when a global {@code this} keyword
-   * is encountered, there is no reason to traverse non global contexts.
+   * Since this pass reports errors only when a global {@code this} keyword is encountered, there is
+   * no reason to traverse non global contexts.
    */
   @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
@@ -91,11 +93,11 @@ final class CheckGlobalThis implements Callback {
       // Don't traverse functions that are constructors or have the @this
       // or @override annotation.
       JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(n);
-      if (jsDoc != null &&
-          (jsDoc.isConstructor() ||
-           jsDoc.isInterface() ||
-           jsDoc.hasThisType() ||
-           jsDoc.isOverride())) {
+      if (jsDoc != null
+          && (jsDoc.isConstructor()
+              || jsDoc.isInterface()
+              || jsDoc.hasThisType()
+              || jsDoc.isOverride())) {
         return false;
       }
 
@@ -123,13 +125,12 @@ final class CheckGlobalThis implements Callback {
       // a.x = function() {}; // or
       // var a = {x: function() {}};
       Token pType = parent.getToken();
-      if (!(pType == Token.BLOCK ||
-            pType == Token.SCRIPT ||
-            pType == Token.NAME ||
-            pType == Token.ASSIGN ||
-
-            // object literal keys
-            pType == Token.STRING_KEY)) {
+      if (!(pType == Token.BLOCK
+          || pType == Token.SCRIPT
+          || pType == Token.NAME
+          || pType == Token.ASSIGN
+          // object literal keys
+          || pType == Token.STRING_KEY)) {
         return false;
       }
 
@@ -143,6 +144,17 @@ final class CheckGlobalThis implements Callback {
           return false;
         }
       }
+    }
+
+    // Don't traverse class static blocks, 'this' is never the global 'this'
+    if (NodeUtil.isClassStaticBlock(n)) {
+      return false;
+    }
+
+    // `this` in class field definitions refers to the instance (for non-static fields) or the class
+    // itself (for static fields), never the global 'this'.
+    if ((n.isMemberFieldDef() || n.isComputedFieldDef()) && n.getParent().isClassMembers()) {
+      return false;
     }
 
     if (parent != null && parent.isAssign()) {
@@ -159,13 +171,11 @@ final class CheckGlobalThis implements Callback {
         // Only traverse the right side if it's not an assignment to a prototype
         // property or subproperty.
         if (NodeUtil.isNormalGet(lhs)) {
-          if (lhs.isGetProp() &&
-              lhs.getLastChild().getString().equals("prototype")) {
+          if (lhs.isGetProp() && lhs.getString().equals("prototype")) {
             return false;
           }
           Node llhs = lhs.getFirstChild();
-          if (llhs.isGetProp() &&
-              llhs.getLastChild().getString().equals("prototype")) {
+          if (llhs.isGetProp() && llhs.getString().equals("prototype")) {
             return false;
           }
         }

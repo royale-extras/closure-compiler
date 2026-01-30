@@ -172,3 +172,19 @@ function setTimeout(callback, opt_delay, callbackParams) {}
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/hasOwnProperty
  */
 function hasOwnProperty (propertyName) {}
+
+/**
+ * @param {function():void} callback
+ * @return {undefined}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/queueMicrotask
+ * @see https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#microtask-queuing
+ */
+function queueMicrotask(callback) {}
+
+/**
+ * @param {*} error
+ * @return {undefined}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/reportError
+ * @see https://html.spec.whatwg.org/multipage/webappapis.html#runtime-script-errors
+ */
+function reportError(error) {}

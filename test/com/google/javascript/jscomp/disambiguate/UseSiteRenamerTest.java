@@ -18,21 +18,14 @@ package com.google.javascript.jscomp.disambiguate;
 
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.javascript.jscomp.testing.JSErrorSubject.assertError;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
-import com.google.javascript.jscomp.CheckLevel;
-import com.google.javascript.jscomp.JSError;
-import com.google.javascript.jscomp.PropertyRenamingDiagnostics;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Objects;
-import javax.annotation.Nullable;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -43,7 +36,6 @@ public final class UseSiteRenamerTest {
 
   private static final String PROP_NAME = "prop";
 
-  private final ArrayList<JSError> reportedErrors = new ArrayList<>();
   private final LinkedHashSet<Node> reportedMutations = new LinkedHashSet<>();
 
   private final PropertyClustering prop = new PropertyClustering(PROP_NAME);
@@ -75,11 +67,6 @@ public final class UseSiteRenamerTest {
     assertThat(this.reportedMutations).containsExactlyElementsIn(mutatedNodes);
   }
 
-  @After
-  public void verifyNoUnexpectedErrors() {
-    assertThat(this.reportedErrors).isEmpty();
-  }
-
   @Test
   public void renameUses_renamesConsistently_withinEachCluster() {
     // Given
@@ -88,10 +75,10 @@ public final class UseSiteRenamerTest {
     Node name1c = IR.name(PROP_NAME);
     Node name2 = IR.name(PROP_NAME);
 
-    FlatType type1a = FlatType.createForTesting(-1);
-    FlatType type1b = FlatType.createForTesting(-2);
-    FlatType type1c = FlatType.createForTesting(-3);
-    FlatType type2 = FlatType.createForTesting(-4);
+    ColorGraphNode type1a = ColorGraphNode.createForTesting(-1);
+    ColorGraphNode type1b = ColorGraphNode.createForTesting(-2);
+    ColorGraphNode type1c = ColorGraphNode.createForTesting(-3);
+    ColorGraphNode type2 = ColorGraphNode.createForTesting(-4);
 
     this.prop.getUseSites().put(name1a, type1a);
     this.prop.getUseSites().put(name1b, type1b);
@@ -103,7 +90,7 @@ public final class UseSiteRenamerTest {
     this.prop.getClusters().add(type2);
 
     // When
-    this.runRename(null);
+    this.runRename();
 
     // Then
     assertThat(name1b.getString()).isEqualTo(name1a.getString());
@@ -118,9 +105,9 @@ public final class UseSiteRenamerTest {
     Node name2 = IR.name(PROP_NAME);
     Node name3 = IR.name(PROP_NAME);
 
-    FlatType type1 = FlatType.createForTesting(-1);
-    FlatType type2 = FlatType.createForTesting(-2);
-    FlatType type3 = FlatType.createForTesting(-3);
+    ColorGraphNode type1 = ColorGraphNode.createForTesting(-1);
+    ColorGraphNode type2 = ColorGraphNode.createForTesting(-2);
+    ColorGraphNode type3 = ColorGraphNode.createForTesting(-3);
 
     this.prop.getUseSites().put(name1, type1);
     this.prop.getUseSites().put(name2, type2);
@@ -131,7 +118,7 @@ public final class UseSiteRenamerTest {
     this.prop.getClusters().add(type3);
 
     // When
-    this.runRename(null);
+    this.runRename();
 
     // Then
     assertThat(name1.getString()).isNotEqualTo(name2.getString());
@@ -147,24 +134,24 @@ public final class UseSiteRenamerTest {
     Node externName3 = IR.name(PROP_NAME);
     Node srcName = IR.name(PROP_NAME);
 
-    FlatType externType1 = FlatType.createForTesting(-1);
-    FlatType externType2 = FlatType.createForTesting(-2);
-    FlatType externType3 = FlatType.createForTesting(-3);
-    FlatType srcType = FlatType.createForTesting(-4);
+    ColorGraphNode externType1 = ColorGraphNode.createForTesting(-1);
+    ColorGraphNode externType2 = ColorGraphNode.createForTesting(-2);
+    ColorGraphNode externType3 = ColorGraphNode.createForTesting(-3);
+    ColorGraphNode srcType = ColorGraphNode.createForTesting(-4);
 
     this.prop.getUseSites().put(externName1, externType1);
     this.prop.getUseSites().put(externName2, externType2);
     this.prop.getUseSites().put(externName3, externType3);
     this.prop.getUseSites().put(srcName, srcType);
 
-    this.prop.registerExternType(externType1);
-    this.prop.registerExternType(externType2);
-    this.prop.registerExternType(externType3);
+    this.prop.registerOriginalNameType(externType1);
+    this.prop.registerOriginalNameType(externType2);
+    this.prop.registerOriginalNameType(externType3);
 
     this.prop.getClusters().add(srcType);
 
     // When
-    this.runRename(null);
+    this.runRename();
 
     // Then
     assertThat(externName1.getString()).isEqualTo(PROP_NAME);
@@ -180,18 +167,18 @@ public final class UseSiteRenamerTest {
     Node name2 = IR.name(PROP_NAME);
     Node name3 = IR.name(PROP_NAME);
 
-    FlatType type1 = FlatType.createForTesting(-1);
-    FlatType type2 = FlatType.createForTesting(-2);
-    FlatType type3 = FlatType.createForTesting(-3);
+    ColorGraphNode type1 = ColorGraphNode.createForTesting(-1);
+    ColorGraphNode type2 = ColorGraphNode.createForTesting(-2);
+    ColorGraphNode type3 = ColorGraphNode.createForTesting(-3);
 
     this.prop.getUseSites().put(name1, type1);
     this.prop.getUseSites().put(name2, type2);
     this.prop.getUseSites().put(name3, type3);
 
-    this.prop.invalidate();
+    this.prop.invalidate(Invalidation.wellKnownProperty());
 
     // When
-    this.runRename(null);
+    this.runRename();
 
     // Then
     assertThat(name1.getString()).isEqualTo(PROP_NAME);
@@ -206,9 +193,9 @@ public final class UseSiteRenamerTest {
     Node name1b = IR.name(PROP_NAME);
     Node name1c = IR.name(PROP_NAME);
 
-    FlatType type1a = FlatType.createForTesting(-1);
-    FlatType type1b = FlatType.createForTesting(-2);
-    FlatType type1c = FlatType.createForTesting(-3);
+    ColorGraphNode type1a = ColorGraphNode.createForTesting(-1);
+    ColorGraphNode type1b = ColorGraphNode.createForTesting(-2);
+    ColorGraphNode type1c = ColorGraphNode.createForTesting(-3);
 
     this.prop.getUseSites().put(name1a, type1a);
     this.prop.getUseSites().put(name1b, type1b);
@@ -218,7 +205,7 @@ public final class UseSiteRenamerTest {
     this.prop.getClusters().union(type1a, type1c);
 
     // When
-    this.runRename(null);
+    this.runRename();
 
     // Then
     assertThat(name1b.getString()).isEqualTo(PROP_NAME);
@@ -226,26 +213,8 @@ public final class UseSiteRenamerTest {
     assertThat(name1a.getString()).isEqualTo(PROP_NAME);
   }
 
-  @Test
-  public void renameUses_reportsInvalidation() {
-    // Given
-    this.prop.invalidate();
-
-    // When
-    this.runRename(ImmutableMap.of(PROP_NAME, CheckLevel.ERROR));
-
-    // Then
-    assertError(this.reportedErrors.remove(0)).hasType(PropertyRenamingDiagnostics.INVALIDATION);
-  }
-
-  private void runRename(@Nullable ImmutableMap<String, CheckLevel> propsToInvalidate) {
-    if (propsToInvalidate == null) {
-      propsToInvalidate = ImmutableMap.of();
-    }
-
-    UseSiteRenamer renamer =
-        new UseSiteRenamer(
-            propsToInvalidate, this.reportedErrors::add, this.reportedMutations::add);
+  private void runRename() {
+    UseSiteRenamer renamer = new UseSiteRenamer(this.reportedMutations::add);
     renamer.renameUses(this.prop);
 
     this.renamingIndex = renamer.getRenamingIndex();

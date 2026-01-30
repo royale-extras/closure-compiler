@@ -18,9 +18,10 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An ordered set that moves values to the front when added (even if already contained) and which
@@ -31,9 +32,9 @@ import java.util.Map;
 final class Timeline<T> {
 
   private static class Event<T> {
-    Event<?> nextEvent;
-    Event<?> previousEvent;
-    T value;
+    @Nullable Event<?> nextEvent;
+    @Nullable Event<?> previousEvent;
+    final T value;
 
     Event(T value) {
       checkNotNull(value);
@@ -51,8 +52,8 @@ final class Timeline<T> {
 
     @Override
     public boolean equals(Object anObject) {
-      if (anObject instanceof Time) {
-        return name.equals(((Time) anObject).name);
+      if (anObject instanceof Time time) {
+        return name.equals(time.name);
       }
       return false;
     }
@@ -63,40 +64,13 @@ final class Timeline<T> {
     }
   }
 
-  private static <V> Event<V> addEvent(V value, Map<V, Event<V>> eventsByKey, Event<?> headEvent) {
-    Event<V> event = eventsByKey.get(value);
-
-    // If the event already exists and is already at the front, do nothing.
-    if (headEvent == event) {
-      return event;
-    }
-
-    // If the event already exists somewhere else in the history then...
-    if (event != null) {
-      // cut it out of the linked list...
-      event.previousEvent.nextEvent = event.nextEvent;
-      event.nextEvent.previousEvent = event.previousEvent;
-      event.nextEvent = null;
-    } else {
-      // Otherwise create and track an event for the given value.
-      event = new Event<V>(value);
-      eventsByKey.put(value, event);
-    }
-
-    // Regardless, stick the event at the front.
-    event.previousEvent = headEvent;
-    headEvent.nextEvent = event;
-    headEvent = event;
-
-    return event;
-  }
-
-  private final Map<Time, Event<Time>> eventsByTime = new HashMap<>();
-  private final Map<T, Event<T>> eventsByValue = new HashMap<>();
+  private final Map<Time, Event<Time>> eventsByTime = new LinkedHashMap<>();
+  private final Map<T, Event<T>> eventsByValue = new LinkedHashMap<>();
+  // In practice headEvent is Event<Time> or Event<T>
   private Event<?> headEvent = new Event<>(new Time("-beginning-"));
 
   void add(T value) {
-    headEvent = addEvent(value, eventsByValue, headEvent);
+    addEvent(value, eventsByValue);
   }
 
   void remove(T value) {
@@ -120,11 +94,11 @@ final class Timeline<T> {
   }
 
   void mark(String timeName) {
-    headEvent = addEvent(new Time(timeName), eventsByTime, headEvent);
+    addEvent(new Time(timeName), eventsByTime);
   }
 
   @SuppressWarnings("unchecked")
-  List<T> getSince(String timeName) {
+  @Nullable List<T> getSince(String timeName) {
     List<T> values = new ArrayList<>();
 
     Event<?> firstEvent = eventsByTime.get(new Time(timeName));
@@ -140,5 +114,32 @@ final class Timeline<T> {
     }
 
     return values;
+  }
+
+  // In practice V is either T or Time.
+  private <V> void addEvent(V value, Map<V, Event<V>> eventsByKey) {
+    Event<V> event = eventsByKey.get(value);
+
+    // If the event already exists and is already at the front, do nothing.
+    if (this.headEvent == event) {
+      return;
+    }
+
+    // If the event already exists somewhere else in the history then...
+    if (event != null) {
+      // cut it out of the linked list...
+      event.previousEvent.nextEvent = event.nextEvent;
+      event.nextEvent.previousEvent = event.previousEvent;
+      event.nextEvent = null;
+    } else {
+      // Otherwise create and track an event for the given value.
+      event = new Event<V>(value);
+      eventsByKey.put(value, event);
+    }
+
+    // Regardless, stick the event at the front.
+    event.previousEvent = this.headEvent;
+    this.headEvent.nextEvent = event;
+    this.headEvent = event;
   }
 }

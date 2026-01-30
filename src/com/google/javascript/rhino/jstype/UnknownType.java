@@ -39,17 +39,13 @@
 
 package com.google.javascript.rhino.jstype;
 
-import static com.google.javascript.rhino.jstype.TernaryValue.UNKNOWN;
-
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
+import org.jspecify.annotations.Nullable;
 
-/**
- * The {@code Unknown} type.
- */
-public class UnknownType extends ObjectType {
-  private static final long serialVersionUID = 1L;
-
+/** The {@code Unknown} type. */
+public final class UnknownType extends ObjectType {
   // See the explanation of checked unknown types in JSTypeNative.
   private final boolean isChecked;
 
@@ -100,8 +96,8 @@ public class UnknownType extends ObjectType {
   }
 
   @Override
-  public TernaryValue testForEquality(JSType that) {
-    return UNKNOWN;
+  public Tri testForEquality(JSType that) {
+    return Tri.UNKNOWN;
   }
 
   @Override
@@ -129,19 +125,19 @@ public class UnknownType extends ObjectType {
   }
 
   @Override
-  boolean defineProperty(String propertyName, JSType type,
-      boolean inferred, Node propertyNode) {
+  boolean defineProperty(
+      Property.Key propertyName, JSType type, boolean inferred, Node propertyNode) {
     // nothing to define
     return true;
   }
 
   @Override
-  public ObjectType getImplicitPrototype() {
+  public @Nullable ObjectType getImplicitPrototype() {
     return null;
   }
 
   @Override
-  public FunctionType getConstructor() {
+  public @Nullable FunctionType getConstructor() {
     return null;
   }
 

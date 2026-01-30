@@ -28,11 +28,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Test for FixedPointGraphTraversal.
- *
- * @author nicksantos@google.com (Nick Santos)
- */
+/** Test for FixedPointGraphTraversal. */
 @RunWith(JUnit4.class)
 public final class FixedPointGraphTraversalTest {
 
@@ -55,10 +51,14 @@ public final class FixedPointGraphTraversalTest {
 
   private DiGraph<Counter, String> graph;
 
-  private Counter A, B, C, D, E;
+  private Counter A;
+  private Counter B;
+  private Counter C;
+  private Counter D;
+  private Counter E;
   private final CounterIncrementer callback = new CounterIncrementer();
   private FixedPointGraphTraversal<Counter, String> traversal =
-      new FixedPointGraphTraversal<>(callback);
+      FixedPointGraphTraversal.newTraversal(callback);
 
   // Create a new graph of the following form:
   //
@@ -173,13 +173,14 @@ public final class FixedPointGraphTraversalTest {
     traversal.computeFixedPoint(graph, A);
 
     try {
-      traversal = new FixedPointGraphTraversal<>(
-        new EdgeCallback<Counter, String>() {
-          @Override
-          public boolean traverseEdge(Counter source, String e, Counter dest) {
-            return true;
-          }
-        });
+      traversal =
+          FixedPointGraphTraversal.newTraversal(
+              new EdgeCallback<Counter, String>() {
+                @Override
+                public boolean traverseEdge(Counter source, String e, Counter dest) {
+                  return true;
+                }
+              });
       traversal.computeFixedPoint(graph, A);
       assertWithMessage("Expecting Error: " + FixedPointGraphTraversal.NON_HALTING_ERROR_MSG)
           .fail();
@@ -222,5 +223,18 @@ public final class FixedPointGraphTraversalTest {
 
     assertThat(A.value).isEqualTo(6);
     assertThat(B.value).isEqualTo(6);
+  }
+
+  @Test
+  public void testReversedTraversal() {
+    maxChange = 1;
+    traversal = FixedPointGraphTraversal.newReverseTraversal(callback);
+    traversal.computeFixedPoint(graph, E);
+
+    assertThat(A.value).isEqualTo(3);
+    assertThat(B.value).isEqualTo(1);
+    assertThat(C.value).isEqualTo(2);
+    assertThat(D.value).isEqualTo(2);
+    assertThat(E.value).isEqualTo(1);
   }
 }

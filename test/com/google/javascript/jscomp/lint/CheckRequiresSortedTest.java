@@ -19,7 +19,6 @@ import static com.google.javascript.jscomp.lint.CheckRequiresSorted.REQUIRES_NOT
 
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.CompilerTestCase;
 import com.google.javascript.jscomp.NodeTraversal;
@@ -52,7 +51,6 @@ public final class CheckRequiresSortedTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    options.setLanguage(LanguageMode.ECMASCRIPT_NEXT);
     options.setParseJsDocDocumentation(JsDocParsing.INCLUDE_DESCRIPTIONS_WITH_WHITESPACE);
     options.setPreserveDetailedSourceInfo(true);
     options.setPrettyPrint(true);
@@ -65,62 +63,92 @@ public final class CheckRequiresSortedTest extends CompilerTestCase {
   @Test
   public void testNoWarning() {
     testNoWarning(
-        lines(
-            "goog.module('x');",
-            "",
-            "const c = goog.require('c');",
-            "const {b} = goog.require('b');",
-            "goog.require('a');"));
+        """
+        goog.module('x');
+
+        const c = goog.require('c');
+        const {b} = goog.require('b');
+        goog.require('a');
+        """);
   }
 
   @Test
   public void testNoWarning_noRequires() {
-    testNoWarning(lines("goog.module('x');", "", "alert(1);"));
+    testNoWarning(
+        """
+        goog.module('x');
+
+        alert(1);
+        """);
   }
 
   @Test
   public void testWarning() {
     test(
         srcs(
-            lines(
-                "goog.module('x');",
-                "",
-                "const b = goog.require('b');",
-                "const a = goog.require('a')",
-                "",
-                "alert(1);")),
+            """
+            goog.module('x');
+
+            const b = goog.require('b');
+            const a = goog.require('a')
+
+            alert(1);
+            """),
         warning(REQUIRES_NOT_SORTED)
             .withMessageContaining(
-                lines(
-                    "The correct order is:",
-                    "",
-                    "const a = goog.require('a');",
-                    "const b = goog.require('b');")));
+                """
+                The correct order is:
+
+                const a = goog.require('a');
+                const b = goog.require('b');
+                """));
   }
 
   @Test
   public void testWarning_withJsDoc() {
     test(
         srcs(
-            lines(
-                "goog.module('x');",
-                "",
-                "/**",
-                " * @suppress {extraRequire}",
-                " */",
-                "goog.require('b');",
-                "goog.require('a');",
-                "",
-                "alert(1);")),
+            """
+            goog.module('x');
+
+            /**
+             * @suppress {extraRequire}
+             */
+            goog.require('b');
+            goog.require('a');
+
+            alert(1);
+            """),
         warning(REQUIRES_NOT_SORTED)
             .withMessageContaining(
-                lines(
-                    "The correct order is:",
-                    "",
-                    "goog.require('a');",
-                    "/**",
-                    " * @suppress {extraRequire}",
-                    " */",
-                    "goog.require('b');")));
+                """
+                The correct order is:
+
+                goog.require('a');
+                /**
+                 * @suppress {extraRequire}
+                 */
+                goog.require('b');
+                """));
+  }
+
+  @Test
+  public void testWarning_destructuringWithNoShorthandProperties() {
+    test(
+        srcs(
+            """
+            goog.module('x');
+
+            const {a: a} = goog.require('a');
+
+            alert(1);
+            """),
+        warning(REQUIRES_NOT_SORTED)
+            .withMessageContaining(
+                """
+                The correct order is:
+
+                const {a} = goog.require('a');
+                """));
   }
 }

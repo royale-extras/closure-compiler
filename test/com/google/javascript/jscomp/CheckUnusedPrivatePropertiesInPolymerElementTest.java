@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.lint.CheckUnusedPrivateProperties;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
 import org.junit.Test;
@@ -29,11 +30,13 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends CompilerTestCase {
 
-  private static final String EXTERNS = lines(
-      DEFAULT_EXTERNS,
-      "var Polymer = function(descriptor) {};",
-      "/** @constructor */",
-      "var PolymerElement = function() {};");
+  private static final String EXTERNS =
+      DEFAULT_EXTERNS
+          + """
+          var Polymer = function(descriptor) {};
+          /** @constructor */
+          var PolymerElement = function() {};
+          """;
 
   public CheckUnusedPrivatePropertiesInPolymerElementTest() {
     super(EXTERNS);
@@ -43,9 +46,8 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Comp
   @Before
   public void setUp() throws Exception {
     super.setUp();
-    enableTypeCheck();
+    enableCreateModuleMap();
     enableGatherExternProperties();
-    enableTranspile();
   }
 
   @Override
@@ -53,7 +55,10 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Comp
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node root) {
-        new PolymerPass(compiler, 1, PolymerExportPolicy.LEGACY, true).process(externs, root);
+        new PolymerPass(compiler).process(externs, root);
+        new TypeCheck(
+                compiler, compiler.getReverseAbstractInterpreter(), compiler.getTypeRegistry())
+            .processForTesting(externs, root);
         new CheckUnusedPrivateProperties(compiler).process(externs, root);
       }
     };
@@ -73,91 +78,66 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Comp
   public void testPolymerPropertyUsedAsObserver1() {
     allowExternsChanges();
     testNoWarning(
-        lines(
-            "Polymer({",
-            "  is: 'example-elem',",
-            "  properties: {",
-            "    foo: {",
-            "      type: Boolean,",
-            "      observer: 'fooChanged_',",
-            "    },",
-            "  },",
-            "",
-            "  /** @private */",
-            "  fooChanged_() {},",
-            "});"));
+        """
+        Polymer({
+          is: 'example-elem',
+          properties: {
+            foo: {
+              type: Boolean,
+              observer: 'fooChanged_',
+            },
+          },
+
+          /** @private */
+          fooChanged_() {},
+        });
+        """);
   }
 
   @Test
   public void testPolymerPropertyUsedAsObserver2() {
     allowExternsChanges();
     testNoWarning(
-        lines(
-            "Polymer({",
-            "  is: 'example-elem',",
-            "  properties: {",
-            "    foo: {",
-            "      type: Boolean,",
-            "      observer: 'fooChanged_',",
-            "    },",
-            "  },",
-            "",
-            "  /** @private */",
-            "  fooChanged_: function() {},",
-            "});"));
+        """
+        Polymer({
+          is: 'example-elem',
+          properties: {
+            foo: {
+              type: Boolean,
+              observer: 'fooChanged_',
+            },
+          },
+
+          /** @private */
+          fooChanged_: function() {},
+        });
+        """);
   }
 
   @Test
   public void testBehaviorPropertyUsedAsObserver() {
     allowExternsChanges();
-    test(
-        new String[] {
-          lines(
-              "/** @polymerBehavior */",
-              "var Behavior = {",
-              "  properties: {",
-              "    foo: {",
-              "      type: Boolean,",
-              "      observer: 'fooChanged_',",
-              "    },",
-              "  },",
-              "",
-              "  /** @private */",
-              "  fooChanged_: function() {},",
-              "};"),
-          lines("Polymer({", "  is: 'example-elem',", "  behaviors: [Behavior],", "});"),
-        },
-        new String[] {
-          lines(
-              "/** @polymerBehavior @nocollapse */",
-              "var Behavior = {",
-              "  properties: {",
-              "    foo: {",
-              "      type: Boolean,",
-              "      observer: 'fooChanged_',",
-              "    },",
-              "  },",
-              "",
-              "  /** @suppress {checkTypes|globalThis|visibility} */",
-              "  fooChanged_: function() {},",
-              "};"),
-          lines(
-              "/**",
-              " * @constructor",
-              " * @extends {PolymerElement}",
-              " * @implements {PolymerExampleElemElementInterface0}",
-              " */",
-              "var ExampleElemElement = function() {};",
-              "",
-              "/** @type {boolean} */",
-              "ExampleElemElement.prototype.foo;",
-              "",
-              "/** @private @suppress {unusedPrivateMembers} */",
-              "ExampleElemElement.prototype.fooChanged_ = function() {};",
-              "Polymer(/** @lends {ExampleElemElement.prototype} */ {",
-              "  is: 'example-elem',",
-              "  behaviors: [Behavior],",
-              "});"),
-        });
+    testNoWarning(
+        srcs(
+            """
+            /** @polymerBehavior */
+            var Behavior = {
+              properties: {
+                foo: {
+                  type: Boolean,
+                  observer: 'fooChanged_',
+                },
+              },
+
+              /** @private */
+              fooChanged_: function() {},
+            };
+            """,
+            """
+            Polymer({
+              is: 'example-elem',
+              behaviors: [Behavior],
+            });
+            """));
   }
 }

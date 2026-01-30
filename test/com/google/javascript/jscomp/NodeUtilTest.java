@@ -18,6 +18,8 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.Streams.stream;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.jscomp.DiagnosticGroups.ES5_STRICT;
@@ -29,6 +31,7 @@ import static com.google.javascript.rhino.Token.DESTRUCTURING_LHS;
 import static com.google.javascript.rhino.Token.FOR_AWAIT_OF;
 import static com.google.javascript.rhino.Token.FOR_OF;
 import static com.google.javascript.rhino.Token.FUNCTION;
+import static com.google.javascript.rhino.Token.GETPROP;
 import static com.google.javascript.rhino.Token.GETTER_DEF;
 import static com.google.javascript.rhino.Token.ITER_REST;
 import static com.google.javascript.rhino.Token.ITER_SPREAD;
@@ -39,10 +42,11 @@ import static com.google.javascript.rhino.Token.OPTCHAIN_GETELEM;
 import static com.google.javascript.rhino.Token.OPTCHAIN_GETPROP;
 import static com.google.javascript.rhino.Token.SCRIPT;
 import static com.google.javascript.rhino.Token.SETTER_DEF;
+import static com.google.javascript.rhino.Token.STRINGLIT;
 import static com.google.javascript.rhino.Token.SUPER;
 import static com.google.javascript.rhino.Token.YIELD;
-import static com.google.javascript.rhino.testing.Asserts.assertThrows;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.verify;
 
 import com.google.common.base.Predicate;
@@ -50,31 +54,31 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Streams;
 import com.google.javascript.jscomp.AbstractCompiler.LifeCycleStage;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.NodeUtil.AllVarsDeclaredInFunction;
 import com.google.javascript.jscomp.NodeUtil.GoogRequire;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
-import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.TernaryValue;
+import com.google.javascript.rhino.jstype.JSTypeNative;
+import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
 import org.junit.runner.RunWith;
@@ -98,15 +102,16 @@ public final class NodeUtilTest {
 
   /** Provides methods for parsing and accessing the compiler used for the parsing. */
   private static class ParseHelper {
-    private Compiler compiler = null;
+    private @Nullable Compiler compiler = null;
 
     private Node parse(String js) {
       CompilerOptions options = new CompilerOptions();
-      options.setLanguageIn(LanguageMode.UNSUPPORTED);
 
       // To allow octal literals such as 0123 to be parsed.
       options.setStrictModeInput(false);
       options.setWarningLevel(ES5_STRICT, CheckLevel.OFF);
+
+      options.setLanguageIn(CompilerOptions.LanguageMode.UNSUPPORTED);
 
       compiler = new Compiler();
       compiler.initOptions(options);
@@ -119,6 +124,10 @@ public final class NodeUtilTest {
       Node rootNode = this.parse(js);
       checkState(rootNode.isScript(), rootNode);
       return token.equals(SCRIPT) ? rootNode : getNode(rootNode, token);
+    }
+
+    private Node parseSecond(Token token, String js) {
+      return getNode(parseFirst(token, js), token);
     }
   }
 
@@ -134,6 +143,16 @@ public final class NodeUtilTest {
    */
   private static Node parseFirst(Token token, String js) {
     return new ParseHelper().parseFirst(token, js);
+  }
+
+  /**
+   * Parses {@code js} into an AST and then returns the second Node in pre-traversal order with the
+   * given token.
+   *
+   * <p>TODO(nickreid): Consider an overload that takes a `Predicate` rather than a `Token`.
+   */
+  private static Node parseSecond(Token token, String js) {
+    return new ParseHelper().parseSecond(token, js);
   }
 
   /** Returns the parsed expression (e.g. returns a NAME given 'a') */
@@ -169,9 +188,8 @@ public final class NodeUtilTest {
    * @return the first matching node, or {@code null} if none match.
    */
   // TODO(nickreid): Consider an overload that takes a `Predicate` rather than a `Token`.
-  @Nullable
-  private static Node getNodeOrNull(Node root, Token token) {
-    for (Node n : root.children()) {
+  private static @Nullable Node getNodeOrNull(Node root, Token token) {
+    for (Node n = root.getFirstChild(); n != null; n = n.getNext()) {
       if (n.getToken() == token) {
         return n;
       }
@@ -229,87 +247,136 @@ public final class NodeUtilTest {
 
     /** Expected result of NodeUtil.getBooleanValue() */
     @Parameter(1)
-    public TernaryValue expectedResult;
+    public Tri expectedResult;
 
     @Parameters(name = "getBooleanValue(\"{0}\") => {1}")
-    public static Iterable<Object[]> cases() {
+    public static ImmutableList<Object[]> cases() {
       return ImmutableList.copyOf(
           new Object[][] {
             // truly literal, side-effect free values are always known
-            {"true", TernaryValue.TRUE},
-            {"10", TernaryValue.TRUE},
-            {"1n", TernaryValue.TRUE},
-            {"'0'", TernaryValue.TRUE},
-            {"/a/", TernaryValue.TRUE},
-            {"{}", TernaryValue.TRUE},
-            {"[]", TernaryValue.TRUE},
-            {"false", TernaryValue.FALSE},
-            {"null", TernaryValue.FALSE},
-            {"0", TernaryValue.FALSE},
-            {"0n", TernaryValue.FALSE},
-            {"''", TernaryValue.FALSE},
-            {"undefined", TernaryValue.FALSE},
+            {"true", Tri.TRUE},
+            {"10", Tri.TRUE},
+            {"1n", Tri.TRUE},
+            {"'0'", Tri.TRUE},
+            {"/a/", Tri.TRUE},
+            {"{}", Tri.TRUE},
+            {"[]", Tri.TRUE},
+            {"false", Tri.FALSE},
+            {"null", Tri.FALSE},
+            {"0", Tri.FALSE},
+            {"0n", Tri.FALSE},
+            {"''", Tri.FALSE},
+            {"undefined", Tri.FALSE},
 
             // literals that have side-effects aren't pure
-            {"{a:foo()}", TernaryValue.TRUE},
-            {"[foo()]", TernaryValue.TRUE},
+            {"{a:foo()}", Tri.TRUE},
+            {"[foo()]", Tri.TRUE},
 
             // not really literals, but we pretend they are for our purposes
-            {"void 0", TernaryValue.FALSE},
+            {"void 0", Tri.FALSE},
             // side-effect keeps this one from being pure
-            {"void foo()", TernaryValue.FALSE},
-            {"!true", TernaryValue.FALSE},
-            {"!false", TernaryValue.TRUE},
-            {"!''", TernaryValue.TRUE},
-            {"class Klass {}", TernaryValue.TRUE},
-            {"new Date()", TernaryValue.TRUE},
-            {"b", TernaryValue.UNKNOWN},
-            {"-'0.0'", TernaryValue.UNKNOWN},
+            {"void foo()", Tri.FALSE},
+            {"!true", Tri.FALSE},
+            {"!false", Tri.TRUE},
+            {"!''", Tri.TRUE},
+            {"class Klass {}", Tri.TRUE},
+            {"new Date()", Tri.TRUE},
+            {"b", Tri.UNKNOWN},
+
+            // Numbers
+            {"+'0.0'", Tri.FALSE},
+            {"+'1.0'", Tri.TRUE},
+            {"+'3.1'", Tri.TRUE},
+            {"+3.1", Tri.TRUE},
+            {"-'0.0'", Tri.FALSE},
+            {"-'1.0'", Tri.TRUE},
+            {"-'1.0'", Tri.TRUE},
+            {"-'3.1'", Tri.TRUE},
+            {"-0.0", Tri.FALSE},
+            {"-1.0", Tri.TRUE},
+            {"-3.1", Tri.TRUE},
+            {"-Infinity", Tri.TRUE},
+            {"-NaN", Tri.FALSE},
+            {"0.0", Tri.FALSE},
+            {"1", Tri.TRUE},
+            {"Infinity", Tri.TRUE},
+            {"NaN", Tri.FALSE},
+            {"~'-1.0'", Tri.FALSE},
+            {"~-1.0", Tri.FALSE},
+            {"~0.0", Tri.TRUE},
+            {"~3.1", Tri.TRUE},
+            {"~NaN", Tri.TRUE},
+
+            // BigInts
+            {"0n", Tri.FALSE},
+            {"-0n", Tri.FALSE},
+            {"~0n", Tri.TRUE},
+            {"~-0n", Tri.TRUE},
+            {"-~0n", Tri.TRUE},
+            {"1n", Tri.TRUE},
+            {"-1n", Tri.TRUE},
+            {"~1n", Tri.TRUE},
+            {"~-1n", Tri.FALSE},
+            {"-~1n", Tri.TRUE},
 
             // template literals
-            {"``", TernaryValue.FALSE},
-            {"`definiteLength`", TernaryValue.TRUE},
-            {"`${some}str`", TernaryValue.UNKNOWN},
+            {"``", Tri.FALSE},
+            {"`definiteLength`", Tri.TRUE},
+            {"`${some}str`", Tri.UNKNOWN},
 
             // non-literal expressions
-            {"a=true", TernaryValue.TRUE},
-            {"a=false", TernaryValue.FALSE},
-            {"a=(false,true)", TernaryValue.TRUE},
-            {"a=(true,false)", TernaryValue.FALSE},
-            {"a=(false || true)", TernaryValue.TRUE},
-            {"a=(true && false)", TernaryValue.FALSE},
-            {"a=!(true && false)", TernaryValue.TRUE},
-            {"a,true", TernaryValue.TRUE},
-            {"a,false", TernaryValue.FALSE},
-            {"true||false", TernaryValue.TRUE},
-            {"false||false", TernaryValue.FALSE},
-            {"true&&true", TernaryValue.TRUE},
-            {"true&&false", TernaryValue.FALSE},
+            {"a=true", Tri.TRUE},
+            {"a=false", Tri.FALSE},
+            {"a=(false,true)", Tri.TRUE},
+            {"a=(true,false)", Tri.FALSE},
+            {"a=(false || true)", Tri.TRUE},
+            {"a=(true && false)", Tri.FALSE},
+            {"a=!(true && false)", Tri.TRUE},
+            {"a,true", Tri.TRUE},
+            {"a,false", Tri.FALSE},
+            {"true||false", Tri.TRUE},
+            {"false||false", Tri.FALSE},
+            {"true&&true", Tri.TRUE},
+            {"true&&false", Tri.FALSE},
+
+            // Logical assignments
+            {"a||(a=true)", Tri.TRUE},
+            {"a||(a=false)", Tri.UNKNOWN},
+            {"a||=true", Tri.TRUE},
+            {"a||=false", Tri.UNKNOWN},
+            {"a&&(a=true)", Tri.UNKNOWN},
+            {"a&&(a=false)", Tri.FALSE},
+            {"a&&=true", Tri.UNKNOWN},
+            {"a&&=false", Tri.FALSE},
+            {"a??(a=true)", Tri.UNKNOWN},
+            {"a??=true", Tri.UNKNOWN},
+            {"a??(a=false)", Tri.UNKNOWN},
+            {"a??=false", Tri.UNKNOWN},
 
             // Assignment ops other than ASSIGN are unknown.
-            {"a *= 2", TernaryValue.UNKNOWN},
+            {"a *= 2", Tri.UNKNOWN},
 
             // Complex expressions that contain anything other then "=", ",", or "!" are
             // unknown.
-            {"2 + 2", TernaryValue.UNKNOWN},
+            {"2 + 2", Tri.UNKNOWN},
 
             // assignment values are the RHS
-            {"a=1", TernaryValue.TRUE},
-            {"a=/a/", TernaryValue.TRUE},
-            {"a={}", TernaryValue.TRUE},
+            {"a=1", Tri.TRUE},
+            {"a=/a/", Tri.TRUE},
+            {"a={}", Tri.TRUE},
 
             // hooks have impure boolean value if both cases have same impure boolean value
-            {"a?true:true", TernaryValue.TRUE},
-            {"a?false:false", TernaryValue.FALSE},
-            {"a?true:false", TernaryValue.UNKNOWN},
-            {"a?true:foo()", TernaryValue.UNKNOWN},
+            {"a?true:true", Tri.TRUE},
+            {"a?false:false", Tri.FALSE},
+            {"a?true:false", Tri.UNKNOWN},
+            {"a?true:foo()", Tri.UNKNOWN},
 
             // coalesce returns LHS if LHS is truthy or if LHS and RHS have same boolean value
-            {"null??false", TernaryValue.FALSE}, // both false
-            {"2??[]", TernaryValue.TRUE}, // both true
-            {"{}??false", TernaryValue.TRUE}, // LHS is true
-            {"undefined??[]", TernaryValue.UNKNOWN},
-            {"foo()??true", TernaryValue.UNKNOWN},
+            {"null??false", Tri.FALSE}, // both false
+            {"2??[]", Tri.TRUE}, // both true
+            {"{}??false", Tri.TRUE}, // LHS is true
+            {"undefined??[]", Tri.UNKNOWN},
+            {"foo()??true", Tri.UNKNOWN},
           });
     }
 
@@ -323,28 +390,28 @@ public final class NodeUtilTest {
   public static final class IsPropertyTestTests {
 
     @Test
-    public void optionalChainGetPropIsPropertyTest() {
+    public void optChainGetPropIsPropertyTest() {
       Compiler compiler = new Compiler();
       Node getProp = parseExpr("x.y?.z");
       assertThat(NodeUtil.isPropertyTest(compiler, getProp.getFirstChild())).isTrue();
     }
 
     @Test
-    public void optionalChainGetElemIsPropertyTest() {
+    public void optChainGetElemIsPropertyTest() {
       Compiler compiler = new Compiler();
       Node getElem = parseExpr("x.y?.[z]");
       assertThat(NodeUtil.isPropertyTest(compiler, getElem.getFirstChild())).isTrue();
     }
 
     @Test
-    public void optionalChainCallIsPropertyTest() {
+    public void optChainCallIsPropertyTest() {
       Compiler compiler = new Compiler();
       Node call = parseExpr("x.y?.(z)");
       assertThat(NodeUtil.isPropertyTest(compiler, call.getFirstChild())).isTrue();
     }
 
     @Test
-    public void optionalChainNonStartOfChainIsPropertyTest() {
+    public void optChainNonStartOfChainIsPropertyTest() {
       Compiler compiler = new Compiler();
       Node getProp = parseExpr("x.y?.z.foo.bar");
       assertThat(NodeUtil.isPropertyTest(compiler, getProp.getFirstChild())).isTrue();
@@ -414,11 +481,11 @@ public final class NodeUtilTest {
     }
 
     private boolean isLiteralValueExcludingFunctions(String code) {
-      return NodeUtil.isLiteralValue(parseExpr(code), /* includeFunctions */ false);
+      return NodeUtil.isLiteralValue(parseExpr(code), /* includeFunctions= */ false);
     }
 
     private boolean isLiteralValue(String code) {
-      return NodeUtil.isLiteralValue(parseExpr(code), /* includeFunctions */ true);
+      return NodeUtil.isLiteralValue(parseExpr(code), /* includeFunctions= */ true);
     }
 
     private void assertLiteralAndImmutable(Node n) {
@@ -485,6 +552,7 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.getStringValue(parseExpr("true"))).isEqualTo("true");
       assertThat(NodeUtil.getStringValue(parseExpr("10"))).isEqualTo("10");
       assertThat(NodeUtil.getStringValue(parseExpr("1.0"))).isEqualTo("1");
+      assertThat(NodeUtil.getStringValue(parseExpr("-1.0"))).isEqualTo("-1");
 
       /* See https://github.com/google/closure-compiler/issues/1262 */
       assertThat(NodeUtil.getStringValue(parseExpr("1.2323919403474454e+21")))
@@ -627,6 +695,33 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.isNamespaceDecl(nameNode)).isTrue();
     }
 
+    @Test
+    public void testTypedefNamespace() {
+      Node statements =
+          parse(
+              """
+              /** @typedef */ const obj = {};
+              /** @const */ obj.a = {};
+              /** @typedef @const */ obj.b = {};
+              /** @typedef */ obj.c = {};
+              /** @typedef @const */ obj.d = function() {};
+              """);
+      LinkedHashSet<String> namespaceNames = new LinkedHashSet<>();
+      LinkedHashSet<String> nonNamespaceNames = new LinkedHashSet<>();
+      for (Node statement : statements.children()) {
+        Node name =
+            statement.isExprResult() ? statement.getFirstFirstChild() : statement.getFirstChild();
+        checkState(name.isName() || name.isGetProp(), name);
+        if (NodeUtil.isNamespaceDecl(name)) {
+          namespaceNames.add(name.getQualifiedName());
+        } else {
+          nonNamespaceNames.add(name.getQualifiedName());
+        }
+      }
+      assertThat(namespaceNames).containsExactly("obj", "obj.a", "obj.b");
+      assertThat(nonNamespaceNames).containsExactly("obj.c", "obj.d");
+    }
+
     private void assertGetNameResult(Node function, String name) {
       assertNode(function).hasToken(Token.FUNCTION);
       assertThat(NodeUtil.getName(function)).isEqualTo(name);
@@ -654,6 +749,29 @@ public final class NodeUtilTest {
               NodeUtil.isFunctionDeclaration(
                   parseFirst(FUNCTION, "export default (foo) => { alert(foo); }")))
           .isFalse();
+    }
+
+    @Test
+    public void testisBlockScopedFunctionDeclaration() {
+      assertThat(
+              NodeUtil.isBlockScopedFunctionDeclaration(parseFirst(FUNCTION, "function foo(){}")))
+          .isFalse();
+      assertThat(
+              NodeUtil.isBlockScopedFunctionDeclaration(
+                  parseFirst(FUNCTION, "var x = function(){}")))
+          .isFalse();
+      assertThat(
+              NodeUtil.isBlockScopedFunctionDeclaration(
+                  parseFirst(FUNCTION, "{ function foo(){} }")))
+          .isTrue();
+      assertThat(
+              NodeUtil.isBlockScopedFunctionDeclaration(
+                  parseFirst(FUNCTION, "class C { static { function foo(){} } }")))
+          .isTrue();
+      assertThat(
+              NodeUtil.isBlockScopedFunctionDeclaration(
+                  parseSecond(FUNCTION, "function foo(){ class C { static { function a(){} } } }")))
+          .isTrue();
     }
 
     @Test
@@ -1453,6 +1571,11 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("x&&y"))).isFalse();
       assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("1&&y"))).isFalse();
 
+      // Logical assignments are always treated as non-local
+      assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("x||=1"))).isFalse();
+      assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("x&&=1"))).isFalse();
+      assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("x??=1"))).isFalse();
+
       // Only the results of HOOK matter
       assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("x?1:2"))).isTrue();
       assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("x?x:2"))).isFalse();
@@ -1486,6 +1609,10 @@ public final class NodeUtilTest {
               NodeUtil.evaluatesToLocalValue(
                   parseFirst(Token.NEW_TARGET, "function f() { new.target; }")))
           .isFalse();
+
+      // Dynamic import always returns a new Promise, which acts as a local value, even though
+      // the result of the Promise is definitely non-local.
+      assertThat(NodeUtil.evaluatesToLocalValue(parseExpr("import('./foo.js')"))).isTrue();
     }
 
     @Test
@@ -1507,7 +1634,7 @@ public final class NodeUtilTest {
       flags.clearAllFlags();
       n.setSideEffectFlags(flags);
 
-      assertThat(NodeUtil.evaluatesToLocalValue(n)).isTrue();
+      assertThat(NodeUtil.evaluatesToLocalValue(n)).isFalse();
     }
 
     @Test
@@ -1521,7 +1648,7 @@ public final class NodeUtilTest {
       flags.clearAllFlags();
       n.setSideEffectFlags(flags);
 
-      assertThat(NodeUtil.evaluatesToLocalValue(n)).isTrue();
+      assertThat(NodeUtil.evaluatesToLocalValue(n)).isFalse();
     }
 
     @Test
@@ -1544,7 +1671,6 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.evaluatesToLocalValue(newExpr)).isTrue();
 
       flags.clearAllFlags();
-      flags.setReturnsTainted();
       newExpr.setSideEffectFlags(flags);
 
       assertThat(NodeUtil.evaluatesToLocalValue(newExpr)).isTrue();
@@ -1630,7 +1756,6 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.getNumberValue(parseExpr("022"))).isEqualTo(18.0);
     }
 
-    @SuppressWarnings("JUnit3FloatingPointComparisonWithoutDelta")
     @Test
     public void testGetNumberValue() {
       // Strings
@@ -1643,7 +1768,6 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.getNumberValue(parseExpr("'+2'"))).isEqualTo(2.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("'-1.6'"))).isEqualTo(-1.6);
       assertThat(NodeUtil.getNumberValue(parseExpr("'16'"))).isEqualTo(16.0);
-      assertThat(NodeUtil.getNumberValue(parseExpr("' 16 '"))).isEqualTo(16.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("' 16 '"))).isEqualTo(16.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("'123e2'"))).isEqualTo(12300.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("'123E2'"))).isEqualTo(12300.0);
@@ -1685,14 +1809,24 @@ public final class NodeUtilTest {
 
       // Literals
       assertThat(NodeUtil.getNumberValue(parseExpr("1"))).isEqualTo(1.0);
-      assertThat(NodeUtil.getNumberValue(parseExpr("1n"))).isEqualTo(null);
-      // "-1" is parsed as a literal
+      assertThat(NodeUtil.getNumberValue(parseExpr("1n"))).isNull();
       assertThat(NodeUtil.getNumberValue(parseExpr("-1"))).isEqualTo(-1.0);
-      // "+1" is parse as an op + literal
-      assertThat(NodeUtil.getNumberValue(parseExpr("+1"))).isNull();
+      assertThat(NodeUtil.getNumberValue(parseExpr("+1"))).isEqualTo(1.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("22"))).isEqualTo(22.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("022"))).isEqualTo(18.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("0x22"))).isEqualTo(34.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("-0.1"))).isEqualTo(-0.1);
+      assertThat(NodeUtil.getNumberValue(parseExpr("-0.0"))).isEqualTo(-0.0);
+
+      // BITNOT
+      assertThat(NodeUtil.getNumberValue(parseExpr("~1"))).isEqualTo(-2.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~-1"))).isEqualTo(0.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~22"))).isEqualTo(-23.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~022"))).isEqualTo(-19.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~0.0"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~0.1"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~NaN"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("~Infinity"))).isEqualTo(-1.0);
 
       assertThat(NodeUtil.getNumberValue(parseExpr("true"))).isEqualTo(1.0);
       assertThat(NodeUtil.getNumberValue(parseExpr("false"))).isEqualTo(0.0);
@@ -1714,7 +1848,125 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.getNumberValue(parseExpr("x.y"))).isNull();
       assertThat(NodeUtil.getNumberValue(parseExpr("1/2"))).isNull();
       assertThat(NodeUtil.getNumberValue(parseExpr("1-2"))).isNull();
-      assertThat(NodeUtil.getNumberValue(parseExpr("+1"))).isNull();
+
+      assertThat(NodeUtil.getNumberValue(parseExpr("[1]"))).isEqualTo(1.0);
+      assertThat(NodeUtil.getNumberValue(parseExpr("{}"))).isNaN();
+    }
+
+    @Test
+    public void testGetNumberValueNoConversions() {
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("''"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("``"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("true"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("false"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("null"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("[1]"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("{}"))).isNull();
+
+      // Literals
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("1"))).isEqualTo(1.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("1n"))).isNull();
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("-1"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("+1"))).isEqualTo(1.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("22"))).isEqualTo(22.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("022"))).isEqualTo(18.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("0x22"))).isEqualTo(34.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("-0.1"))).isEqualTo(-0.1);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("-0.0"))).isEqualTo(-0.0);
+
+      // BITNOT
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~1"))).isEqualTo(-2.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~-1"))).isEqualTo(0.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~22"))).isEqualTo(-23.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~022"))).isEqualTo(-19.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~0.0"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~0.1"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~NaN"))).isEqualTo(-1.0);
+      assertThat(NodeUtil.getNumberValueNoConversions(parseExpr("~Infinity"))).isEqualTo(-1.0);
+    }
+
+    @Test
+    public void testGetBigIntValue() {
+      // Strings
+      // NOTE: Strings with the 'n' literal syntax can't be converted to BigInt
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'1'"))).isEqualTo(BigInteger.ONE);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'1n'"))).isNull();
+
+      // whitespace
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'\\uFEFF1'"))).isEqualTo(BigInteger.ONE);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("''"))).isEqualTo(BigInteger.ZERO);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("' '"))).isEqualTo(BigInteger.ZERO);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("' \\t'"))).isEqualTo(BigInteger.ZERO);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("' 1 '"))).isEqualTo(BigInteger.ONE);
+
+      // Even though unary plus cannot be applied to a bigint, numeric strings that have one can
+      // still be converted, e.g. BigInt("+0") => 0n
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'+0'"))).isEqualTo(BigInteger.ZERO);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'-0'"))).isEqualTo(BigInteger.ZERO);
+
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'10'"))).isEqualTo(BigInteger.TEN);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'+10'"))).isEqualTo(new BigInteger("+10"));
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'-10'"))).isEqualTo(new BigInteger("-10"));
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'   +10'"))).isEqualTo(new BigInteger("+10"));
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'   -10'"))).isEqualTo(new BigInteger("-10"));
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'0xa'"))).isEqualTo(BigInteger.TEN);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'0XA'"))).isEqualTo(BigInteger.TEN);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'0o12'"))).isEqualTo(BigInteger.TEN);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'0O12'"))).isEqualTo(BigInteger.TEN);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'0b1010'"))).isEqualTo(BigInteger.TEN);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'0B1010'"))).isEqualTo(BigInteger.TEN);
+
+      // Strings representing hex, octal, or binary literal values cannot include a unary plus or
+      // minus when being passed to BigInt().
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'+0xF'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'-0xF'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'+0oF'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'-0oF'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'+0bF'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'-0bF'"))).isNull();
+
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'1.5'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'-Infinity'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'Infinity'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'+Infinity'"))).isNull();
+
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'NaN'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'some unknown string'"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("'123 blah'"))).isNull();
+
+      // Literals
+      assertThat(NodeUtil.getBigIntValue(parseExpr("1"))).isEqualTo(BigInteger.ONE);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("1n"))).isEqualTo(BigInteger.ONE);
+      // "-1" is parsed as a literal
+      assertThat(NodeUtil.getBigIntValue(parseExpr("-1"))).isEqualTo(new BigInteger("-1"));
+      // "+1" is parse as an op + literal
+      assertThat(NodeUtil.getBigIntValue(parseExpr("+1"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("22"))).isEqualTo(new BigInteger("22"));
+      assertThat(NodeUtil.getBigIntValue(parseExpr("022"))).isEqualTo(new BigInteger("18"));
+      assertThat(NodeUtil.getBigIntValue(parseExpr("0x22"))).isEqualTo(new BigInteger("34"));
+
+      final long maxSafeInt = 9007199254740991L; // Number.MAX_SAFE_INTEGER
+      assertThat(NodeUtil.getBigIntValue(parseExpr(String.valueOf(maxSafeInt))))
+          .isEqualTo(BigInteger.valueOf(maxSafeInt));
+      assertThat(NodeUtil.getBigIntValue(parseExpr(String.valueOf(-maxSafeInt))))
+          .isEqualTo(BigInteger.valueOf(-maxSafeInt));
+
+      final long maxSafeIntPlusOne = maxSafeInt + 1L;
+      assertThat(NodeUtil.getBigIntValue(parseExpr(String.valueOf(maxSafeIntPlusOne)))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr(String.valueOf(-maxSafeIntPlusOne)))).isNull();
+
+      assertThat(NodeUtil.getBigIntValue(parseExpr("true"))).isEqualTo(BigInteger.ONE);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("false"))).isEqualTo(BigInteger.ZERO);
+      assertThat(NodeUtil.getBigIntValue(parseExpr("null"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("void 0"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("void f"))).isNull();
+
+      // getBigIntValue only converts literals
+      assertThat(NodeUtil.getBigIntValue(parseExpr("x"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("x.y"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("1/2"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("1-2"))).isNull();
+      assertThat(NodeUtil.getBigIntValue(parseExpr("+1"))).isNull();
     }
 
     @Test
@@ -1730,10 +1982,17 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.isNumericResult(parseExpr("undefined"))).isFalse();
       assertThat(NodeUtil.isNumericResult(parseExpr("void 0"))).isFalse();
 
+      // Technically the result when both operands are variables could be a `bigint`.
+      // We would need to use type information to be certain, but `number` is much more likely.
       assertThat(NodeUtil.isNumericResult(parseExpr("a << b"))).isTrue();
       assertThat(NodeUtil.isNumericResult(parseExpr("a >> b"))).isTrue();
+      // if one side is a number then we can safely assume the result is a number
+      assertThat(NodeUtil.isNumericResult(parseExpr("a << 2"))).isTrue();
+      assertThat(NodeUtil.isNumericResult(parseExpr("a >> 2"))).isTrue();
+      // unsigned right shift is only allowed with numbers
       assertThat(NodeUtil.isNumericResult(parseExpr("a >>> b"))).isTrue();
 
+      // logical comparisons result in boolean, not number
       assertThat(NodeUtil.isNumericResult(parseExpr("a == b"))).isFalse();
       assertThat(NodeUtil.isNumericResult(parseExpr("a != b"))).isFalse();
       assertThat(NodeUtil.isNumericResult(parseExpr("a === b"))).isFalse();
@@ -1767,14 +2026,100 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.isNumericResult(parseExpr("a,1"))).isTrue();
       assertThat(NodeUtil.isNumericResult(parseExpr("a=1"))).isTrue();
 
+      // variable might be a string
       assertThat(NodeUtil.isNumericResult(parseExpr("a += 1"))).isFalse();
 
       assertThat(NodeUtil.isNumericResult(parseExpr("a -= 1"))).isTrue();
       assertThat(NodeUtil.isNumericResult(parseExpr("a *= 1"))).isTrue();
+
+      // Technically when the operand is a variable the result could be a `bigint`.
+      // We would need to use type information to be certain, but `number` is much more likely.
       assertThat(NodeUtil.isNumericResult(parseExpr("--a"))).isTrue();
       assertThat(NodeUtil.isNumericResult(parseExpr("++a"))).isTrue();
       assertThat(NodeUtil.isNumericResult(parseExpr("a++"))).isTrue();
       assertThat(NodeUtil.isNumericResult(parseExpr("a--"))).isTrue();
+    }
+
+    @Test
+    public void testIsBigIntResult() {
+      assertThat(NodeUtil.isBigIntResult(parseExpr("1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("-1n"))).isTrue();
+
+      // if one side is a bigint then we will assume the result is a bigint
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a *= 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("1n * a"))).isTrue();
+
+      // if neither side is explicitly bigint, then the the result could be a number or type error
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b"))).isFalse();
+      // addition is a special case because of string concatenation
+      assertThat(NodeUtil.isBigIntResult(parseExpr("'a'+1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("1n+'b'"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("1n + 2n"))).isTrue();
+      // variable might be a string
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a += 1n"))).isFalse();
+
+      // unsigned right shift and unary + are only allowed with numbers
+      assertThat(NodeUtil.isBigIntResult(parseExpr("+a"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a >>> b"))).isFalse();
+
+      // recurse if necessary
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b + 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b * 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b + c * 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b + c * d"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * ~b * -c * d * 1n"))).isTrue();
+      // even though the other side is definitely NUMBER, isBigIntResult returns true because it is
+      // not responsible for type checking
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * 1 * b * c * d * 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b * +c * d * 1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b >> c * d * 1n"))).isTrue();
+      // unsigned right shift is the overall parent and thus evaluated as NUMBER
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a * b >>> c * d * 1n"))).isFalse();
+
+      // Infinity and NaN are numbers, not bigints
+      assertThat(NodeUtil.isBigIntResult(parseExpr("-Infinity"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("Infinity"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("NaN"))).isFalse();
+
+      assertThat(NodeUtil.isBigIntResult(parseExpr("undefined"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("void 0n"))).isFalse();
+
+      // logical comparisons result in boolean, not bigint
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a == 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a != 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a === 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a !== 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a < 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a > 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a <= 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a >= 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a in 1n"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a instanceof 1n"))).isFalse();
+
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a()"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("''.a"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a.b"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a.b()"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a().b()"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("new a()"))).isFalse();
+
+      // Definitely not bigint
+      assertThat(NodeUtil.isBigIntResult(parseExpr("([1n,2n])"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("({a:1n})"))).isFalse();
+
+      // Recurse into the expression when necessary.
+      assertThat(NodeUtil.isBigIntResult(parseExpr("1n && 2n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("1n || 2n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a ? 2n : 3n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a,1n"))).isTrue();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a=1n"))).isTrue();
+
+      // variable might be a number
+      assertThat(NodeUtil.isBigIntResult(parseExpr("--a"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("++a"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a++"))).isFalse();
+      assertThat(NodeUtil.isBigIntResult(parseExpr("a--"))).isFalse();
     }
 
     @Test
@@ -1895,6 +2240,27 @@ public final class NodeUtilTest {
     }
 
     @Test
+    public void testMayBeStringWithTypes() {
+      JSTypeRegistry registry = new JSTypeRegistry(null);
+      assertThat(
+              NodeUtil.mayBeString(
+                  IR.name("a").setJSType(registry.getNativeType(JSTypeNative.NUMBER_TYPE)), true))
+          .isFalse();
+      assertThat(
+              NodeUtil.mayBeString(
+                  IR.name("a").setJSType(registry.getNativeType(JSTypeNative.BIGINT_TYPE)), true))
+          .isFalse();
+      assertThat(
+              NodeUtil.mayBeString(
+                  IR.name("a").setJSType(registry.getNativeType(JSTypeNative.BOOLEAN_TYPE)), true))
+          .isFalse();
+      assertThat(
+              NodeUtil.mayBeString(
+                  IR.name("a").setJSType(registry.getNativeType(JSTypeNative.STRING_TYPE)), true))
+          .isTrue();
+    }
+
+    @Test
     public void testIsStringResult() {
       assertThat(NodeUtil.isStringResult(parseExpr("1"))).isFalse();
       assertThat(NodeUtil.isStringResult(parseExpr("true"))).isFalse();
@@ -1958,6 +2324,71 @@ public final class NodeUtilTest {
       // Template literals
       assertThat(NodeUtil.isStringResult(parseExpr("`x`"))).isTrue();
       assertThat(NodeUtil.isStringResult(parseExpr("`a${b}c`"))).isTrue();
+    }
+
+    @Test
+    public void testMayBeObject() {
+      assertThat(NodeUtil.mayBeObject(parseExpr("1"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("1n"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a * b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("true"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("+true"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("+1"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("-1"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("-Infinity"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("Infinity"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("NaN"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("undefined"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("void 0"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("null"))).isFalse();
+
+      assertThat(NodeUtil.mayBeObject(parseExpr("a << b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a >> b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a >>> b"))).isFalse();
+
+      assertThat(NodeUtil.mayBeObject(parseExpr("a == b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a != b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a === b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a !== b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a < b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a > b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a <= b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a >= b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a in b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a instanceof b"))).isFalse();
+
+      assertThat(NodeUtil.mayBeObject(parseExpr("'a'"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("'a'+b"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a+'b'"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a+b"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a()"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("''.a"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a.b"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a.b()"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a().b()"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("new a()"))).isTrue();
+
+      // These can't be objects but they aren't handled yet.
+      assertThat(NodeUtil.mayBeObject(parseExpr("1 && 2"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("1 || 2"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("1 ? 2 : 3"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("1,2"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a=1"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("1+1"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("true+true"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("null+null"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("NaN+NaN"))).isFalse();
+
+      // These are not objects but they aren't primitives either
+      assertThat(NodeUtil.mayBeObject(parseExpr("([1,2])"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("({a:1})"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("({}+1)"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("(1+{})"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("([]+1)"))).isTrue();
+      assertThat(NodeUtil.mayBeObject(parseExpr("(1+[])"))).isTrue();
+
+      assertThat(NodeUtil.mayBeObject(parseExpr("a += 'x'"))).isFalse();
+      assertThat(NodeUtil.mayBeObject(parseExpr("a += 1"))).isTrue();
     }
 
     @Test
@@ -2112,6 +2543,31 @@ public final class NodeUtilTest {
       assertThat(functionIsRValueOfAssign("x = y ? x : function() {};")).isFalse();
     }
 
+    @Test
+    public void testGetRValueOfLValueInObjectLiteral() {
+      Node scriptNode = parse("var x = {[computedProp] : 5};");
+      Node computedProp =
+          scriptNode
+              .getFirstChild() // VAR
+              .getFirstChild() // x = {...}
+              .getFirstChild() // {...}
+              .getFirstChild(); // [computedProp] : 5
+      checkState(computedProp.isComputedProp(), computedProp);
+      assertNode(NodeUtil.getRValueOfLValue(computedProp)).hasType(Token.NUMBER);
+    }
+
+    @Test
+    public void testGetRValueOfLValueFromClass() {
+      Node scriptNode = parse("class Foo { ['computedField'] = 5}");
+      Node computedField =
+          scriptNode
+              .getFirstChild() // CLASS
+              .getLastChild() // CLASS_MEMBERS  { ['computedField'] = 5}
+              .getFirstChild(); // COMPUTED_FIELD_DEF  ['computedField'] = 5
+      checkState(computedField.isComputedFieldDef(), computedField);
+      assertNode(NodeUtil.getRValueOfLValue(computedField)).hasType(Token.NUMBER);
+    }
+
     /**
      * When the left side is a destructuring pattern, generally it's not possible to identify the
      * RHS for a specific name on the LHS.
@@ -2137,33 +2593,33 @@ public final class NodeUtilTest {
     @Test
     public void testGetRValueOfLValueDestructuringPattern() {
       assertNode(NodeUtil.getRValueOfLValue(getPattern(parse("var [x] = 'rhs';"))))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(getPattern(parse("var [x, y] = 'rhs';"))))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(getPattern(parse("var [y, x] = 'rhs';"))))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(getPattern(parse("var {x: x} = 'rhs';"))))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(getPattern(parse("var {y: x} = 'rhs';"))))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(getPattern(parse("var {x} = 'rhs';"))))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
     }
 
     @Test
     public void testGetRValueOfLValueDestructuringLhs() {
       assertNode(NodeUtil.getRValueOfLValue(parseFirst(DESTRUCTURING_LHS, "var [x] = 'rhs';")))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(parseFirst(DESTRUCTURING_LHS, "var [x, y] = 'rhs';")))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(parseFirst(DESTRUCTURING_LHS, "var [y, x] = 'rhs';")))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(parseFirst(DESTRUCTURING_LHS, "var {x: x} = 'rhs';")))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(parseFirst(DESTRUCTURING_LHS, "var {y: x} = 'rhs';")))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
       assertNode(NodeUtil.getRValueOfLValue(parseFirst(DESTRUCTURING_LHS, "var {x} = 'rhs';")))
-          .hasType(Token.STRING);
+          .hasType(Token.STRINGLIT);
     }
 
     @Test
@@ -2296,6 +2752,164 @@ public final class NodeUtilTest {
     }
 
     @Test
+    public void testGetBestJsDocInfoNodeStrict_declaredName_doesNotThrow() {
+      Node aName = parse("/** some */ let A;").getFirstFirstChild();
+      assertThat(aName.isName()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(aName);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(aName.getParent())).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(aName);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(aName.getParent())).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_classDeclaration_doesNotThrow() {
+      Node classNode = parse("/** some */ class A {}").getFirstChild();
+      assertThat(classNode.isClass()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(classNode);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(classNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(classNode);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(classNode)).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_rhsNamedClassExpression_doesNotThrow() {
+      Node constNode = parse("/** some */ const x = class A {}").getFirstChild();
+      Node xName = constNode.getFirstChild();
+      Node classNode = xName.getFirstChild();
+      assertThat(classNode.isClass()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(classNode);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(constNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(classNode);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(constNode)).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_rhsUnnamedClassExpression_throws() {
+      Node constNode = parse("/** some */ const x = class {}").getFirstChild();
+      Node xName = constNode.getFirstChild();
+      Node classNode = xName.getFirstChild();
+      assertThat(classNode.isClass()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(classNode);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(constNode)).isTrue();
+
+      // check that the strict version rejects an unnamed class expression
+      IllegalStateException e =
+          assertThrows(
+              IllegalStateException.class, () -> NodeUtil.getBestJsDocInfoNodeStrict(classNode));
+      assertThat(e).hasMessageThat().contains("Not allowed to get JSDocInfo node for node");
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_rhsClassName_doesNotThrow() {
+      Node constNode = parse("/** some */ const x = class A {}").getFirstChild();
+      Node xName = constNode.getFirstChild();
+      Node classNode = xName.getFirstChild();
+      assertThat(classNode.isClass()).isTrue();
+      Node className = classNode.getFirstChild();
+      assertThat(className.isName()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(className);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(constNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(className);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(constNode)).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_rhsNamedFunctionExpression_doesNotThrow() {
+      Node constNode = parse("/** some */ const x = function A() {}").getFirstChild();
+      Node xName = constNode.getFirstChild();
+      Node functionNode = xName.getFirstChild();
+      assertThat(functionNode.isFunction()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(functionNode);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(constNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(functionNode);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(constNode)).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_exportedFunction_doesNotThrow() {
+      Node exportNode = parse("/** some */ export function A() {}").getFirstFirstChild();
+      assertThat(exportNode.isExport()).isTrue();
+      Node functionNode = exportNode.getFirstChild();
+      assertThat(functionNode.isFunction()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(functionNode);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      // JSDoc gets attached to the children of export nodes, and there are no warnings.
+      // See https://github.com/google/closure-compiler/issues/781
+      // Hence, the best JSDocInfo node is the function node itself when the search is starting from
+      // it.
+      assertThat(bestJsDocInfoNode.equals(functionNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(functionNode);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(functionNode)).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_exportNode_doesNotThrow() {
+      Node exportNode = parse("/** some */ export function A() {}").getFirstFirstChild();
+      assertThat(exportNode.isExport()).isTrue();
+      Node functionNode = exportNode.getFirstChild();
+      assertThat(functionNode.isFunction()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(exportNode);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(exportNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(exportNode);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(exportNode)).isTrue();
+    }
+
+    @Test
+    public void testGetBestJsDocInfoNodeStrict_rhsFunctionName_doesNotThrow() {
+      Node constNode = parse("/** some */ const x = function A() {}").getFirstChild();
+      Node xName = constNode.getFirstChild();
+      Node functionNode = xName.getFirstChild();
+      assertThat(functionNode.isFunction()).isTrue();
+      Node functionName = functionNode.getFirstChild();
+      assertThat(functionName.isName()).isTrue();
+
+      Node bestJsDocInfoNode = NodeUtil.getBestJSDocInfoNode(functionName);
+      assertThat(bestJsDocInfoNode).isNotNull();
+      assertThat(bestJsDocInfoNode.equals(constNode)).isTrue();
+
+      // check that the strict version returns the same node
+      Node bestJsDocInfoNodeStrict = NodeUtil.getBestJsDocInfoNodeStrict(functionName);
+      assertThat(bestJsDocInfoNodeStrict).isNotNull();
+      assertThat(bestJsDocInfoNodeStrict.equals(constNode)).isTrue();
+    }
+
+    @Test
     public void testIsConstantDeclaration() {
       assertIsConstantDeclaration(false, parse("var x = 1;").getFirstFirstChild());
       assertIsConstantDeclaration(false, parse("let x = 1;").getFirstFirstChild());
@@ -2315,10 +2929,27 @@ public final class NodeUtilTest {
       assertIsConstantDeclaration(true, getNameNodeFrom("const {b: a} = {};", "a"));
       assertIsConstantDeclaration(true, getNameNodeFrom("const {[3]: a} = {};", "a"));
       assertIsConstantDeclaration(true, getNameNodeFrom("const {a: [a]} = {};", "a"));
+      assertIsConstantDeclaration(
+          true, getNameNodeFrom("/** @const */ var x = function a() {};", "a"));
 
       assertIsConstantDeclaration(false, getNameNodeFrom("var FOO = 1;", "FOO"));
 
       assertIsConstantDeclaration(true, constructInferredConstantDeclaration());
+
+      assertIsConstantDeclaration(
+          false, parse("class C {x = 2;}").getFirstChild().getLastChild().getFirstChild());
+      assertIsConstantDeclaration(
+          true,
+          parse("class C {/** @const */ x = 2;}").getFirstChild().getLastChild().getFirstChild());
+
+      assertIsConstantDeclaration(
+          false, parse("class C { [x] = 2;}").getFirstChild().getLastChild().getFirstChild());
+      assertIsConstantDeclaration(
+          true,
+          parse("class C { /** @const */ [x] = 2;}")
+              .getFirstChild()
+              .getLastChild()
+              .getFirstChild());
     }
 
     @Test
@@ -2390,27 +3021,6 @@ public final class NodeUtilTest {
       nameNode.setInferredConstantVar(true);
       IR.script(IR.let(nameNode, IR.number(1))); // attach the expected context to the name.
       return nameNode;
-    }
-
-    @Test
-    public void testIsNestedObjectPattern() {
-      Node root = parse("var {a, b} = {a:1, b:2}");
-      Node destructuring = root.getFirstFirstChild();
-      Node objPattern = destructuring.getFirstChild();
-      assertThat(NodeUtil.isNestedObjectPattern(objPattern)).isFalse();
-
-      root = parse("var {a, b:{c}} = {a:{}, b:{c:5}};");
-      destructuring = root.getFirstFirstChild();
-      objPattern = destructuring.getFirstChild();
-      assertThat(NodeUtil.isNestedObjectPattern(objPattern)).isTrue();
-    }
-
-    @Test
-    public void testIsNestedArrayPattern() {
-      Node root = parse("var [a, b] = [1, 2]");
-      Node destructuring = root.getFirstFirstChild();
-      Node arrayPattern = destructuring.getFirstChild();
-      assertThat(NodeUtil.isNestedArrayPattern(arrayPattern)).isFalse();
     }
 
     @Test
@@ -3143,7 +3753,7 @@ public final class NodeUtilTest {
       options.setCodingConvention(new GoogleCodingConvention());
       compiler.init(ImmutableList.<SourceFile>of(), ImmutableList.<SourceFile>of(), options);
       Node actual = NodeUtil.newQName(compiler, "ns.prop");
-      Node expected = IR.getprop(IR.name("ns"), IR.string("prop"));
+      Node expected = IR.getprop(IR.name("ns"), "prop");
       assertNode(actual).isEqualTo(expected);
     }
 
@@ -3154,15 +3764,14 @@ public final class NodeUtilTest {
       options.setCodingConvention(new GoogleCodingConvention());
       compiler.init(ImmutableList.<SourceFile>of(), ImmutableList.<SourceFile>of(), options);
       Node actual = NodeUtil.newQName(compiler, "this.prop");
-      Node expected = IR.getprop(IR.thisNode(), IR.string("prop"));
+      Node expected = IR.getprop(IR.thisNode(), "prop");
       assertNode(actual).isEqualTo(expected);
     }
 
     @Test
     public void testNewQNameDeclarationWithQualifiedName() {
       assertNode(createNewQNameDeclaration("ns.prop", IR.number(0), Token.VAR))
-          .isEqualTo(
-              IR.exprResult(IR.assign(IR.getprop(IR.name("ns"), IR.string("prop")), IR.number(0))));
+          .isEqualTo(IR.exprResult(IR.assign(IR.getprop(IR.name("ns"), "prop"), IR.number(0))));
     }
 
     @Test
@@ -3200,6 +3809,9 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.getBestJSDocInfo(classNode).isExport()).isTrue();
 
       classNode = parseFirst(CLASS, "/** @export */ var Foo = class Bar {}");
+      assertThat(NodeUtil.getBestJSDocInfo(classNode).isExport()).isTrue();
+
+      classNode = parseFirst(CLASS, "var Foo_1; /** @export */ let Foo = Foo_1 = class Foo {}");
       assertThat(NodeUtil.getBestJSDocInfo(classNode).isExport()).isTrue();
     }
 
@@ -3263,30 +3875,30 @@ public final class NodeUtilTest {
 
     @Test
     public void testFindLhsNodesInNodeWithNameDeclaration() {
-      assertThat(findLhsNodesInNode("var x;")).hasSize(1);
-      assertThat(findLhsNodesInNode("var x, y;")).hasSize(2);
-      assertThat(findLhsNodesInNode("var f = function(x, y, z) {};")).hasSize(1);
+      assertThat(visitLhsNodesInNode("var x;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("var x, y;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("var f = function(x, y, z) {};")).hasSize(1);
     }
 
     @Test
     public void testFindLhsNodesInNodeWithArrayPatternDeclaration() {
-      assertThat(findLhsNodesInNode("var [x=a => a, y = b=>b+1] = arr;")).hasSize(2);
-      assertThat(findLhsNodesInNode("var [x=a => a, y = b=>b+1, ...z] = arr;")).hasSize(3);
-      assertThat(findLhsNodesInNode("var [ , , , y = b=>b+1, ...z] = arr;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("var [x=a => a, y = b=>b+1] = arr;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("var [x=a => a, y = b=>b+1, ...z] = arr;")).hasSize(3);
+      assertThat(visitLhsNodesInNode("var [ , , , y = b=>b+1, ...z] = arr;")).hasSize(2);
     }
 
     @Test
     public void testFindLhsNodesInNodeWithObjectPatternDeclaration() {
-      assertThat(findLhsNodesInNode("var {x = a=>a, y = b=>b+1} = obj;")).hasSize(2);
-      assertThat(findLhsNodesInNode("var {p1: x = a=>a, p2: y = b=>b+1} = obj;")).hasSize(2);
-      assertThat(findLhsNodesInNode("var {[pname]: x = a=>a, [p2name]: y} = obj;")).hasSize(2);
-      assertThat(findLhsNodesInNode("var {lhs1 = a, p2: [lhs2, lhs3 = b] = [notlhs]} = obj;"))
+      assertThat(visitLhsNodesInNode("var {x = a=>a, y = b=>b+1} = obj;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("var {p1: x = a=>a, p2: y = b=>b+1} = obj;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("var {[pname]: x = a=>a, [p2name]: y} = obj;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("var {lhs1 = a, p2: [lhs2, lhs3 = b] = [notlhs]} = obj;"))
           .hasSize(3);
     }
 
     @Test
     public void testFindLhsNodesInNodeWithCastOnLhs() {
-      Iterable<Node> lhsNodes = findLhsNodesInNode("/** @type {*} */ (a.b) = 3;");
+      Iterable<Node> lhsNodes = visitLhsNodesInNode("/** @type {*} */ (a.b) = 3;");
       assertThat(lhsNodes).hasSize(1);
       Iterator<Node> nodeIterator = lhsNodes.iterator();
       assertNode(nodeIterator.next()).matchesQualifiedName("a.b");
@@ -3294,28 +3906,28 @@ public final class NodeUtilTest {
 
     @Test
     public void testFindLhsNodesInNodeWithArrayPatternAssign() {
-      assertThat(findLhsNodesInNode("[this.x] = rhs;")).hasSize(1);
-      assertThat(findLhsNodesInNode("[this.x, y] = rhs;")).hasSize(2);
-      assertThat(findLhsNodesInNode("[this.x, y, this.z] = rhs;")).hasSize(3);
-      assertThat(findLhsNodesInNode("[y, this.z] = rhs;")).hasSize(2);
-      assertThat(findLhsNodesInNode("[x[y]] = rhs;")).hasSize(1);
-      assertThat(findLhsNodesInNode("[x.y.z] = rhs;")).hasSize(1);
-      assertThat(findLhsNodesInNode("[ /** @type {*} */ (x.y.z) ] = rhs;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("[this.x] = rhs;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("[this.x, y] = rhs;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("[this.x, y, this.z] = rhs;")).hasSize(3);
+      assertThat(visitLhsNodesInNode("[y, this.z] = rhs;")).hasSize(2);
+      assertThat(visitLhsNodesInNode("[x[y]] = rhs;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("[x.y.z] = rhs;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("[ /** @type {*} */ (x.y.z) ] = rhs;")).hasSize(1);
     }
 
     @Test
     public void testFindLhsNodesInNodeWithComplexAssign() {
-      assertThat(findLhsNodesInNode("x += 1;")).hasSize(1);
-      assertThat(findLhsNodesInNode("x.y += 1;")).hasSize(1);
-      assertThat(findLhsNodesInNode("x -= 1;")).hasSize(1);
-      assertThat(findLhsNodesInNode("x.y -= 1;")).hasSize(1);
-      assertThat(findLhsNodesInNode("x *= 2;")).hasSize(1);
-      assertThat(findLhsNodesInNode("x.y *= 2;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("x += 1;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("x.y += 1;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("x -= 1;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("x.y -= 1;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("x *= 2;")).hasSize(1);
+      assertThat(visitLhsNodesInNode("x.y *= 2;")).hasSize(1);
     }
 
     @Test
     public void testFindLhsNodesInForOfWithDeclaration() {
-      Iterable<Node> lhsNodes = findLhsNodesInNode("for (const {x, y} of iterable) {}");
+      Iterable<Node> lhsNodes = visitLhsNodesInNode("for (const {x, y} of iterable) {}");
       assertThat(lhsNodes).hasSize(2);
       Iterator<Node> nodeIterator = lhsNodes.iterator();
       assertNode(nodeIterator.next()).isName("x");
@@ -3324,7 +3936,7 @@ public final class NodeUtilTest {
 
     @Test
     public void testFindLhsNodesInForOfWithoutDeclaration() {
-      Iterable<Node> lhsNodes = findLhsNodesInNode("for ({x, y: a.b} of iterable) {}");
+      Iterable<Node> lhsNodes = visitLhsNodesInNode("for ({x, y: a.b} of iterable) {}");
       assertThat(lhsNodes).hasSize(2);
       Iterator<Node> nodeIterator = lhsNodes.iterator();
       assertNode(nodeIterator.next()).isName("x");
@@ -3333,7 +3945,7 @@ public final class NodeUtilTest {
 
     @Test
     public void testFindLhsNodesInForInWithDeclaration() {
-      Iterable<Node> lhsNodes = findLhsNodesInNode("for (const x in obj) {}");
+      Iterable<Node> lhsNodes = visitLhsNodesInNode("for (const x in obj) {}");
       assertThat(lhsNodes).hasSize(1);
       Iterator<Node> nodeIterator = lhsNodes.iterator();
       assertNode(nodeIterator.next()).isName("x");
@@ -3341,7 +3953,7 @@ public final class NodeUtilTest {
 
     @Test
     public void testFindLhsNodesInForInWithoutDeclaration() {
-      Iterable<Node> lhsNodes = findLhsNodesInNode("for (a.b in iterable) {}");
+      Iterable<Node> lhsNodes = visitLhsNodesInNode("for (a.b in iterable) {}");
       assertThat(lhsNodes).hasSize(1);
       Iterator<Node> nodeIterator = lhsNodes.iterator();
       assertNode(nodeIterator.next()).matchesQualifiedName("a.b");
@@ -3362,7 +3974,7 @@ public final class NodeUtilTest {
       Scope blockScope = scopeCreator.createScope(block, moduleScope);
 
       assertThat(NodeUtil.getGoogRequireInfo("Foo", moduleScope))
-          .isEqualTo(GoogRequire.fromNamespace("d.Foo"));
+          .isEqualTo(GoogRequire.fromNamespace("d.Foo", true));
       assertThat(NodeUtil.getGoogRequireInfo("Foo", blockScope)).isNull();
     }
 
@@ -3512,11 +4124,9 @@ public final class NodeUtilTest {
       Node ast = parse(js);
       Node moduleNode = parseFirst(MODULE_BODY, js);
       Scope globalScope = Scope.createGlobalScope(ast);
-      Map<String, Var> allVariables = new LinkedHashMap<>();
-      List<Var> orderedVars = new ArrayList<>();
-      NodeUtil.getAllVarsDeclaredInModule(
-          moduleNode, allVariables, orderedVars, compiler, scopeCreator, globalScope);
-      assertThat(allVariables.keySet()).containsExactly("g", "h");
+      Set<String> allVariables =
+          NodeUtil.getAllVarNamesDeclaredInModule(moduleNode, compiler, scopeCreator, globalScope);
+      assertThat(allVariables).containsExactly("g", "h");
     }
 
     @Test
@@ -3528,18 +4138,16 @@ public final class NodeUtilTest {
       SyntacticScopeCreator scopeCreator = new SyntacticScopeCreator(compiler);
       Node ast = parse(js);
       Scope globalScope = Scope.createGlobalScope(ast);
-      Map<String, Var> allVariables = new LinkedHashMap<>();
-      List<Var> orderedVars = new ArrayList<>();
-      try {
-        NodeUtil.getAllVarsDeclaredInModule(
-            ast, allVariables, orderedVars, compiler, scopeCreator, globalScope);
-        throw new RuntimeException("getAllVarsDeclaredInModule should throw an exception");
-      } catch (IllegalStateException e) {
-        assertThat(e.getMessage())
-            .isEqualTo("getAllVarsDeclaredInModule expects a module body node");
-      }
-      assertThat(allVariables).isEmpty();
-      assertThat(orderedVars).isEmpty();
+      Exception ex =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  NodeUtil.getAllVarNamesDeclaredInModule(
+                      ast, compiler, scopeCreator, globalScope));
+
+      assertThat(ex)
+          .hasMessageThat()
+          .isEqualTo("getAllVarsDeclaredInModule expects a module body node");
     }
 
     @Test
@@ -3555,10 +4163,9 @@ public final class NodeUtilTest {
       Scope globalScope = Scope.createGlobalScope(ast);
       Scope functionScope = scopeCreator.createScope(functionNode, globalScope);
 
-      Map<String, Var> allVariables = new HashMap<>();
-      List<Var> orderedVars = new ArrayList<>();
-      NodeUtil.getAllVarsDeclaredInFunction(
-          allVariables, orderedVars, compiler, scopeCreator, functionScope);
+      AllVarsDeclaredInFunction allVarsDeclaredInFunction =
+          NodeUtil.getAllVarsDeclaredInFunction(compiler, scopeCreator, functionScope);
+      Map<String, Var> allVariables = allVarsDeclaredInFunction.getAllVariables();
 
       assertThat(allVariables.keySet()).containsExactly("a", "b", "c", "z", "x", "y");
     }
@@ -3566,12 +4173,14 @@ public final class NodeUtilTest {
     @Test
     public void testGetAllVars2() {
       String fnString =
-          "function g(x, y) "
-              + "{var z; "
-              + "{let a = (no1, no2) => { let no6, no7; }; "
-              + "const b = 1} "
-              + "let c} "
-              + "function u(h) {let e}";
+          """
+          function g(x, y)
+          {var z;
+          {let a = (no1, no2) => { let no6, no7; };
+          const b = 1}
+          let c}
+          function u(h) {let e}
+          """;
 
       Compiler compiler = new Compiler();
       compiler.setLifeCycleStage(LifeCycleStage.NORMALIZED);
@@ -3583,20 +4192,25 @@ public final class NodeUtilTest {
       Scope globalScope = Scope.createGlobalScope(ast);
       Scope functionScope = scopeCreator.createScope(functionNode, globalScope);
 
-      Map<String, Var> allVariables = new HashMap<>();
-      List<Var> orderedVars = new ArrayList<>();
-      NodeUtil.getAllVarsDeclaredInFunction(
-          allVariables, orderedVars, compiler, scopeCreator, functionScope);
+      AllVarsDeclaredInFunction allVarsDeclaredInFunction =
+          NodeUtil.getAllVarsDeclaredInFunction(compiler, scopeCreator, functionScope);
+      Map<String, Var> allVariables = allVarsDeclaredInFunction.getAllVariables();
 
       assertThat(allVariables.keySet()).containsExactly("x", "y", "z", "a", "b", "c");
     }
 
     @Test
-    public void testIsVarArgs() {
+    public void testDoesFunctionReferenceOwnArgumentsObject() {
       assertThat(
               NodeUtil.doesFunctionReferenceOwnArgumentsObject(
                   parseExpr("function() {return () => arguments}")))
           .isTrue();
+
+      assertThat(
+              NodeUtil.doesFunctionReferenceOwnArgumentsObject(
+                  parseExpr("function(a = arguments.length) {}")))
+          .isTrue();
+
       assertThat(NodeUtil.doesFunctionReferenceOwnArgumentsObject(parseExpr("() => arguments")))
           .isFalse();
     }
@@ -3639,6 +4253,13 @@ public final class NodeUtilTest {
 
       assertThat(NodeUtil.isExpressionResultUsed(getNameNodeFrom("y()", "y"))).isTrue();
       assertThat(NodeUtil.isExpressionResultUsed(getNameNodeFrom("y``", "y"))).isTrue();
+
+      // We're using string literals instead of numbers here, because IRFactory will automatically
+      // remove a number in an indirect call like `(0, some.callee)()` after applying FREE_CALL
+      // to the `CALL` node.
+      assertThat(NodeUtil.isExpressionResultUsed(getStringLitNodeFrom("('',eval)()", ""))).isTrue();
+      assertThat(NodeUtil.isExpressionResultUsed(getStringLitNodeFrom("('',x.y)()", ""))).isTrue();
+      assertThat(NodeUtil.isExpressionResultUsed(getStringLitNodeFrom("('',x.y)``", ""))).isTrue();
     }
 
     @Test
@@ -3654,10 +4275,11 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.isSimpleOperator(parseExpr("x = 5"))).isFalse();
       assertThat(NodeUtil.isSimpleOperator(parseExpr("x++"))).isFalse();
       assertThat(NodeUtil.isSimpleOperator(parseExpr("--y"))).isFalse();
-      // prop access are simple
+      // prop access with IN are simple
       assertThat(NodeUtil.isSimpleOperator(parseExpr("y in x"))).isTrue();
-      assertThat(NodeUtil.isSimpleOperator(parseExpr("x.y"))).isTrue();
-      assertThat(NodeUtil.isSimpleOperator(parseExpr("x[y]"))).isTrue();
+      // prop access have side effects because of getters/setters
+      assertThat(NodeUtil.isSimpleOperator(parseExpr("x.y"))).isFalse();
+      assertThat(NodeUtil.isSimpleOperator(parseExpr("x[y]"))).isFalse();
     }
 
     @Test
@@ -3666,8 +4288,7 @@ public final class NodeUtilTest {
       assertThat(NodeUtil.isCallTo(parseFirst(CALL, "foo.bar()"), "foo.bar")).isTrue();
 
       assertThat(NodeUtil.isCallTo(IR.name("foo"), "foo")).isFalse();
-      assertThat(NodeUtil.isCallTo(IR.getprop(IR.name("foo"), IR.string("bar")), "foo.bar"))
-          .isFalse();
+      assertThat(NodeUtil.isCallTo(IR.getprop(IR.name("foo"), "bar"), "foo.bar")).isFalse();
       assertThat(NodeUtil.isCallTo(parseFirst(CALL, "foo.bar()"), "foo")).isFalse();
       assertThat(NodeUtil.isCallTo(parseFirst(CALL, "foo[0]()"), "foo")).isFalse();
     }
@@ -3676,18 +4297,53 @@ public final class NodeUtilTest {
     public void testIsCallToNode() {
       assertThat(NodeUtil.isCallTo(parseFirst(CALL, "foo()"), IR.name("foo"))).isTrue();
       assertThat(
-              NodeUtil.isCallTo(
-                  parseFirst(CALL, "foo.bar()"), IR.getprop(IR.name("foo"), IR.string("bar"))))
+              NodeUtil.isCallTo(parseFirst(CALL, "foo.bar()"), IR.getprop(IR.name("foo"), "bar")))
           .isTrue();
 
       assertThat(NodeUtil.isCallTo(IR.name("foo"), IR.name("foo"))).isFalse();
       assertThat(
               NodeUtil.isCallTo(
-                  IR.getprop(IR.name("foo"), IR.string("bar")),
-                  IR.getprop(IR.name("foo"), IR.string("bar"))))
+                  IR.getprop(IR.name("foo"), "bar"), IR.getprop(IR.name("foo"), "bar")))
           .isFalse();
       assertThat(NodeUtil.isCallTo(parseFirst(CALL, "foo.bar()"), IR.name("foo"))).isFalse();
       assertThat(NodeUtil.isCallTo(parseFirst(CALL, "foo[0]()"), IR.name("foo"))).isFalse();
+    }
+
+    @Test
+    public void testCallTargetNodeResolution_qualifiedName() {
+      assertThat(
+              NodeUtil.getCallTargetResolvingIndirectCalls(parse("foo()").getFirstFirstChild())
+                  .matchesQualifiedName("foo")) // matches `foo`
+          .isTrue();
+
+      assertThat(
+              NodeUtil.getCallTargetResolvingIndirectCalls(
+                      parse("a.b.c.foo()").getFirstFirstChild())
+                  .matchesQualifiedName("a.b.c.foo"))
+          .isTrue();
+    }
+
+    @Test
+    public void testCallTargetNodeResolution_notAQualifiedName() {
+      Node script = parse("({valueOf: () => {}}.valueOf());");
+      assertThat(script.isScript()).isTrue();
+      Node callNode = script.getFirstFirstChild();
+      assertThat(callNode.isCall()).isTrue();
+      assertThat(NodeUtil.getCallTargetResolvingIndirectCalls(callNode).isQualifiedName())
+          .isFalse();
+    }
+
+    @Test
+    public void testIsGoogModuleGetCall() {
+      Node root = parse("const Foo = goog.module.get('a.b.c.Foo');");
+      Node call = root.getFirstChild().getFirstChild().getFirstChild();
+
+      assertThat(NodeUtil.isGoogModuleGetCall(call)).isTrue();
+
+      root = parse("const Foo = goog.require('a.b.c.Foo');");
+      call = root.getFirstChild().getFirstChild().getFirstChild();
+
+      assertThat(NodeUtil.isGoogModuleGetCall(call)).isFalse();
     }
 
     @Test
@@ -3706,8 +4362,7 @@ public final class NodeUtilTest {
     public void testIsBundledGoogModule_onlyIfInScript() {
       Node callNode =
           IR.call(
-              IR.getprop(IR.name("goog"), IR.string("loadModule")),
-              IR.string("imaginary module text here"));
+              IR.getprop(IR.name("goog"), "loadModule"), IR.string("imaginary module text here"));
 
       assertThat(NodeUtil.isBundledGoogModuleCall(callNode)).isFalse();
 
@@ -3720,36 +4375,78 @@ public final class NodeUtilTest {
   }
 
   @RunWith(JUnit4.class)
+  public static class ConvertToNonOptChainTests {
+    @Test
+    public void simpleChain() {
+      // `expr?.prop`
+      Node origChain = IR.startOptChainGetprop(IR.name("expr"), "prop");
+      NodeUtil.convertToNonOptionalChainSegment(origChain);
+      assertThat(isChainConverted(origChain)).isTrue();
+    }
+
+    @Test
+    public void continuedChain() {
+      // `expr?.prop1.prop2`
+      Node innerGetProp = IR.startOptChainGetprop(IR.name("expr"), "pro1");
+      Node outterGetProp = IR.continueOptChainGetprop(innerGetProp, "prop2");
+      NodeUtil.convertToNonOptionalChainSegment(outterGetProp);
+      assertThat(isChainConverted(outterGetProp)).isTrue();
+    }
+
+    @Test
+    public void nestedChain() {
+      // `expr2[expr1 ?.prop1]?.prop2`
+      Node innerGetProp = IR.startOptChainGetprop(IR.name("expr1"), "pro1");
+      Node getElem = IR.getelem(IR.name("expr2"), innerGetProp);
+      Node outterGetProp = IR.startOptChainGetprop(getElem, "prop2");
+
+      NodeUtil.convertToNonOptionalChainSegment(outterGetProp);
+      assertThat(isChainConverted(outterGetProp)).isTrue();
+
+      // nested (inner) optional chain is unchanged
+      assertThat(outterGetProp.getFirstChild().getSecondChild().isOptChainGetProp()).isTrue();
+    }
+
+    // All nodes till the current chain's start are converted to non-optional.
+    private static boolean isChainConverted(Node node) {
+      if (node == null) {
+        return true;
+      }
+      return !NodeUtil.isOptChainNode(node) && isChainConverted(node.getFirstChild());
+    }
+  }
+
+  @RunWith(JUnit4.class)
   public static class GetStartOfOptChainTests {
 
     @Test
     public void isStartOfChain() {
       // `expr?.prop`
-      Node optChainGet = IR.startOptChainGetprop(IR.name("expr"), IR.string("prop"));
+      Node optChainGet = IR.startOptChainGetprop(IR.name("expr"), "prop");
 
-      assertThat(NodeUtil.getStartOfOptChain(optChainGet)).isEqualTo(optChainGet);
+      assertThat(NodeUtil.getStartOfOptChainSegment(optChainGet)).isEqualTo(optChainGet);
     }
 
     @Test
     public void shortChain() {
       // `expr?.prop1.prop2`
-      Node innerGetProp = IR.startOptChainGetprop(IR.name("expr"), IR.string("pro1"));
-      Node outterGetProp = IR.continueOptChainGetprop(innerGetProp, IR.string("prop2"));
+      Node innerGetProp = IR.startOptChainGetprop(IR.name("expr"), "pro1");
+      Node outterGetProp = IR.continueOptChainGetprop(innerGetProp, "prop2");
 
-      assertThat(NodeUtil.getStartOfOptChain(outterGetProp)).isEqualTo(innerGetProp);
+      assertThat(NodeUtil.getStartOfOptChainSegment(outterGetProp)).isEqualTo(innerGetProp);
     }
 
     @Test
     public void mixedChain() {
       // `expr().prop1?.prop2()[prop3]`
       Node call = IR.call(IR.name("expr"));
-      Node getProp = IR.getprop(call, IR.string("prop1"));
-      Node optGetProp = IR.startOptChainGetprop(getProp, IR.string("prop2"));
-      Node optCall = IR.continueOptChainCall(optGetProp);
-      Node optGetElem = IR.continueOptChainGetelem(optCall, IR.name("prop3"));
+      Node getProp = IR.getprop(call, "prop1");
+      Node optChainGetProp = IR.startOptChainGetprop(getProp, "prop2");
+      Node optChainCall = IR.continueOptChainCall(optChainGetProp);
+      Node optChainGetElem = IR.continueOptChainGetelem(optChainCall, IR.name("prop3"));
 
-      assertThat(NodeUtil.getStartOfOptChain(optGetElem)).isEqualTo(optGetProp);
-      assertThat(NodeUtil.getStartOfOptChain(optCall)).isEqualTo(optGetProp);
+      assertThat(NodeUtil.getStartOfOptChainSegment(optChainGetElem)).isEqualTo(optChainGetProp);
+      assertThat(NodeUtil.getStartOfOptChainSegment(optChainCall)).isEqualTo(optChainGetProp);
     }
   }
 
@@ -3759,9 +4456,9 @@ public final class NodeUtilTest {
     @Test
     public void isEndOfChain() {
       // `expr?.prop`
-      Node optChainGet = IR.startOptChainGetprop(IR.name("expr"), IR.string("prop"));
+      Node optChainGet = IR.startOptChainGetprop(IR.name("expr"), "prop");
 
-      assertThat(NodeUtil.getEndOfOptChain(optChainGet)).isEqualTo(optChainGet);
+      assertThat(NodeUtil.getEndOfOptChainSegment(optChainGet)).isEqualTo(optChainGet);
     }
 
     @Test
@@ -3773,7 +4470,8 @@ public final class NodeUtilTest {
       Node innerOptChain = optChainCall.getLastChild(); // `x?.y`
       assertThat(innerOptChain.isOptChainGetProp()).isTrue();
       assertThat(innerOptChain.isOptionalChainStart()).isTrue();
-      assertThat(NodeUtil.isEndOfOptChain(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfOptChainSegment(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfFullOptChain(innerOptChain)).isTrue();
     }
 
     @Test
@@ -3781,19 +4479,23 @@ public final class NodeUtilTest {
       Node optChainGetProp = parseExpr("a?.b.x?.y");
       assertThat(optChainGetProp.isOptChainGetProp()).isTrue();
       assertThat(optChainGetProp.isOptionalChainStart()).isTrue();
-      assertThat(NodeUtil.isEndOfOptChain(optChainGetProp)).isTrue();
+      assertThat(NodeUtil.isEndOfOptChainSegment(optChainGetProp)).isTrue();
+      assertThat(NodeUtil.isEndOfFullOptChain(optChainGetProp)).isTrue();
 
-      // Check that `a?.b.x` is not the start of optChain, but it ends the chain `a?.b`.
+      // Check that `a?.b.x` is not the start of the optional chain, but it ends the segment that
+      // starts with `a?.b`.
       Node innerOptChain = optChainGetProp.getFirstChild(); // `a?.b.x`
       assertThat(innerOptChain.isOptChainGetProp()).isTrue();
       assertThat(innerOptChain.isOptionalChainStart()).isFalse();
-      assertThat(NodeUtil.isEndOfOptChain(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfOptChainSegment(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfFullOptChain(innerOptChain)).isFalse();
 
       // Check that `a?.b` is the start of optChain but not the end
       Node innerMostOptChain = innerOptChain.getFirstChild(); // `a?.b`
       assertThat(innerMostOptChain.isOptChainGetProp()).isTrue();
       assertThat(innerMostOptChain.isOptionalChainStart()).isTrue();
-      assertThat(NodeUtil.isEndOfOptChain(innerMostOptChain)).isFalse();
+      assertThat(NodeUtil.isEndOfOptChainSegment(innerMostOptChain)).isFalse();
+      assertThat(NodeUtil.isEndOfFullOptChain(innerMostOptChain)).isFalse();
     }
 
     @Test
@@ -3806,7 +4508,8 @@ public final class NodeUtilTest {
       Node innerOptChain = optChainCall.getLastChild();
       assertThat(innerOptChain.isOptChainGetProp()).isTrue();
       assertThat(innerOptChain.isOptionalChainStart()).isTrue();
-      assertThat(NodeUtil.isEndOfOptChain(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfOptChainSegment(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfFullOptChain(innerOptChain)).isTrue();
     }
 
     @Test
@@ -3819,13 +4522,15 @@ public final class NodeUtilTest {
       Node optChainCall = optChainGetProp.getFirstChild();
       assertThat(optChainCall.isOptChainCall()).isTrue();
       assertThat(optChainCall.isOptionalChainStart()).isFalse();
-      assertThat(NodeUtil.isEndOfOptChain(optChainCall)).isFalse();
+      assertThat(NodeUtil.isEndOfOptChainSegment(optChainCall)).isFalse();
+      assertThat(NodeUtil.isEndOfFullOptChain(optChainCall)).isFalse();
 
       // Check that `x?.y` is the start and end of the chain
       Node innerOptChain = optChainCall.getLastChild();
       assertThat(innerOptChain.isOptChainGetProp()).isTrue();
       assertThat(innerOptChain.isOptionalChainStart()).isTrue();
-      assertThat(NodeUtil.isEndOfOptChain(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfOptChainSegment(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfFullOptChain(innerOptChain)).isTrue();
     }
 
     @Test
@@ -3838,44 +4543,66 @@ public final class NodeUtilTest {
       Node optChainCall = optChainGetProp.getFirstChild();
       assertThat(optChainCall.isOptChainCall()).isTrue();
       assertThat(optChainCall.isOptionalChainStart()).isFalse();
-      assertThat(NodeUtil.isEndOfOptChain(optChainCall)).isFalse();
+      assertThat(NodeUtil.isEndOfOptChainSegment(optChainCall)).isFalse();
+      assertThat(NodeUtil.isEndOfFullOptChain(optChainCall)).isFalse();
 
       // Check that `x?.y` is the start and end of its chain
       Node innerOptChain = optChainCall.getSecondChild();
       assertThat(innerOptChain.isOptChainGetProp()).isTrue();
       assertThat(innerOptChain.isOptionalChainStart()).isTrue();
-      assertThat(NodeUtil.isEndOfOptChain(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfOptChainSegment(innerOptChain)).isTrue();
+      assertThat(NodeUtil.isEndOfFullOptChain(innerOptChain)).isTrue();
     }
 
     @Test
     public void shortChain() {
       // `expr?.prop1.prop2`
-      Node innerGetProp = IR.startOptChainGetprop(IR.name("expr"), IR.string("pro1"));
-      Node outerGetProp = IR.continueOptChainGetprop(innerGetProp, IR.string("prop2"));
+      Node innerGetProp = IR.startOptChainGetprop(IR.name("expr"), "pro1");
+      Node outerGetProp = IR.continueOptChainGetprop(innerGetProp, "prop2");
 
-      assertThat(NodeUtil.getEndOfOptChain(innerGetProp)).isEqualTo(outerGetProp);
+      assertThat(NodeUtil.getEndOfOptChainSegment(innerGetProp)).isEqualTo(outerGetProp);
     }
 
     @Test
     public void twoChains() {
       // `expr()?.prop1.prop2()?.[prop3]`
       Node call = IR.call(IR.name("expr"));
-      Node startOptGetProp = IR.startOptChainGetprop(call, IR.string("prop1"));
-      Node optGetProp = IR.continueOptChainGetprop(startOptGetProp, IR.string("prop2"));
-      Node optCall = IR.continueOptChainCall(optGetProp);
-      IR.startOptChainGetelem(optCall, IR.name("prop3"));
+      Node startOptGetProp = IR.startOptChainGetprop(call, "prop1");
+      Node optChainGetProp = IR.continueOptChainGetprop(startOptGetProp, "prop2");
+      Node optChainCall = IR.continueOptChainCall(optChainGetProp);
+      IR.startOptChainGetelem(optChainCall, IR.name("prop3"));
 
-      assertThat(NodeUtil.getEndOfOptChain(startOptGetProp)).isEqualTo(optCall);
+      assertThat(NodeUtil.getEndOfOptChainSegment(startOptGetProp)).isEqualTo(optChainCall);
     }
 
     @Test
     public void breakingOutOfOptChain() {
       // `(expr?.prop1.prop2).prop3`
-      Node startOptGetProp = IR.startOptChainGetprop(IR.name("expr"), IR.string("prop1"));
-      Node optGetProp = IR.continueOptChainGetprop(startOptGetProp, IR.string("prop2"));
-      IR.getprop(optGetProp, IR.string("prop3"));
+      Node startOptGetProp = IR.startOptChainGetprop(IR.name("expr"), "prop1");
+      Node optChainGetProp = IR.continueOptChainGetprop(startOptGetProp, "prop2");
+      IR.getprop(optChainGetProp, "prop3");
 
-      assertThat(NodeUtil.getEndOfOptChain(startOptGetProp)).isEqualTo(optGetProp);
+      assertThat(NodeUtil.getEndOfOptChainSegment(startOptGetProp)).isEqualTo(optChainGetProp);
+    }
+  }
+
+  @RunWith(JUnit4.class)
+  public static class CreateSynthesizedExternsSymbolTests extends CompilerTestCase {
+    @Override
+    protected CompilerPass getProcessor(Compiler compiler) {
+      return new CompilerPass() {
+        @Override
+        public void process(Node externs, Node srcs) {
+          String expectedExtern = "TEST_NAME";
+          NodeUtil.createSynthesizedExternsSymbol(compiler, expectedExtern);
+        }
+      };
+    }
+
+    @Test
+    public void test() {
+      // setup a simple compilation job
+      testExternChanges(externs(""), srcs(""), expected("var TEST_NAME"));
     }
   }
 
@@ -3903,8 +4630,8 @@ public final class NodeUtilTest {
     @Test
     public void testIteratePreOrder() {
       List<String> nodeNames =
-          Streams.stream(NodeUtil.preOrderIterable(buildTestTree()))
-              .map(n -> n.getString())
+          stream(NodeUtil.preOrderIterable(buildTestTree()))
+              .map(Node::getString)
               .collect(Collectors.toList());
 
       assertThat(nodeNames).containsExactly("A", "B", "C", "D", "E", "F", "G").inOrder();
@@ -3914,23 +4641,59 @@ public final class NodeUtilTest {
     public void testIteratePreOrderWithPredicate() {
       Predicate<Node> isNotE = n -> !n.getString().equals("E");
       List<String> nodeNames =
-          Streams.stream(NodeUtil.preOrderIterable(buildTestTree(), isNotE))
-              .map(n -> n.getString())
+          stream(NodeUtil.preOrderIterable(buildTestTree(), isNotE))
+              .map(Node::getString)
               .collect(Collectors.toList());
 
       assertThat(nodeNames).containsExactly("A", "B", "C", "D", "E").inOrder();
     }
 
     @Test
-    public void addFeatureToScriptUpdatesCompilerFeatureSet() {
+    public void prohibitAddingNonAllowableFeatureToScriptExceptModules() {
       Node scriptNode = parse("");
       Compiler compiler = new Compiler();
-      compiler.setFeatureSet(FeatureSet.BARE_MINIMUM);
+      compiler.setAllowableFeatures(FeatureSet.BARE_MINIMUM);
       NodeUtil.addFeatureToScript(scriptNode, Feature.MODULES, compiler);
 
+      // Adding MODULES to the script featureSet is okay, any other feature isn't
       assertThat(NodeUtil.getFeatureSetOfScript(scriptNode))
           .isEqualTo(FeatureSet.BARE_MINIMUM.with(Feature.MODULES));
-      assertFS(compiler.getFeatureSet()).equals(FeatureSet.BARE_MINIMUM.with(Feature.MODULES));
+      assertFS(compiler.getAllowableFeatures())
+          .equals(FeatureSet.BARE_MINIMUM.with(Feature.MODULES));
+
+      compiler.setAllowableFeatures(FeatureSet.BARE_MINIMUM); // reset
+      assertThrows(
+          IllegalStateException.class,
+          () -> NodeUtil.addFeatureToScript(scriptNode, Feature.LET_DECLARATIONS, compiler));
+    }
+
+    @Test
+    public void removeFeatureFromAllScriptUpdatesCompilerFeatureSet() {
+      Node rootNode = IR.root();
+      rootNode.addChildToFront(parse(""));
+      Compiler compiler = new Compiler();
+      compiler.setAllowableFeatures(FeatureSet.ES2020);
+      assertFS(compiler.getAllowableFeatures()).equals(FeatureSet.ES2020);
+
+      NodeUtil.removeFeatureFromAllScripts(rootNode, Feature.LET_DECLARATIONS, compiler);
+      assertFS(compiler.getAllowableFeatures())
+          .equals(FeatureSet.ES2020.without(Feature.LET_DECLARATIONS));
+    }
+
+    @Test
+    public void removeFeatureSetFromAllScriptUpdatesCompilerFeatureSet() {
+      Node rootNode = IR.root();
+      rootNode.addChildToFront(parse(""));
+      Compiler compiler = new Compiler();
+      compiler.setAllowableFeatures(FeatureSet.ES2020);
+      assertFS(compiler.getAllowableFeatures()).equals(FeatureSet.ES2020);
+
+      NodeUtil.removeFeaturesFromAllScripts(
+          rootNode,
+          FeatureSet.BARE_MINIMUM.with(Feature.LET_DECLARATIONS, Feature.CONST_DECLARATIONS),
+          compiler);
+      assertFS(compiler.getAllowableFeatures())
+          .equals(FeatureSet.ES2020.without(Feature.LET_DECLARATIONS, Feature.CONST_DECLARATIONS));
     }
 
     /**
@@ -3967,9 +4730,7 @@ public final class NodeUtilTest {
         NodeUtil.Visitor mockVisitor) {
       ArgumentCaptor<Node> captor = ArgumentCaptor.forClass(Node.class);
       verify(mockVisitor, Mockito.atLeastOnce()).visit(captor.capture());
-      return captor.getAllValues().stream()
-          .map(n -> n.getString())
-          .collect(ImmutableList.toImmutableList());
+      return captor.getAllValues().stream().map(Node::getString).collect(toImmutableList());
     }
   }
 
@@ -3977,44 +4738,47 @@ public final class NodeUtilTest {
   public static final class GoogRequireInfoTest {
 
     @Parameters(name = "src={0}, name={1}, GoogRequire={2}")
-    public static Iterable<Object[]> cases() {
+    public static ImmutableList<Object[]> cases() {
       return ImmutableList.copyOf(
           new Object[][] {
             {
               "goog.module('a.b.c'); const {Bar} = goog.require('d.Foo');",
               "Bar",
-              GoogRequire.fromNamespaceAndProperty("d.Foo", "Bar")
+              GoogRequire.fromNamespaceAndProperty("d.Foo", "Bar", true)
             },
             {"goog.module('a.b.c'); const {Bar} = goog.require('d.Foo');", "Foo", null},
             {
               "goog.module('a.b.c'); const {Bar: BarLocal} = goog.require('d.Foo');",
               "BarLocal",
-              GoogRequire.fromNamespaceAndProperty("d.Foo", "Bar")
+              GoogRequire.fromNamespaceAndProperty("d.Foo", "Bar", true)
             },
             {
-              "goog.module('a.b.c'); const {Bar: BarLocal} =" + " goog.require('d.Foo');",
+              """
+              goog.module('a.b.c'); const {Bar: BarLocal} =
+               goog.require('d.Foo');
+              """,
               "Bar",
               null
             },
             {
               "goog.module('a.b.c'); const Foo = goog.require('d.Foo');",
               "Foo",
-              GoogRequire.fromNamespace("d.Foo")
+              GoogRequire.fromNamespace("d.Foo", true)
             },
             {
               "goog.module('a.b.c'); const dFoo = goog.require('d.Foo');",
               "dFoo",
-              GoogRequire.fromNamespace("d.Foo")
+              GoogRequire.fromNamespace("d.Foo", true)
             },
             {
               "goog.module('a.b.c'); const Foo = goog.requireType('d.Foo');",
               "Foo",
-              GoogRequire.fromNamespace("d.Foo")
+              GoogRequire.fromNamespace("d.Foo", false)
             },
             {
               "goog.module('a.b.c'); const {Bar} = goog.requireType('d.Foo');",
               "Bar",
-              GoogRequire.fromNamespaceAndProperty("d.Foo", "Bar")
+              GoogRequire.fromNamespaceAndProperty("d.Foo", "Bar", false)
             },
             // Test that non-requires just return null.
             {"goog.module('a.b.c'); let Foo;", "Foo", null},
@@ -4050,7 +4814,9 @@ public final class NodeUtilTest {
   @RunWith(Parameterized.class)
   public static final class ReferencesReceiverTest {
     @Parameters(name = "\"{0}\"")
-    public static Iterable<Object[]> cases() {
+    public static ImmutableList<Object[]> cases() {
+      //
+      //
       ImmutableMap<String, Boolean> templateToDefinesOwnReceiver =
           ImmutableMap.<String, Boolean>builder()
               //
@@ -4082,9 +4848,10 @@ public final class NodeUtilTest {
               .put("({              *f(x = (%s)) {       } })", true)
               .put("({        async  f(x = (%s)) {       } })", true)
               .put("({        async *f(x = (%s)) {       } })", true)
-              //
-              .build();
+              .buildOrThrow();
 
+      //
+      //
       ImmutableMap<String, Boolean> exprToUsesReceiver =
           ImmutableMap.<String, Boolean>builder()
               //
@@ -4092,32 +4859,28 @@ public final class NodeUtilTest {
               .put("1 || this", true)
               .put("{ x: this, }", true)
               .put("1", false)
-              //
-              .build();
+              .buildOrThrow();
 
       ImmutableList.Builder<Object[]> cases = ImmutableList.builder();
       templateToDefinesOwnReceiver.forEach(
-          (outerTemplate, outerReceiver) -> {
-            templateToDefinesOwnReceiver.forEach(
-                (innerTemplate, innerReceiver) -> {
-                  exprToUsesReceiver.forEach(
-                      (expr, usesReceiver) -> {
-                        String caseSrc =
-                            SimpleFormat.format(
-                                outerTemplate, SimpleFormat.format(innerTemplate, expr));
-                        cases.add(
-                            new Object[] {
-                              caseSrc,
-                              // refToEnclosing
-                              !outerReceiver && !innerReceiver && usesReceiver,
-                              // refToOuterFnOwn
-                              outerReceiver && !innerReceiver && usesReceiver,
-                            });
-                      });
-                });
-          });
+          (outerTemplate, outerReceiver) ->
+              templateToDefinesOwnReceiver.forEach(
+                  (innerTemplate, innerReceiver) ->
+                      exprToUsesReceiver.forEach(
+                          (expr, usesReceiver) -> {
+                            String caseSrc =
+                                String.format(outerTemplate, String.format(innerTemplate, expr));
+                            cases.add(
+                                new Object[] {
+                                  caseSrc,
+                                  // refToEnclosing
+                                  !outerReceiver && !innerReceiver && usesReceiver,
+                                  // refToOuterFnOwn
+                                  outerReceiver && !innerReceiver && usesReceiver,
+                                });
+                          })));
 
-      /**
+      /*
        * Add a few cases using `super` to check it behaves the same.
        *
        * <p>These aren't exhaustive becuase it's hard to construct valid strings that use `super`.
@@ -4167,7 +4930,7 @@ public final class NodeUtilTest {
   public static final class GetRValueOfLValueTest {
 
     @Parameters(name = "{0} in \"{1}\"")
-    public static Iterable<Object[]> cases() {
+    public static ImmutableList<Object[]> cases() {
       return ImmutableList.copyOf(
           new Object[][] {
             // CLASS_MEMBERS
@@ -4198,7 +4961,7 @@ public final class NodeUtilTest {
   public static final class IteratesImpureIterableTest {
 
     @Parameters(name = "{0} in \"{1}\"")
-    public static Iterable<Object[]> cases() {
+    public static ImmutableList<Object[]> cases() {
       return ImmutableList.copyOf(
           new Object[][] {
             // ITER_SPREAD < ARRAYLIT
@@ -4302,7 +5065,7 @@ public final class NodeUtilTest {
   public static final class CanBeSideEffectedTest {
 
     @Parameters(name = "{0} in \"{1}\"")
-    public static Iterable<Object[]> cases() {
+    public static ImmutableList<Object[]> cases() {
       return ImmutableList.copyOf(
           new Object[][] {
             // TODO: Expand test cases for more node types.
@@ -4317,6 +5080,10 @@ public final class NodeUtilTest {
             {OPTCHAIN_CALL, "x?.()", true},
             {OPTCHAIN_GETPROP, "x?.y", true},
             {OPTCHAIN_GETELEM, "x?.[y]", true},
+
+            // Well-known Symbols
+            {GETPROP, "Symbol.iterator", false},
+            {GETPROP, "Fake.Symbol.iterator", true},
           });
     }
 
@@ -4337,16 +5104,37 @@ public final class NodeUtilTest {
     }
   }
 
+  @RunWith(JUnit4.class)
+  public static final class NodeMetricsTest {
+    @Test
+    public void testEstimateNumLines() {
+      assertThat(NodeUtil.estimateNumLines(parse(""))).isEqualTo(2);
+      assertThat(NodeUtil.estimateNumLines(parse("const x = 1;\nconst y = 2;\n"))).isEqualTo(3);
+      assertThat(
+              NodeUtil.estimateNumLines(
+                  parse(
+                      """
+                      /* some
+                      long
+                      multi
+                      line
+                      comment
+                      */
+                      const x = 1;
+                      const y = 2;
+                      """)))
+          .isEqualTo(9);
+    }
+  }
+
   private static Node getNameNodeFrom(String code, String name) {
     Node ast = parse(code);
-    Node nameNode = getNameNode(ast, name);
-    return nameNode;
+    return getNameNode(ast, name);
   }
 
   private static Node getStringKeyNodeFrom(String code, String name) {
     Node ast = parse(code);
-    Node stringKeyNode = getStringNode(ast, name, Token.STRING_KEY);
-    return stringKeyNode;
+    return getStringNode(ast, name, Token.STRING_KEY);
   }
 
   private static boolean executedOnceTestCase(String code) {
@@ -4367,17 +5155,17 @@ public final class NodeUtilTest {
     return funcNode == NodeUtil.getRValueOfLValue(nameNode);
   }
 
-  private static void testFunctionName(String js, String expected) {
+  private static void testFunctionName(String js, @Nullable String expected) {
     assertThat(NodeUtil.getNearestFunctionName(parseFirst(FUNCTION, js))).isEqualTo(expected);
   }
 
   /**
-   * @param js JavaScript node to be passed to {@code NodeUtil.findLhsNodesInNode}. Must be either
+   * @param js JavaScript node to be passed to {@code NodeUtil.visitLhsNodesInNode}. Must be either
    *     an EXPR_RESULT containing an assignment operation (e.g. =, +=, /=, etc) in which case the
-   *     assignment node will be passed to {@code NodeUtil.findLhsNodesInNode}, or a VAR, LET, or
+   *     assignment node will be passed to {@code NodeUtil.visitLhsNodesInNode}, or a VAR, LET, or
    *     CONST statement, in which case the declaration statement will be passed.
    */
-  private static Iterable<Node> findLhsNodesInNode(String js) {
+  private static Iterable<Node> visitLhsNodesInNode(String js) {
     Node root = parse(js);
     checkState(root.isScript(), root);
     root = root.getOnlyChild();
@@ -4385,7 +5173,9 @@ public final class NodeUtilTest {
       root = root.getOnlyChild();
       checkState(NodeUtil.isAssignmentOp(root), root);
     }
-    return NodeUtil.findLhsNodesInNode(root);
+    ArrayList<Node> nodes = new ArrayList<>();
+    NodeUtil.visitLhsNodesInNode(root, nodes::add);
+    return nodes;
   }
 
   private static Node getNameNode(Node n, String name) {
@@ -4396,7 +5186,7 @@ public final class NodeUtilTest {
     if (nodeType.equals(n.getToken()) && n.getString().equals(name)) {
       return n;
     }
-    for (Node c : n.children()) {
+    for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
       Node result = getStringNode(c, name, nodeType);
       if (result != null) {
         return result;
@@ -4405,13 +5195,37 @@ public final class NodeUtilTest {
     return null;
   }
 
-  /** @return The first node in {@code tree} that is an array pattern or object pattern. */
-  @Nullable
-  private static Node getPattern(Node tree) {
+  private static Node getStringLitNode(Node n, String str) {
+    return getStringNode(n, str, STRINGLIT);
+  }
+
+  private static Node getStringLitNodeFrom(String code, String str) {
+    Node ast = parse(code);
+    return getStringLitNode(ast, str);
+  }
+
+  private static Node getNumberNode(Node n, double number) {
+    if (n.isNumber()
+        && Double.valueOf(n.getDouble()).equals(number)) { // equals allow checks for -0 and NaN
+      return n;
+    }
+    for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
+      Node result = getNumberNode(c, number);
+      if (result != null) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * @return The first node in {@code tree} that is an array pattern or object pattern.
+   */
+  private static @Nullable Node getPattern(Node tree) {
     if (tree.isDestructuringPattern()) {
       return tree;
     }
-    for (Node c : tree.children()) {
+    for (Node c = tree.getFirstChild(); c != null; c = c.getNext()) {
       Node result = getPattern(c);
       if (result != null) {
         return result;

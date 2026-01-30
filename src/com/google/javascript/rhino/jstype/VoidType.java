@@ -39,17 +39,13 @@
 
 package com.google.javascript.rhino.jstype;
 
-import static com.google.javascript.rhino.jstype.TernaryValue.FALSE;
-import static com.google.javascript.rhino.jstype.TernaryValue.TRUE;
-import static com.google.javascript.rhino.jstype.TernaryValue.UNKNOWN;
-
+import com.google.javascript.jscomp.base.Tri;
 
 /**
  * Void type whose only element is the {@code undefined} value.
+ *
  */
-public class VoidType extends ValueType {
-  private static final long serialVersionUID = 1L;
-
+public final class VoidType extends ValueType {
   VoidType(JSTypeRegistry registry) {
     super(registry);
   }
@@ -70,14 +66,14 @@ public class VoidType extends ValueType {
   }
 
   @Override
-  public TernaryValue testForEquality(JSType that) {
-    if (UNKNOWN.equals(super.testForEquality(that))) {
-      return UNKNOWN;
+  public Tri testForEquality(JSType that) {
+    if (Tri.UNKNOWN.equals(super.testForEquality(that))) {
+      return Tri.UNKNOWN;
     }
     if (that.isSubtypeOf(this) || that.isSubtypeOf(getNativeType(JSTypeNative.NULL_TYPE))) {
-      return TRUE;
+      return Tri.TRUE;
     }
-    return FALSE;
+    return Tri.FALSE;
   }
 
   @Override

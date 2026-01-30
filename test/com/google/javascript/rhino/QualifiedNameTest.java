@@ -47,18 +47,10 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class QualifiedNameTest {
 
-  // All of these qualified names are "foo.bar.baz"
-  private static final QualifiedName FROM_STRING = QualifiedName.of("foo.bar.baz");
-  private static final QualifiedName FROM_NODE =
-      IR.getprop(IR.getprop(IR.name("foo"), IR.string("bar")), IR.string("baz"))
-          .getQualifiedNameObject();
-  private static final QualifiedName FROM_GETPROP =
-      QualifiedName.of("foo").getprop("bar").getprop("baz");
-
   private static Node qname(Node root, String... props) {
     Node n = root;
     for (String p : props) {
-      n = IR.getprop(n, IR.string(p));
+      n = IR.getprop(n, p);
     }
     return n;
   }
@@ -200,5 +192,35 @@ public class QualifiedNameTest {
     n = QualifiedName.of("super").getprop("qux");
     assertThat(n.matches(qname(IR.superNode(), "qux"))).isTrue();
     assertThat(n.matches(qname(IR.name("x"), "qux"))).isFalse();
+  }
+
+  @Test
+  public void testEdgeCases_fromString() {
+    assertThat(QualifiedName.of("").components()).containsExactly("");
+    assertThat(QualifiedName.of(".").components()).containsExactly("", "");
+    assertThat(QualifiedName.of(".foo.bar").components()).containsExactly("", "foo", "bar");
+    assertThat(QualifiedName.of("foo.bar.").components()).containsExactly("foo", "bar", "");
+    assertThat(QualifiedName.of("foo..bar").components()).containsExactly("foo", "", "bar");
+  }
+
+  @Test
+  public void testGetComponentCount_fromString() {
+    assertThat(QualifiedName.of("foo").getComponentCount()).isEqualTo(1);
+    assertThat(QualifiedName.of("foo.bar").getComponentCount()).isEqualTo(2);
+    assertThat(QualifiedName.of("foo.bar.baz").getComponentCount()).isEqualTo(3);
+  }
+
+  @Test
+  public void testGetComponentCount_fromNode() {
+    assertThat(IR.name("foo").getQualifiedNameObject().getComponentCount()).isEqualTo(1);
+    assertThat(qname(IR.name("foo"), "bar").getQualifiedNameObject().getComponentCount())
+        .isEqualTo(2);
+    assertThat(qname(IR.name("foo"), "bar", "baz").getQualifiedNameObject().getComponentCount())
+        .isEqualTo(3);
+  }
+
+  @Test
+  public void testGetComponentCount_fromGetprop() {
+    assertThat(QualifiedName.of("foo").getprop("bar").getComponentCount()).isEqualTo(2);
   }
 }

@@ -40,17 +40,19 @@
 
 package com.google.javascript.rhino.jstype;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.javascript.jscomp.base.JSCompObjects.identical;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Specializes {@link TemplatizedType}s according to provided bindings.
@@ -70,19 +72,25 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
 
   private boolean hasMadeReplacement = false;
   private TemplateType keyType;
+  // The index in the corresponding bindings pointing to where the submap for the specified key
+  // type ends, exclusive; or if keyType is null, defaults to -1.
+  private int ownSubMapBoundary = -1;
 
-  private final Set<JSType> seenTypes = Sets.newIdentityHashSet();
+  // Initialize data structures to `null` because these are unused in ~40% of TemplateTypeReplacers.
+  private @Nullable Set<JSType> seenTypes = null;
+  private @Nullable IdentityHashMap<JSType, JSType> visitedObjectTypes = null;
 
   /** Creates a replacer for use during {@code TypeInference}. */
   public static TemplateTypeReplacer forInference(
       JSTypeRegistry registry, Map<TemplateType, JSType> bindings) {
     ImmutableList<TemplateType> keys = ImmutableList.copyOf(bindings.keySet());
-    ImmutableList<JSType> values =
-        keys.stream()
-            .map(bindings::get)
-            .map((v) -> (v != null) ? v : registry.getNativeType(JSTypeNative.UNKNOWN_TYPE))
-            .collect(toImmutableList());
-    TemplateTypeMap map = registry.getEmptyTemplateTypeMap().copyWithExtension(keys, values);
+    ImmutableList.Builder<JSType> values = ImmutableList.builder();
+    for (TemplateType key : keys) {
+      JSType value = bindings.get(key);
+      values.add(value != null ? value : registry.getNativeType(JSTypeNative.UNKNOWN_TYPE));
+    }
+    TemplateTypeMap map =
+        registry.getEmptyTemplateTypeMap().copyWithExtension(keys, values.build());
     return new TemplateTypeReplacer(registry, map, true, true, true);
   }
 
@@ -126,6 +134,14 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     return this.hasMadeReplacement;
   }
 
+  // determinism is unnecessary for seenTypes, because we only call contains/add/remove.
+  @SuppressWarnings("DeterministicDatastructure")
+  private void initSeenTypes() {
+    if (this.seenTypes == null) {
+      this.seenTypes = Sets.newIdentityHashSet();
+    }
+  }
+
   @Override
   public JSType caseNoType(NoType type) {
     return type;
@@ -156,7 +172,6 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     return guardAgainstCycles(type, this::caseFunctionTypeUnguarded);
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private JSType caseFunctionTypeUnguarded(FunctionType type) {
     if (isNativeFunctionType(type)) {
       return type;
@@ -170,51 +185,56 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
 
     JSType beforeThis = type.getTypeOfThis();
     JSType afterThis = coerseToThisType(beforeThis.visit(this));
-    if (beforeThis != afterThis) {
+    if (!identical(beforeThis, afterThis)) {
       changed = true;
     }
 
     JSType beforeReturn = type.getReturnType();
     JSType afterReturn = beforeReturn.visit(this);
-    if (beforeReturn != afterReturn) {
+    if (!identical(beforeReturn, afterReturn)) {
       changed = true;
     }
 
-    FunctionParamBuilder paramBuilder = new FunctionParamBuilder(registry);
-    for (FunctionType.Parameter paramNode : type.getParameters()) {
-      JSType beforeParamType = paramNode.getJSType();
+    boolean paramsChanged = false;
+    int numParams = type.getParameters().size();
+    FunctionParamBuilder paramBuilder =
+        numParams == 0 ? null : new FunctionParamBuilder(registry, numParams);
+    for (int i = 0; i < numParams; i++) {
+      FunctionType.Parameter parameter = type.getParameters().get(i);
+      JSType beforeParamType = parameter.getJSType();
       JSType afterParamType = beforeParamType.visit(this);
-      if (beforeParamType != afterParamType) {
+
+      if (!identical(beforeParamType, afterParamType)) {
         changed = true;
-      }
-      if (paramNode.isOptional()) {
-        paramBuilder.addOptionalParams(afterParamType);
-      } else if (paramNode.isVariadic()) {
-        paramBuilder.addVarArgs(afterParamType);
+        paramsChanged = true;
+        // TODO(lharker): we could also lazily create the FunctionParamBuilder here, but that would
+        // require re-iterating over all previously seen params so unclear it's worth the complexity
+        if (parameter.isOptional()) {
+          paramBuilder.addOptionalParams(afterParamType);
+        } else if (parameter.isVariadic()) {
+          paramBuilder.addVarArgs(afterParamType);
+        } else {
+          paramBuilder.addRequiredParams(afterParamType);
+        }
       } else {
-        paramBuilder.addRequiredParams(afterParamType);
+        paramBuilder.newParameterFrom(parameter);
       }
     }
 
     if (changed) {
-      FunctionType ft =
-          FunctionType.builder(registry)
-              .withKind(type.getKind())
-              .withParameters(paramBuilder.build())
-              .withReturnType(afterReturn)
-              .withTypeOfThis(afterThis)
-              .withTemplateKeys(type.getTypeParameters())
-              .withClosurePrimitiveId(type.getClosurePrimitive())
-              .build();
-      return ft;
+      return type.toBuilder()
+          .withParameters(paramsChanged ? paramBuilder.build() : type.getParameters())
+          .withReturnType(afterReturn)
+          .withTypeOfThis(afterThis)
+          .withIsAbstract(false) // TODO(b/187989034): Copy this from the source function.
+          .build();
     }
 
     return type;
   }
 
   private JSType coerseToThisType(JSType type) {
-    return type != null ? type : registry.getNativeObjectType(
-        JSTypeNative.UNKNOWN_TYPE);
+    return type != null ? type : registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE);
   }
 
   @Override
@@ -222,7 +242,6 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     return guardAgainstCycles(objType, this::caseObjectTypeUnguarded);
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private JSType caseObjectTypeUnguarded(ObjectType objType) {
     if (!visitProperties
         || objType.isNominalType()
@@ -231,23 +250,28 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
       return objType;
     }
 
+    // If we've visited this object type, we don't need to walk it again.
+    JSType cached = getVisitedObjectTypeOrNull(objType);
+    if (cached != null) {
+      return cached;
+    }
+
     boolean changed = false;
     RecordTypeBuilder builder = new RecordTypeBuilder(registry);
     for (String prop : objType.getOwnPropertyNames()) {
       Node propertyNode = objType.getPropertyNode(prop);
       JSType beforeType = objType.getPropertyType(prop);
       JSType afterType = beforeType.visit(this);
-      if (beforeType != afterType) {
+      if (!identical(beforeType, afterType)) {
         changed = true;
       }
       builder.addProperty(prop, afterType, propertyNode);
     }
 
-    if (changed) {
-      return builder.build();
-    }
-
-    return objType;
+    // Use our new type if anything changed, and be sure to update the cache.
+    JSType result = changed ? builder.build() : objType;
+    visitedObjectTypes.put(objType, result);
+    return result;
   }
 
   @Override
@@ -255,19 +279,18 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     return guardAgainstCycles(type, this::caseTemplatizedTypeUnguarded);
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private JSType caseTemplatizedTypeUnguarded(TemplatizedType type) {
     boolean changed = false;
     ObjectType beforeBaseType = type.getReferencedType();
     ObjectType afterBaseType = ObjectType.cast(beforeBaseType.visit(this));
-    if (beforeBaseType != afterBaseType) {
+    if (!identical(beforeBaseType, afterBaseType)) {
       changed = true;
     }
 
     ImmutableList.Builder<JSType> builder = ImmutableList.builder();
     for (JSType beforeTemplateType : type.getTemplateTypes()) {
       JSType afterTemplateType = beforeTemplateType.visit(this);
-      if (beforeTemplateType != afterTemplateType) {
+      if (!identical(beforeTemplateType, afterTemplateType)) {
         changed = true;
       }
       builder.add(afterTemplateType);
@@ -319,13 +342,15 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     return guardAgainstCycles(type, this::caseUnionTypeUnguarded);
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private JSType caseUnionTypeUnguarded(UnionType type) {
     boolean changed = false;
     List<JSType> results = new ArrayList<>();
-    for (JSType alternative : type.getAlternates()) {
+    ImmutableList<JSType> alternates = type.getAlternates();
+    int alternateCount = alternates.size();
+    for (int i = 0; i < alternateCount; i++) {
+      var alternative = alternates.get(i);
       JSType replacement = alternative.visit(this);
-      if (replacement != alternative) {
+      if (!identical(replacement, alternative)) {
         changed = true;
       }
       results.add(replacement);
@@ -339,14 +364,14 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
   }
 
   @Override
-  @SuppressWarnings("ReferenceEquality")
   public JSType caseTemplateType(TemplateType type) {
     this.hasMadeReplacement = true;
 
-    if (!bindings.hasTemplateKey(type)) {
+    if (!identical(type, this.keyType) && !bindings.hasTemplateKey(type, ownSubMapBoundary)) {
       return useUnknownForMissingKeys ? getNativeType(JSTypeNative.UNKNOWN_TYPE) : type;
     }
 
+    this.initSeenTypes();
     if (seenTypes.contains(type)) {
       // If we have already encountered this TemplateType during replacement
       // (i.e. there is a reference loop) then return the TemplateType type itself.
@@ -355,21 +380,29 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
       // If there is no JSType substitution for the TemplateType, return either the
       // UNKNOWN_TYPE or the TemplateType type itself, depending on configuration.
       return useUnknownForMissingValues ? getNativeType(JSTypeNative.UNKNOWN_TYPE) : type;
-    } else {
-      JSType replacement = bindings.getUnresolvedOriginalTemplateType(type);
-      if (replacement == keyType || isRecursive(type, replacement)) {
-        // Recursive templated type definition (e.g. T resolved to Foo<T>).
-        return type;
-      }
-
-      seenTypes.add(type);
-      JSType visitedReplacement = replacement.visit(this);
-      seenTypes.remove(type);
-
-      Preconditions.checkState(
-          visitedReplacement != keyType, "Trying to replace key %s with the same value", keyType);
-      return visitedReplacement;
     }
+
+    JSType replacement = bindings.getUnresolvedOriginalTemplateType(type);
+    // Recursive templatized types, such as T => Foo<T>. Don't do any replacement - we should
+    // preserve Foo<T> as it was before.
+    // Note: this isn't perfect - if we had T => Foo<T, U>, this will skip replacing U - but
+    // it's better than a stack overflow.
+    // Return the 'type' instead of 'replacement' to notify callers that no changes were made.
+    // If we didn't check this here, we'd still skip doing any work in replacement.visit(this)
+    // because guardAgainstCycles would have already seen 'replacement'. But we'd return
+    // 'visitedReplacement' instead of 'type'.
+    if (identical(replacement, keyType) || seenTypes.contains(replacement)) {
+      return type;
+    }
+    seenTypes.add(type);
+    JSType visitedReplacement = replacement.visit(this);
+    seenTypes.remove(type);
+
+    Preconditions.checkState(
+        !identical(visitedReplacement, keyType),
+        "Trying to replace key %s with the same value",
+        keyType);
+    return visitedReplacement;
   }
 
   private JSType getNativeType(JSTypeNative nativeType) {
@@ -391,50 +424,23 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     return guardAgainstCycles(type, this::caseProxyObjectTypeUnguarded);
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private JSType caseProxyObjectTypeUnguarded(ProxyObjectType type) {
     // Be careful not to unwrap a type unless it has changed.
     JSType beforeType = type.getReferencedTypeInternal();
     JSType replacement = beforeType.visit(this);
-    if (replacement != beforeType) {
+    if (!identical(replacement, beforeType)) {
       return replacement;
     }
     return type;
   }
 
-  void setKeyType(TemplateType keyType) {
+  void setKeyType(TemplateType keyType, int ownSubMapBoundary) {
     this.keyType = keyType;
-  }
-
-  /**
-   * Returns whether the replacement type is a templatized type which contains the current type.
-   * e.g. current type T is being replaced with Foo<T>
-   */
-  private boolean isRecursive(TemplateType currentType, JSType replacementType) {
-    TemplatizedType replacementTemplatizedType =
-        replacementType.restrictByNotNullOrUndefined().toMaybeTemplatizedType();
-    if (replacementTemplatizedType == null) {
-      return false;
-    }
-
-    Iterable<JSType> replacementTemplateTypes = replacementTemplatizedType.getTemplateTypes();
-    for (JSType replacementTemplateType : replacementTemplateTypes) {
-      if (replacementTemplateType.isTemplateType()
-          && isSameType(currentType, replacementTemplateType.toMaybeTemplateType())) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  @SuppressWarnings("ReferenceEquality")
-  private boolean isSameType(TemplateType currentType, TemplateType replacementType) {
-    return currentType == replacementType
-        || currentType == bindings.getUnresolvedOriginalTemplateType(replacementType);
+    this.ownSubMapBoundary = ownSubMapBoundary;
   }
 
   private <T extends JSType> JSType guardAgainstCycles(T type, Function<T, JSType> mapper) {
+    this.initSeenTypes();
     if (!this.seenTypes.add(type)) {
       return type;
     }
@@ -443,5 +449,16 @@ public final class TemplateTypeReplacer implements Visitor<JSType> {
     } finally {
       this.seenTypes.remove(type);
     }
+  }
+
+  // determinism is unnecessary for visitedObjectTypes, because we only call get/set
+  @SuppressWarnings("DeterministicDatastructure")
+  private @Nullable JSType getVisitedObjectTypeOrNull(JSType type) {
+    // If we've visited this object type, we don't need to walk it again.
+    if (visitedObjectTypes == null) {
+      visitedObjectTypes = new IdentityHashMap<>();
+      return null;
+    }
+    return visitedObjectTypes.get(type);
   }
 }

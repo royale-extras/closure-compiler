@@ -148,46 +148,43 @@ Symbol.unscopables;
 
 /**
  * @record
- * @template VALUE
+ * @template TYield
  */
 function IIterableResult() {};
 
 /** @type {boolean} */
 IIterableResult.prototype.done;
 
-/** @type {VALUE} */
+/** @type {TYield} */
 IIterableResult.prototype.value;
 
 
 
 /**
  * @interface
- * @template VALUE
+ * @template T, TReturn, TNext
  */
 function Iterable() {}
 
-// TODO(johnlenz): remove the suppression when the compiler understands
-// "symbol" natively
 /**
- * @return {!Iterator<VALUE, ?, *>}
- * @suppress {externsValidation}
+ * @return {!Iterator<T, ?, *>}
  */
 Iterable.prototype[Symbol.iterator] = function() {};
 
 
 
 /**
- * TODO(b/142881197): UNUSED_RETURN_T and UNUSED_NEXT_T are not yet used for
- * anything. https://github.com/google/closure-compiler/issues/3489
+ * TODO(b/142881197): TReturn and TNext are not yet used for anything.
+ * https://github.com/google/closure-compiler/issues/3489
  * @interface
- * @template VALUE, UNUSED_RETURN_T, UNUSED_NEXT_T
+ * @template T, TReturn, TNext
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/The_Iterator_protocol
  */
 function Iterator() {}
 
 /**
  * @param {?=} opt_value
- * @return {!IIterableResult<VALUE>}
+ * @return {!IIterableResult<T>}
  */
 Iterator.prototype.next = function(opt_value) {};
 
@@ -197,8 +194,8 @@ Iterator.prototype.next = function(opt_value) {};
  *
  * @interface
  * @extends {Iterator<T, ?, *>}
- * @extends {Iterable<T>}
- * @template T
+ * @extends {Iterable<T, ?, *>}
+ * @template T, TReturn, TNext
  */
 function IteratorIterable() {}
 
@@ -228,6 +225,9 @@ IArrayLike.prototype.length;
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions_and_function_scope/arguments
  */
 function Arguments() {}
+
+/** @override */
+Arguments.prototype[Symbol.iterator] = function() {};
 
 /**
  * @type {Function}
@@ -375,8 +375,23 @@ function parseFloat(num) {}
  */
 function parseInt(num, base) {}
 
+
 /**
- * @param {string} code
+ * Represents a string of JavaScript code that is known to have come from a
+ * trusted source. Part of Trusted Types.
+ *
+ * The main body Trusted Types type definitions reside in the  file
+ * `w3c_trusted_types.js`. This definition was placed here so that it would be
+ * accessible to `eval()`.
+ *
+ * @constructor
+ * @see https://w3c.github.io/webappsec-trusted-types/dist/spec/#trusted-script
+ */
+function TrustedScript() {}
+
+
+/**
+ * @param {string|!TrustedScript} code
  * @return {*}
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval
  */
@@ -620,9 +635,182 @@ Function.prototype.toString = function() {};
 
 
 /**
+ * @record
+ * @extends {IArrayLike<T>}
+ * @extends {Iterable<T>}
+ * @template T
+ */
+function ReadonlyArray() {}
+
+/**
+ * @return {!IteratorIterable<T>}
+ * @override
+ */
+ReadonlyArray.prototype[Symbol.iterator] = function() {};
+
+/**
+ * Returns a new array comprised of this array joined with other array(s)
+ * and/or value(s).
+ *
+ * @param {...*} var_args
+ * @return {!Array<?>}
+ * @this {*}
+ * @nosideeffects
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/concat
+ */
+ReadonlyArray.prototype.concat = function(var_args) {};
+
+/**
+ * Joins all elements of an array into a string.
+ *
+ * @param {*=} opt_separator Specifies a string to separate each element of the
+ *     array. The separator is converted to a string if necessary. If omitted,
+ *     the array elements are separated with a comma.
+ * @return {string}
+ * @this {IArrayLike<?>|string}
+ * @nosideeffects
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/join
+ */
+ReadonlyArray.prototype.join = function(opt_separator) {};
+
+/**
+ * Extracts a section of an array and returns a new array.
+ *
+ * @param {?number=} begin Zero-based index at which to begin extraction.
+ * @param {?number=} end Zero-based index at which to end extraction.  slice
+ *     extracts up to but not including end.
+ * @return {!Array<T>}
+ * @this {IArrayLike<T>|string}
+ * @template T
+ * @nosideeffects
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/slice
+ */
+ReadonlyArray.prototype.slice = function(begin, end) {};
+
+/**
+ * @this {ReadonlyArray<?>}
+ * @return {string}
+ * @nosideeffects
+ * @override
+ */
+ReadonlyArray.prototype.toString = function() {};
+
+/**
+ * Apply a function simultaneously against two values of the array (from
+ * left-to-right) as to reduce it to a single value.
+ *
+ * @param {?function(?, T, number, !ReadonlyArray<T>) : R} callback
+ * @param {*=} opt_initialValue
+ * @return {R}
+ * @this {IArrayLike<T>|string}
+ * @template T,R
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce
+ */
+ReadonlyArray.prototype.reduce = function(callback, opt_initialValue) {};
+
+/**
+ * Apply a function simultaneously against two values of the array (from
+ * right-to-left) as to reduce it to a single value.
+ *
+ * @param {?function(?, T, number, !ReadonlyArray<T>) : R} callback
+ * @param {*=} opt_initialValue
+ * @return {R}
+ * @this {IArrayLike<T>|string}
+ * @template T,R
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduceRight
+ */
+ReadonlyArray.prototype.reduceRight = function(callback, opt_initialValue) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {?function(this:S, T, number, !ReadonlyArray<T>): *} callback
+ * @param {S=} opt_thisobj
+ * @return {boolean}
+ * @this {IArrayLike<T>|string}
+ * @template T,S
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/every
+ */
+ReadonlyArray.prototype.every = function(callback, opt_thisobj) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {?function(this:S, T, number, !ReadonlyArray<T>): *} callback
+ * @param {S=} opt_thisobj
+ * @return {!Array<T>}
+ * @this {IArrayLike<T>|string}
+ * @template T,S
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter
+ */
+ReadonlyArray.prototype.filter = function(callback, opt_thisobj) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {?function(this:S, T, number, !ReadonlyArray<T>): ?} callback
+ * @param {S=} opt_thisobj
+ * @this {IArrayLike<T>|string}
+ * @template T,S
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/forEach
+ * @return {undefined}
+ */
+ReadonlyArray.prototype.forEach = function(callback, opt_thisobj) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {T} obj
+ * @param {number=} opt_fromIndex
+ * @return {number}
+ * @this {IArrayLike<T>|string}
+ * @nosideeffects
+ * @template T
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/indexOf
+ */
+ReadonlyArray.prototype.indexOf = function(obj, opt_fromIndex) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {T} obj
+ * @param {number=} opt_fromIndex
+ * @return {number}
+ * @this {IArrayLike<T>|string}
+ * @nosideeffects
+ * @template T
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/lastIndexOf
+ */
+ReadonlyArray.prototype.lastIndexOf = function(obj, opt_fromIndex) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {?function(this:S, T, number, !ReadonlyArray<T>): R} callback
+ * @param {S=} opt_thisobj
+ * @return {!Array<R>}
+ * @this {IArrayLike<T>|string}
+ * @template T,S,R
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map
+ */
+ReadonlyArray.prototype.map = function(callback, opt_thisobj) {};
+
+/**
+ * Available in ECMAScript 5, Mozilla 1.6+.
+ * @param {?function(this:S, T, number, !ReadonlyArray<T>): *} callback
+ * @param {S=} opt_thisobj
+ * @return {boolean}
+ * @this {IArrayLike<T>|string}
+ * @template T,S
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some
+ */
+ReadonlyArray.prototype.some = function(callback, opt_thisobj) {};
+
+/**
+ * @const {number}
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/length
+ */
+ReadonlyArray.prototype.length;
+
+/**
  * @constructor
  * @implements {IArrayLike<T>}
  * @implements {Iterable<T>}
+ * @implements {ReadonlyArray<T>}
  * @param {...*} var_args
  * @return {!Array}
  * @nosideeffects
@@ -632,8 +820,8 @@ Function.prototype.toString = function() {};
 function Array(var_args) {}
 
 /**
- * @return {Iterator<T>}
- * @suppress {externsValidation}
+ * @return {!IteratorIterable<T>}
+ * @override
  */
 Array.prototype[Symbol.iterator] = function() {};
 
@@ -647,6 +835,7 @@ Array.prototype[Symbol.iterator] = function() {};
  * @return {!Array<?>}
  * @this {*}
  * @nosideeffects
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/concat
  */
 Array.prototype.concat = function(var_args) {};
@@ -660,6 +849,7 @@ Array.prototype.concat = function(var_args) {};
  * @return {string}
  * @this {IArrayLike<?>|string}
  * @nosideeffects
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/join
  */
 Array.prototype.join = function(opt_separator) {};
@@ -723,6 +913,7 @@ Array.prototype.shift = function() {};
  * @this {IArrayLike<T>|string}
  * @template T
  * @nosideeffects
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/slice
  */
 Array.prototype.slice = function(begin, end) {};
@@ -794,6 +985,7 @@ Array.prototype.unshift = function(var_args) {};
  * @return {R}
  * @this {IArrayLike<T>|string}
  * @template T,R
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce
  */
 Array.prototype.reduce = function(callback, opt_initialValue) {};
@@ -807,28 +999,31 @@ Array.prototype.reduce = function(callback, opt_initialValue) {};
  * @return {R}
  * @this {IArrayLike<T>|string}
  * @template T,R
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduceRight
  */
 Array.prototype.reduceRight = function(callback, opt_initialValue) {};
 
 /**
  * Available in ECMAScript 5, Mozilla 1.6+.
- * @param {?function(this:S, T, number, !Array<T>): ?} callback
+ * @param {?function(this:S, T, number, !Array<T>): *} callback
  * @param {S=} opt_thisobj
  * @return {boolean}
  * @this {IArrayLike<T>|string}
  * @template T,S
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/every
  */
 Array.prototype.every = function(callback, opt_thisobj) {};
 
 /**
  * Available in ECMAScript 5, Mozilla 1.6+.
- * @param {?function(this:S, T, number, !Array<T>): ?} callback
+ * @param {?function(this:S, T, number, !Array<T>): *} callback
  * @param {S=} opt_thisobj
  * @return {!Array<T>}
  * @this {IArrayLike<T>|string}
  * @template T,S
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter
  */
 Array.prototype.filter = function(callback, opt_thisobj) {};
@@ -837,10 +1032,11 @@ Array.prototype.filter = function(callback, opt_thisobj) {};
  * Available in ECMAScript 5, Mozilla 1.6+.
  * @param {?function(this:S, T, number, !Array<T>): ?} callback
  * @param {S=} opt_thisobj
+ * @return {undefined}
  * @this {IArrayLike<T>|string}
  * @template T,S
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/forEach
- * @return {undefined}
  */
 Array.prototype.forEach = function(callback, opt_thisobj) {};
 
@@ -852,6 +1048,7 @@ Array.prototype.forEach = function(callback, opt_thisobj) {};
  * @this {IArrayLike<T>|string}
  * @nosideeffects
  * @template T
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/indexOf
  */
 Array.prototype.indexOf = function(obj, opt_fromIndex) {};
@@ -864,6 +1061,7 @@ Array.prototype.indexOf = function(obj, opt_fromIndex) {};
  * @this {IArrayLike<T>|string}
  * @nosideeffects
  * @template T
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/lastIndexOf
  */
 Array.prototype.lastIndexOf = function(obj, opt_fromIndex) {};
@@ -875,24 +1073,25 @@ Array.prototype.lastIndexOf = function(obj, opt_fromIndex) {};
  * @return {!Array<R>}
  * @this {IArrayLike<T>|string}
  * @template T,S,R
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map
  */
 Array.prototype.map = function(callback, opt_thisobj) {};
 
 /**
  * Available in ECMAScript 5, Mozilla 1.6+.
- * @param {?function(this:S, T, number, !Array<T>): ?} callback
+ * @param {?function(this:S, T, number, !Array<T>): *} callback
  * @param {S=} opt_thisobj
  * @return {boolean}
  * @this {IArrayLike<T>|string}
  * @template T,S
+ * @override
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some
  */
 Array.prototype.some = function(callback, opt_thisobj) {};
 
 /**
  * @type {number}
- * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/index
  */
 Array.prototype.index;
 
@@ -970,7 +1169,7 @@ Number.prototype.toExponential = function(opt_fractionDigits) {};
 
 /**
  * @this {Number|number}
- * @param {*=} opt_digits
+ * @param {number=} opt_digits
  * @return {string}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/toFixed
@@ -1027,6 +1226,68 @@ Number.NEGATIVE_INFINITY;
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/POSITIVE_INFINITY
  */
 Number.POSITIVE_INFINITY;
+
+/**
+ * @constructor
+ * @param {number|string|bigint} arg
+ * @return {bigint}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt
+ */
+function BigInt(arg) {}
+
+/**
+ * Wraps a BigInt value to a signed integer between -2^(width-1) and
+ * 2^(width-1)-1.
+ * @param {number} width
+ * @param {bigint} bigint
+ * @return {bigint}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt/asIntN
+ */
+BigInt.asIntN = function(width, bigint) {};
+
+/**
+ * Wraps a BigInt value to an unsigned integer between 0 and (2^width)-1.
+ * @param {number} width
+ * @param {bigint} bigint
+ * @return {bigint}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt/asUintN
+ */
+BigInt.asUintN = function(width, bigint) {};
+
+/**
+ * Returns a string with a language-sensitive representation of this BigInt.
+ * @param {string|!Array<string>=} locales
+ * @param {Object=} options
+ * @return {string}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt/toLocaleString
+ * @override
+ */
+BigInt.prototype.toLocaleString = function(locales, options) {};
+
+/**
+ * Returns a string representing the specified BigInt object. The trailing "n"
+ * is not part of the string.
+ * @this {BigInt|bigint}
+ * @param {number=} radix
+ * @return {string}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt/toString
+ * @override
+ */
+BigInt.prototype.toString = function(radix) {};
+
+/**
+ * Returns the wrapped primitive value of a BigInt object.
+ * @return {bigint}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt/valueOf
+ * @override
+ */
+BigInt.prototype.valueOf = function() {};
 
 
 /**
@@ -1273,7 +1534,7 @@ Date.parse = function(date) {};
 
 /**
  * @param {number} year
- * @param {number} month
+ * @param {number=} opt_month
  * @param {number=} opt_date
  * @param {number=} opt_hours
  * @param {number=} opt_minute
@@ -1283,7 +1544,7 @@ Date.parse = function(date) {};
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/UTC
  */
-Date.UTC = function(year, month,
+Date.UTC = function(year, opt_month,
                     opt_date, opt_hours, opt_minute, opt_second, opt_ms) {};
 
 /**
@@ -1705,6 +1966,11 @@ Date.prototype.valueOf;
 function String(opt_str) {}
 
 /**
+ * @override
+ */
+String.prototype[Symbol.iterator] = function() {};
+
+/**
  * @param {...number} var_args
  * @return {string}
  * @nosideeffects
@@ -1870,7 +2136,7 @@ String.prototype.localeCompare = function(compareString, locales, options) {};
  *
  * @this {String|string}
  * @param {*} regexp
- * @return {Array<string>} This should really return an Array with a few
+ * @return {RegExpResult} This should really return an Array with a few
  *     special properties, but we do not have a good way to model this in
  *     our type system. Also see Regexp.prototype.exec.
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/match
@@ -2116,6 +2382,24 @@ RegExpResult.prototype.length;
 RegExpResult.prototype.groups;
 
 
+/**
+ * Not actually part of ES3; was added in 2022.
+ * https://github.com/tc39/proposal-regexp-match-indices
+ *
+ * @constructor
+ * @extends {Array<!Array<number>|undefined>}
+ */
+var RegExpResultIndices = function() {};
+
+
+/** @type {!Object<string, !Array<number>|undefined>} */
+RegExpResultIndices.prototype.groups;
+
+
+/** @type {!RegExpResultIndices} */
+RegExpResult.prototype.indices;
+
+
 // Constructor properties:
 
 /**
@@ -2210,6 +2494,14 @@ RegExp.$9;
 RegExp.prototype.global;
 
 /**
+ * The dotAll property indicates whether or not the "s" flag is used with the regular expression.
+ *
+ * @type {boolean}
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/dotAll
+ */
+RegExp.prototype.dotAll;
+
+/**
  * Whether to ignore case while attempting a match in a string.
  * @type {boolean}
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/ignoreCase
@@ -2252,15 +2544,23 @@ RegExp.prototype.source;
 RegExp.prototype.flags;
 
 /**
+ * The unicode property indicates whether or not the "u" flag is used with a regular expression.
+ *
+ * @type {boolean}
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/unicode
+ */
+RegExp.prototype.unicode;
+
+/**
  * @constructor
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!Error}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error
  */
-function Error(opt_message, opt_file, opt_line) {}
+function Error(message, fileNameOrOptions, line) {}
 
 
 /**
@@ -2283,6 +2583,13 @@ Error.stackTraceLimit;
  * @return {undefined}
  */
 Error.captureStackTrace = function(error, opt_constructor){};
+
+/**
+ * New in ES 2022, adds a cause to the error which is useful for chaining errors
+ * @type {*}
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+ */
+Error.prototype.cause;
 
 
 /**
@@ -2331,75 +2638,74 @@ Error.prototype.stack;
 /**
  * @constructor
  * @extends {Error}
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!EvalError}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/EvalError
  */
-function EvalError(opt_message, opt_file, opt_line) {}
+function EvalError(message, fileNameOrOptions, line) {}
 
 /**
  * @constructor
  * @extends {Error}
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!RangeError}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RangeError
  */
-function RangeError(opt_message, opt_file, opt_line) {}
+function RangeError(message, fileNameOrOptions, line) {}
 
 /**
  * @constructor
  * @extends {Error}
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!ReferenceError}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ReferenceError
  */
-function ReferenceError(opt_message, opt_file, opt_line) {}
+function ReferenceError(message, fileNameOrOptions, line) {}
 
 /**
  * @constructor
  * @extends {Error}
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!SyntaxError}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SyntaxError
  */
-function SyntaxError(opt_message, opt_file, opt_line) {}
+function SyntaxError(message, fileNameOrOptions, line) {}
 
 /**
  * @constructor
  * @extends {Error}
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!TypeError}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
  */
-function TypeError(opt_message, opt_file, opt_line) {}
+function TypeError(message, fileNameOrOptions, line) {}
 
 /**
  * @constructor
  * @extends {Error}
- * @param {*=} opt_message
- * @param {*=} opt_file
- * @param {*=} opt_line
+ * @param {*=} message
+ * @param {*=} fileNameOrOptions
+ * @param {*=} line
  * @return {!URIError}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/URIError
  */
-function URIError(opt_message, opt_file, opt_line) {}
-
+function URIError(message, fileNameOrOptions, line) {}
 
 // JScript extensions.
 // @see http://msdn.microsoft.com/en-us/library/894hfyb4(VS.80).aspx

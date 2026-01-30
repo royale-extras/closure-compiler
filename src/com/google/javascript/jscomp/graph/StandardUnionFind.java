@@ -20,8 +20,6 @@ import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.collect.Iterators.filter;
 import static com.google.common.collect.Multimaps.asMap;
 
-import com.google.common.annotations.GwtCompatible;
-import com.google.common.base.Objects;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -35,21 +33,17 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A Union-Find implementation.
  *
- * <p>This class implements Union-Find algorithm with rank and path
- * compression.
+ * <p>This class implements Union-Find algorithm with rank and path compression.
  *
- * <p>See <a
- * href="http://www.algorithmist.com/index.php?title=Union_Find&oldid=7575">
- * algorithmist</a> for more detail.
+ * <p>See <a href="https://algorithmist.com/wiki/Union_find">algorithmist</a> for more detail.
  *
  * @param <E> element type
  */
-@GwtCompatible
 public class StandardUnionFind<E> implements Serializable, UnionFind<E> {
 
   /** All values with the same root node are in the same equivalence set. */
@@ -184,27 +178,28 @@ public class StandardUnionFind<E> implements Serializable, UnionFind<E> {
   }
 
   @Override
-  public Set<E> findAll(@Nullable final E value) {
+  public Set<E> findAll(final @Nullable E value) {
     checkArgument(elmap.containsKey(value), "Element does not exist: %s", value);
 
-    final Predicate<Object> isSameRoot = new Predicate<Object>() {
+    final Predicate<Object> isSameRoot =
+        new Predicate<Object>() {
 
-      /** some node that's close to the root, or null */
-      Node<E> nodeForValue = elmap.get(value);
+          /** some node that's close to the root, or null */
+          Node<E> nodeForValue = elmap.get(value);
 
-      @Override
-      public boolean apply(@Nullable Object b) {
-        if (Objects.equal(value, b)) {
-          return true;
-        }
-        Node<E> nodeForB = elmap.get(b);
-        if (nodeForB == null) {
-          return false;
-        }
-        nodeForValue = findRoot(nodeForValue);
-        return findRoot(nodeForB) == nodeForValue;
-      }
-    };
+          @Override
+          public boolean apply(@Nullable Object b) {
+            if (java.util.Objects.equals(value, b)) {
+              return true;
+            }
+            Node<E> nodeForB = elmap.get(b);
+            if (nodeForB == null) {
+              return false;
+            }
+            nodeForValue = findRoot(nodeForValue);
+            return findRoot(nodeForB) == nodeForValue;
+          }
+        };
 
     return new AbstractSet<E>() {
 

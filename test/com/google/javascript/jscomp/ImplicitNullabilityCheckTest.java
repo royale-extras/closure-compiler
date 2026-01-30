@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.testing.TestExternsBuilder;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -41,11 +42,13 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
   @Before
   public void setUp() throws Exception {
     super.setUp();
+    enableCreateModuleMap();
     enableTypeCheck();
   }
 
   @Test
   public void testExplicitJsdocDoesntWarn() {
+    noWarning("/** @type {bigint} */ var x;");
     noWarning("/** @type {boolean} */ var x;");
     noWarning("/** @type {symbol} */ var x;");
     noWarning("/** @type {null} */ var x;");
@@ -92,9 +95,11 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
 
   @Test
   public void testParameterizedObject() {
-    warnImplicitlyNullable(lines(
-        "/** @param {Object<string, string>=} opt_values */",
-        "function getMsg(opt_values) {};"));
+    warnImplicitlyNullable(
+        """
+        /** @param {Object<string, string>=} opt_values */
+        function getMsg(opt_values) {};
+        """);
   }
 
   @Test
@@ -143,26 +148,103 @@ public final class ImplicitNullabilityCheckTest extends CompilerTestCase {
 
   @Test
   public void testUserDefinedClass() {
-    warnImplicitlyNullable(lines(
-        "/** @constructor */",
-        "function Foo() {}",
-        "/** @type {Foo} */ var x;"));
+    warnImplicitlyNullable(
+        """
+        /** @constructor */
+        function Foo() {}
+        /** @type {Foo} */ var x;
+        """);
 
-    warnImplicitlyNullable(lines(
-        "function f() {",
-        "  /** @constructor */",
-        "  function Foo() {}",
-        "  /** @type {Foo} */ var x;",
-        "}"));
+    warnImplicitlyNullable(
+        """
+        function f() {
+          /** @constructor */
+          function Foo() {}
+          /** @type {Foo} */ var x;
+        }
+        """);
   }
 
   @Test
   public void testNamespacedTypeDoesntCrash() {
-    warnImplicitlyNullable(lines(
-        "/** @const */ var a = {};",
-        "/** @const */ a.b = {};",
-        "/** @constructor */ a.b.Foo = function() {};",
-        "/** @type Array<!a.b.Foo> */ var foos = [];"));
+    warnImplicitlyNullable(
+        """
+        /** @const */ var a = {};
+        /** @const */ a.b = {};
+        /** @constructor */ a.b.Foo = function() {};
+        /** @type Array<!a.b.Foo> */ var foos = [];
+        """);
+
+    // in goog.module
+    test(
+        externs(new TestExternsBuilder().addClosureExterns().build()),
+        srcs(
+            """
+            goog.module('ns');
+            /** @const */ var a = {};
+            /** @const */ a.b = {};
+            /** @constructor */ a.b.Foo = function() {};
+            /** @type Array<!a.b.Foo> */ var foos = [];
+            exports = {a};
+            """),
+        warning(ImplicitNullabilityCheck.IMPLICITLY_NULLABLE_JSDOC));
+
+    // in goog.module with a goog.require
+    test(
+        externs(new TestExternsBuilder().addClosureExterns().build()),
+        srcs(
+            """
+            goog.module('ns');
+            /** @const */ var a = {};
+            /** @const */ a.b = {};
+            exports = {a};
+            """,
+            """
+            goog.module('ns2');
+            const {a} = goog.require('ns');
+            /** @constructor */ a.b.Foo = function() {};
+            /** @type Array<!a.b.Foo> */ var foos = [];
+            exports = {foos};
+            """),
+        warning(ImplicitNullabilityCheck.IMPLICITLY_NULLABLE_JSDOC));
+
+    // in goog.provide
+    test(
+        externs(new TestExternsBuilder().addClosureExterns().build()),
+        srcs(
+            """
+            goog.provide('ns.a');
+            /** @const */ ns.a.b = {};
+            /** @constructor */ ns.a.b.Foo = function() {};
+            /** @type Array<!ns.a.b.Foo> */ var foos = [];
+            """),
+        warning(ImplicitNullabilityCheck.IMPLICITLY_NULLABLE_JSDOC));
+  }
+
+  @Test
+  public void shadowingGlobalTypedefWithClass() {
+    warnImplicitlyNullable(
+        """
+        /** @typedef {string} */ let Type;
+        function local() {
+          class Type {}
+          /** @type {Type} */ var x;
+        }
+        """);
+  }
+
+  @Test
+  public void shadowingGlobalClassWithTypedef() {
+    test(
+        srcs(
+            """
+            class Type {}
+            function local() {
+              /** @typedef {string} */ let Type;
+              /** @type {Type} */ var x;
+            }
+            """),
+        warning(ImplicitNullabilityCheck.IMPLICITLY_NONNULL_JSDOC));
   }
 
   private void warnImplicitlyNullable(String js) {

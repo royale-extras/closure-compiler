@@ -22,63 +22,21 @@ import static com.google.javascript.jscomp.parsing.JsDocInfoParser.BAD_TYPE_WIKI
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for error message filtering.
- *
- * @author nicksantos@google.com (Nick Santos)
- */
+/** Tests for error message filtering. */
 @RunWith(JUnit4.class)
 public final class RhinoErrorReporterTest {
   private boolean reportLintWarnings;
+  private CompilerOptions.LanguageMode languageIn;
 
   @Before
   public void setUp() throws Exception {
     reportLintWarnings = true;
-  }
-
-  @Test
-  public void testTrailingComma() {
-    String message =
-        "Parse error. IE8 (and below) will parse trailing commas in " +
-        "array and object literals incorrectly. " +
-        "If you are targeting newer versions of JS, " +
-        "set the appropriate language_in option.";
-    assertError(
-        "var x = [1,];",
-        RhinoErrorReporter.TRAILING_COMMA,
-        message);
-    JSError error = assertError(
-        "var x = {\n" +
-        "    1: 2,\n" +
-        "};",
-        RhinoErrorReporter.TRAILING_COMMA,
-        message);
-
-    assertThat(error.getLineNumber()).isEqualTo(2);
-    assertThat(error.getCharno()).isEqualTo(8);
-  }
-
-  @Test
-  public void testInvalidEs3Prop() {
-    String message =
-        "Keywords and reserved words are not allowed as unquoted property " +
-        "names in older versions of JavaScript. " +
-        "If you are targeting newer versions of JavaScript, " +
-        "set the appropriate language_in option.";
-    JSError error = assertWarning(
-        "var x = y.function;",
-        RhinoErrorReporter.INVALID_ES3_PROP_NAME,
-        message);
-
-    assertThat(error.getLineNumber()).isEqualTo(1);
-    assertThat(error.getCharno()).isEqualTo(10);
+    this.languageIn = CompilerOptions.LanguageMode.UNSUPPORTED;
   }
 
   @Test
@@ -89,15 +47,15 @@ public final class RhinoErrorReporterTest {
 
     reportLintWarnings = true;
 
-    String message =
-        "Missing type declaration.";
-    JSError error = assertWarning(
-        "/** @return */ function f() {}",
-        RhinoErrorReporter.JSDOC_MISSING_TYPE_WARNING,
-        message);
+    String message = "Missing type declaration.";
+    JSError error =
+        assertWarning(
+            "/** @return */ function f() {}",
+            RhinoErrorReporter.JSDOC_MISSING_TYPE_WARNING,
+            message);
 
     assertThat(error.getLineNumber()).isEqualTo(1);
-    assertThat(error.getCharno()).isEqualTo(4);
+    assertThat(error.charno()).isEqualTo(4);
   }
 
   @Test
@@ -112,64 +70,62 @@ public final class RhinoErrorReporterTest {
         "Bad type annotation. Type annotations should have curly braces." + BAD_TYPE_WIKI_LINK);
   }
 
-  /**
-   * Verifies that the compiler emits an error for the given code.
-   */
+  @Test
+  public void testLanguageFeatureInHigherLanguageInError() {
+    this.languageIn = CompilerOptions.LanguageMode.ECMASCRIPT_2015;
+    assertError(
+        "2 ** 3",
+        RhinoErrorReporter.LANGUAGE_FEATURE,
+        """
+        This language feature is only supported for ECMASCRIPT_2016 mode or better: \
+        exponent operator (**).\
+        """);
+  }
+
+  /** Verifies that the compiler emits an error for the given code. */
   private void assertNoWarningOrError(String code) {
     Compiler compiler = parseCode(code);
     assertWithMessage("Expected error").that(compiler.getErrorCount()).isEqualTo(0);
     assertWithMessage("Expected warning").that(compiler.getErrorCount()).isEqualTo(0);
   }
 
-  /**
-   * Verifies that the compiler emits an error for the given code.
-   */
-  private JSError assertError(
-      String code, DiagnosticType type, String description) {
+  /** Verifies that the compiler emits an error for the given code. */
+  private JSError assertError(String code, DiagnosticType type, String description) {
     Compiler compiler = parseCode(code);
     assertWithMessage("Expected error").that(compiler.getErrorCount()).isEqualTo(1);
 
     JSError error = Iterables.getOnlyElement(compiler.getErrors());
-    assertThat(error.getType()).isEqualTo(type);
-    assertThat(error.getDescription()).isEqualTo(description);
+    assertThat(error.type()).isEqualTo(type);
+    assertThat(error.description()).isEqualTo(description);
     return error;
   }
 
-  /**
-   * Verifies that the compiler emits an error for the given code.
-   */
-  private JSError assertWarning(
-      String code, DiagnosticType type, String description) {
+  /** Verifies that the compiler emits a warning for the given code. */
+  private JSError assertWarning(String code, DiagnosticType type, String description) {
     Compiler compiler = parseCode(code);
     assertWithMessage("Expected warning").that(compiler.getWarningCount()).isEqualTo(1);
 
     JSError error = Iterables.getOnlyElement(compiler.getWarnings());
-    assertThat(error.getType()).isEqualTo(type);
-    assertThat(error.getDescription()).isEqualTo(description);
+    assertThat(error.type()).isEqualTo(type);
+    assertThat(error.description()).isEqualTo(description);
     return error;
   }
 
   private Compiler parseCode(String code) {
     Compiler compiler = new Compiler();
     CompilerOptions options = new CompilerOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT3);
 
     if (!reportLintWarnings) {
-      options.setWarningLevel(
-          DiagnosticGroups.LINT_CHECKS,
-          CheckLevel.OFF);
+      options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.OFF);
     } else {
-      options.setWarningLevel(
-          DiagnosticGroups.LINT_CHECKS,
-          CheckLevel.WARNING);
-      options.setWarningLevel(
-          DiagnosticGroups.JSDOC_MISSING_TYPE,
-          CheckLevel.WARNING);
+      options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
+      options.setWarningLevel(DiagnosticGroups.JSDOC_MISSING_TYPE, CheckLevel.WARNING);
     }
 
-    List<SourceFile> externs = ImmutableList.of();
-    List<SourceFile> inputs = ImmutableList.of(
-        SourceFile.fromCode("input", code));
+    options.setLanguageIn(languageIn);
+
+    ImmutableList<SourceFile> externs = ImmutableList.of();
+    ImmutableList<SourceFile> inputs = ImmutableList.of(SourceFile.fromCode("input", code));
     compiler.init(externs, inputs, options);
     compiler.parseInputs();
     return compiler;

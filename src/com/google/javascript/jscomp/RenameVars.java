@@ -19,23 +19,25 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.nullToEmpty;
+import static java.util.Comparator.comparingInt;
 
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ListMultimap;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * RenameVars renames all the variables names into short names, to reduce code
@@ -58,22 +60,22 @@ final class RenameVars implements CompilerPass {
   private final ArrayList<Node> localNameNodes = new ArrayList<>();
 
   /** Mapping of original names for change detection */
-  private final Map<Node, String> originalNameByNode = new HashMap<>();
+  private final Map<Node, String> originalNameByNode = new LinkedHashMap<>();
 
   /**
-   * Maps a name node to its pseudo name, null if we are not generating so
-   * there will be no overhead unless we are debugging.
+   * Maps a name node to its pseudo name, null if we are not generating so there will be no overhead
+   * unless we are debugging.
    */
-  private final Map<Node, String> pseudoNameMap;
+  private final @Nullable Map<Node, String> pseudoNameMap;
 
   /** Set of extern variable names */
-  private Set<String> externNames;
+  private ImmutableSet<String> externNames;
 
   /** Set of reserved variable names */
   private final Set<String> reservedNames;
 
   /** The renaming map */
-  private final Map<String, String> renameMap = new HashMap<>();
+  private final Map<String, String> renameMap = new LinkedHashMap<>();
 
   /** The previously used rename map. */
   private final VariableMap prevUsedRenameMap;
@@ -86,7 +88,7 @@ final class RenameVars implements CompilerPass {
 
   // Logic for bleeding functions, where the name leaks into the outer
   // scope on IE but not on other browsers.
-  private final Set<Var> localBleedingFunctions = new HashSet<>();
+  private final Set<Var> localBleedingFunctions = new LinkedHashSet<>();
   private final ListMultimap<Scope, Var> localBleedingFunctionsPerScope =
       ArrayListMultimap.create();
 
@@ -94,7 +96,7 @@ final class RenameVars implements CompilerPass {
     final boolean isLocal;
     final String oldName;
     final int orderOfOccurrence;
-    String newName;
+    @Nullable String newName;
     int count; // Number of times this is referenced
 
     Assignment(String name) {
@@ -117,24 +119,15 @@ final class RenameVars implements CompilerPass {
   }
 
   /** Maps an old name to a new name assignment */
-  private final Map<String, Assignment> assignments =
-      new HashMap<>();
+  private final Map<String, Assignment> assignments = new LinkedHashMap<>();
 
   /** Whether renaming should apply to local variables only. */
   private final boolean localRenamingOnly;
 
-  /**
-   * Whether function expression names should be preserved. Typically, for
-   * debugging purposes.
-   *
-   * @see NameAnonymousFunctions
-   */
-  private final boolean preserveFunctionExpressionNames;
-
   private final boolean preferStableNames;
 
   /** Characters that shouldn't be used in variable names. */
-  private final char[] reservedCharacters;
+  private final Set<Character> reservedCharacters;
 
   /** A prefix to distinguish temporary local names from global names */
   private static final String LOCAL_VAR_PREFIX = "L ";
@@ -151,19 +144,17 @@ final class RenameVars implements CompilerPass {
       AbstractCompiler compiler,
       String prefix,
       boolean localRenamingOnly,
-      boolean preserveFunctionExpressionNames,
       boolean generatePseudoNames,
       boolean preferStableNames,
       VariableMap prevUsedRenameMap,
-      @Nullable char[] reservedCharacters,
+      Set<Character> reservedCharacters,
       @Nullable Set<String> reservedNames,
       NameGenerator nameGenerator) {
     this.compiler = compiler;
     this.prefix = nullToEmpty(prefix);
     this.localRenamingOnly = localRenamingOnly;
-    this.preserveFunctionExpressionNames = preserveFunctionExpressionNames;
     if (generatePseudoNames) {
-      this.pseudoNameMap = new HashMap<>();
+      this.pseudoNameMap = new LinkedHashMap<>();
     } else {
       this.pseudoNameMap = null;
     }
@@ -171,9 +162,9 @@ final class RenameVars implements CompilerPass {
     this.reservedCharacters = reservedCharacters;
     this.preferStableNames = preferStableNames;
     if (reservedNames == null) {
-      this.reservedNames = new HashSet<>();
+      this.reservedNames = new LinkedHashSet<>();
     } else {
-      this.reservedNames = new HashSet<>(reservedNames);
+      this.reservedNames = new LinkedHashSet<>(reservedNames);
     }
     this.nameGenerator = nameGenerator;
   }
@@ -259,13 +250,6 @@ final class RenameVars implements CompilerPass {
         return;
       }
 
-      // Are we renaming function expression names?
-      if (preserveFunctionExpressionNames && var != null
-          && NodeUtil.isFunctionExpression(var.getParentNode())) {
-        reservedNames.add(name);
-        return;
-      }
-
       // Check if we can rename this.
       if (!okToRenameVar(name, local)) {
         if (local) {
@@ -302,43 +286,27 @@ final class RenameVars implements CompilerPass {
 
     // Increment count of an assignment
     void incCount(String name) {
-      Assignment s = assignments.get(name);
-      if (s == null) {
-        s = new Assignment(name);
-        assignments.put(name, s);
-      }
+      Assignment s = assignments.computeIfAbsent(name, Assignment::new);
       s.count++;
     }
   }
 
   /**
-   * Sorts Assignment objects by their count, breaking ties by their order of
-   * occurrence in the source to ensure a deterministic total ordering.
+   * Sorts Assignment objects by their count, breaking ties by their order of occurrence in the
+   * source to ensure a deterministic total ordering.
    */
-  private static final Comparator<Assignment> FREQUENCY_COMPARATOR =
-      new Comparator<Assignment>() {
-    @Override
-    public int compare(Assignment a1, Assignment a2) {
-      if (a1.count != a2.count) {
-        return a2.count - a1.count;
-      }
-      // Break a tie using the order in which the variable first appears in
-      // the source.
-      return ORDER_OF_OCCURRENCE_COMPARATOR.compare(a1, a2);
+  private static int frequencyComparator(Assignment a1, Assignment a2) {
+    if (a1.count != a2.count) {
+      return a2.count - a1.count;
     }
-  };
+    // Break a tie using the order in which the variable first appears in
+    // the source.
+    return ORDER_OF_OCCURRENCE_COMPARATOR.compare(a1, a2);
+  }
 
-  /**
-   * Sorts Assignment objects by the order the variable name first appears in
-   * the source.
-   */
+  /** Sorts Assignment objects by the order the variable name first appears in the source. */
   private static final Comparator<Assignment> ORDER_OF_OCCURRENCE_COMPARATOR =
-      new Comparator<Assignment>() {
-        @Override
-        public int compare(Assignment a1, Assignment a2) {
-          return a1.orderOfOccurrence - a2.orderOfOccurrence;
-        }
-      };
+      comparingInt((Assignment arg) -> arg.orderOfOccurrence);
 
   @Override
   public void process(Node externs, Node root) {
@@ -353,7 +321,7 @@ final class RenameVars implements CompilerPass {
     reservedNames.addAll(externNames);
 
     // Rename vars, sorted by frequency of occurrence to minimize code size.
-    SortedSet<Assignment> varsByFrequency = new TreeSet<>(FREQUENCY_COMPARATOR);
+    SortedSet<Assignment> varsByFrequency = new TreeSet<>(RenameVars::frequencyComparator);
     varsByFrequency.addAll(assignments.values());
 
     // First try to reuse names from an earlier compilation.
@@ -394,8 +362,7 @@ final class RenameVars implements CompilerPass {
     }
   }
 
-  @Nullable
-  private String getNewGlobalName(Node n) {
+  private @Nullable String getNewGlobalName(Node n) {
     String oldName = n.getString();
     Assignment a = assignments.get(oldName);
     if (a.newName != null && !a.newName.equals(oldName)) {
@@ -408,8 +375,7 @@ final class RenameVars implements CompilerPass {
     }
   }
 
-  @Nullable
-  private String getNewLocalName(Node n) {
+  private @Nullable String getNewLocalName(Node n) {
     String oldTempName = n.getString();
     Assignment a = assignments.get(oldTempName);
     if (!a.newName.equals(oldTempName)) {
@@ -455,22 +421,19 @@ final class RenameVars implements CompilerPass {
    * Determines which new names to substitute for the original names.
    */
   private void assignNames(SortedSet<Assignment> varsToRename) {
-    NameGenerator globalNameGenerator = null;
-    NameGenerator localNameGenerator = null;
+    nameGenerator.reset(reservedNames, prefix, this.reservedCharacters);
 
-    globalNameGenerator = nameGenerator;
-    nameGenerator.reset(reservedNames, prefix, reservedCharacters);
-
+    NameGenerator globalNameGenerator = nameGenerator;
     // Local variables never need a prefix.
     // Also, we need to avoid conflicts between global and local variable
     // names; we do this by having using the same generator (not two
     // instances). The case where global variables have a prefix (and
     // therefore we use two different generators) but a local variable name
     // might nevertheless conflict with a global one is not handled.
-    localNameGenerator =
+    NameGenerator localNameGenerator =
         prefix.isEmpty()
-        ? globalNameGenerator
-        : nameGenerator.clone(reservedNames, "", reservedCharacters);
+            ? globalNameGenerator
+            : nameGenerator.clone(reservedNames, "", this.reservedCharacters);
 
     // Generated names and the assignments for non-local vars.
     List<Assignment> pendingAssignments = new ArrayList<>();
@@ -556,7 +519,7 @@ final class RenameVars implements CompilerPass {
    * Determines whether a variable name is okay to rename.
    */
   private boolean okToRenameVar(String name, boolean isLocal) {
-    return !compiler.getCodingConvention().isExported(name, isLocal);
+    return !compiler.getCodingConvention().isExported(name, /* local= */ isLocal);
   }
 
   /**

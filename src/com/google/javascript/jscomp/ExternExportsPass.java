@@ -27,18 +27,17 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Creates an externs file containing all exported symbols and properties
@@ -108,7 +107,7 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
      * </pre>
      */
     void appendExtern(String path, Node valueToExport) {
-      List<String> pathPrefixes = computePathPrefixes(path);
+      ImmutableList<String> pathPrefixes = computePathPrefixes(path);
 
       for (int i = 0; i < pathPrefixes.size(); ++i) {
         String pathPrefix = pathPrefixes.get(i);
@@ -128,7 +127,7 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
 
         if (valueToExport != null) {
           JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(valueToExport);
-          if (jsdoc != null && jsdoc.containsTypeDefinition()) {
+          if (valueToExport.isClass() || (jsdoc != null && jsdoc.containsTypeDefinition())) {
             exportedValueDefinesNewType = true;
           }
         }
@@ -224,7 +223,6 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
      * the same instead of generating arbitrary parameter names.
      *
      * @param exportedFunction FUNCTION Node of the original function
-     * @return
      */
     private Node createExternsParamListFromOriginalFunction(Node exportedFunction) {
       final Node originalParamList = NodeUtil.getFunctionParameters(exportedFunction);
@@ -270,7 +268,9 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
       final Node paramList = IR.paramList();
       NameGenerator nameGenerator =
           new DefaultNameGenerator(
-              ImmutableSet.copyOf(originalParamNames), "", /* reservedCharacters= */ null);
+              ImmutableSet.copyOf(originalParamNames),
+              "",
+              /* reservedCharacters= */ ImmutableSet.of());
       for (String originalParamName : originalParamNames) {
         String externParamName =
             originalParamName.isEmpty() ? nameGenerator.generateNextName() : originalParamName;
@@ -334,11 +334,11 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
     private JSDocInfo buildEmptyJSDoc() {
       // TODO(johnlenz): share the JSDocInfo here rather than building
       // a new one each time.
-      return new JSDocInfoBuilder(false).build(true);
+      return JSDocInfo.builder().build(true);
     }
 
     private JSDocInfo buildNamespaceJSDoc() {
-      JSDocInfoBuilder builder = new JSDocInfoBuilder(false);
+      JSDocInfo.Builder builder = JSDocInfo.builder();
       builder.recordConstancy();
       builder.recordSuppressions(ImmutableSet.of("const", "duplicate"));
       return builder.build();
@@ -373,11 +373,10 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
     }
 
     /**
-     * If the given value is a qualified name which refers
-     * a function or object literal, the node is returned. Otherwise,
-     * {@code null} is returned.
+     * If the given value is a qualified name which refers a function or object literal, the node is
+     * returned. Otherwise, {@code null} is returned.
      */
-    protected Node getValue() {
+    protected @Nullable Node getValue() {
       String qualifiedName = value.getQualifiedName();
 
       if (qualifiedName == null) {
@@ -493,10 +492,10 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
   ExternExportsPass(AbstractCompiler compiler) {
     this.exports = new ArrayList<>();
     this.compiler = compiler;
-    this.definitionMap = new HashMap<>();
+    this.definitionMap = new LinkedHashMap<>();
     this.externsRoot = IR.script();
-    this.alreadyExportedPaths = new HashSet<>();
-    this.mappedPaths = new HashMap<>();
+    this.alreadyExportedPaths = new LinkedHashSet<>();
+    this.mappedPaths = new LinkedHashMap<>();
 
     initExportMethods();
   }
@@ -538,12 +537,14 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
       .setOutputTypes(true)
       .setTypeRegistry(compiler.getTypeRegistry());
 
-    compiler.setExternExports(Joiner.on("\n").join(
-        "/**",
-        " * @fileoverview Generated externs.",
-        " * @externs",
-        " */",
-        builder.build()));
+    compiler.setExternExports(
+        """
+        /**
+         * @fileoverview Generated externs.
+         * @externs
+         */
+        """
+            + builder.build());
   }
 
   @Override
@@ -570,8 +571,10 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
     } else if (n.isAssign()) {
       // TODO(b/123718645): Add support for destructuring assignments
       Node lhs = n.getFirstChild();
-      if (lhs.isQualifiedName()) {
+      if (lhs.isQualifiedName() && (!lhs.hasChildren() || !lhs.getFirstChild().isThis())) {
         // qualified.name = value;
+        //   but not
+        // this.prop = value;
         definitionMap.put(lhs.getQualifiedName(), n.getLastChild());
       }
     } else if (n.isName()) {
@@ -612,7 +615,7 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
 
     // Confirm the arguments are the expected types. If they are not,
     // then we have an export that we cannot statically identify.
-    if (!nameArg.isString()) {
+    if (!nameArg.isStringLit()) {
       return;
     }
 
@@ -642,7 +645,7 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
       return;
     }
 
-    if (!nameArg.isString()) {
+    if (!nameArg.isStringLit()) {
       return;
     }
 
@@ -681,7 +684,7 @@ final class ExternExportsPass extends NodeTraversal.AbstractPostOrderCallback
             ? NodeUtil.getEnclosingClass(constructorNode)
             : constructorNode;
     String className = NodeUtil.getName(classNode);
-    String propertyName = thisDotPropName.getLastChild().getString();
+    String propertyName = thisDotPropName.getString();
     String prototypeName = className + ".prototype";
     Node propertyNameNode = NodeUtil.newQName(compiler, "this." + propertyName);
 

@@ -22,6 +22,7 @@
  * @see http://w3c-test.org/webperf/specs/ResourceTiming
  * @see http://www.w3.org/TR/performance-timeline
  * @see http://www.w3.org/TR/user-timing/
+ * @see https://w3c.github.io/server-timing/
  *
  * @externs
  */
@@ -72,6 +73,7 @@ function PerformanceResourceTiming() {}
 /** @type {number} */ PerformanceResourceTiming.prototype.connectEnd;
 /** @type {number} */
 PerformanceResourceTiming.prototype.secureConnectionStart;
+/** @type {number} */ PerformanceResourceTiming.prototype.responseStatus;
 /** @type {number} */ PerformanceResourceTiming.prototype.requestStart;
 /** @type {number} */ PerformanceResourceTiming.prototype.responseStart;
 /** @type {number} */ PerformanceResourceTiming.prototype.responseEnd;
@@ -85,6 +87,17 @@ PerformanceResourceTiming.prototype.decodedBodySize;
 /** @type {number|undefined} */
 PerformanceResourceTiming.prototype.workerStart;
 /** @type {string} */ PerformanceResourceTiming.prototype.nextHopProtocol;
+/** @type {!Array<!PerformanceServerTiming>} */ PerformanceResourceTiming.prototype.serverTiming;
+/** @type {string} */ PerformanceResourceTiming.prototype.deliveryType;
+
+/**
+ * https://w3c.github.io/server-timing/#dom-performanceservertiming
+ * @constructor
+ */
+function PerformanceServerTiming() {}
+/** @type {string} */ PerformanceServerTiming.prototype.name;
+/** @type {number} */ PerformanceServerTiming.prototype.duration;
+/** @type {string} */ PerformanceServerTiming.prototype.description;
 
 /**
  * Possible values are 'navigate', 'reload', 'back_forward', and 'prerender'.
@@ -111,6 +124,8 @@ function PerformanceNavigationTiming() {}
 /** @type {number} */ PerformanceNavigationTiming.prototype.loadEventEnd;
 /** @type {NavigationType} */ PerformanceNavigationTiming.prototype.type;
 /** @type {number} */ PerformanceNavigationTiming.prototype.redirectCount;
+// https://wicg.github.io/nav-speculation/prerendering.html#performance-navigation-timing-extension
+/** @type {number} */ PerformanceNavigationTiming.prototype.activationStart;
 
 /**
  * https://w3c.github.io/paint-timing/#sec-PerformancePaintTiming
@@ -161,6 +176,16 @@ function LayoutShift() {}
 /** @type {number} */ LayoutShift.prototype.value;
 /** @type {boolean} */ LayoutShift.prototype.hadRecentInput;
 /** @type {number} */ LayoutShift.prototype.lastInputTime;
+/** @type {!Array<!LayoutShiftAttribution>} */ LayoutShift.prototype.sources;
+
+/**
+ * https://wicg.github.io/layout-instability/#sec-layout-shift
+ * @constructor
+ */
+function LayoutShiftAttribution() {}
+/** @type {?Node} */ LayoutShiftAttribution.prototype.node;
+/** @type {!DOMRectReadOnly} */ LayoutShiftAttribution.prototype.previousRect;
+/** @type {!DOMRectReadOnly} */ LayoutShiftAttribution.prototype.currentRect;
 
 /**
  * https://wicg.github.io/largest-contentful-paint/#largestcontentfulpaint
@@ -184,9 +209,45 @@ function PerformanceEventTiming() {}
 /** @type {number} */ PerformanceEventTiming.prototype.processingStart;
 /** @type {number} */ PerformanceEventTiming.prototype.processingEnd;
 /** @type {boolean} */ PerformanceEventTiming.prototype.cancelable;
+/** @type {?Node} */ PerformanceEventTiming.prototype.target;
+
+/**
+ * @record
+ * @see https://www.w3.org/TR/user-timing-3/#performancemarkoptions-dictionary
+ */
+function PerformanceMarkOptions() {}
+/** @type {Object|undefined} */ PerformanceMarkOptions.prototype.detail;
+/** @type {number|undefined} */ PerformanceMarkOptions.prototype.startTime;
+
+/**
+ * @record
+ * @see https://www.w3.org/TR/user-timing-3/#performancemeasureoptions-dictionary
+ */
+function PerformanceMeasureOptions() {}
+/** @type {Object|undefined} */ PerformanceMeasureOptions.prototype.detail;
+/** @type {string|number|undefined} */ PerformanceMeasureOptions.prototype
+    .start;
+/** @type {number|undefined} */ PerformanceMeasureOptions.prototype.duration;
+/** @type {string|number|undefined} */ PerformanceMeasureOptions.prototype.end;
+
+/**
+ * @see https://developer.mozilla.org/docs/Web/API/EventCounts
+ * @constructor
+ */
+function EventCounts() {}
+
+/**
+ * @param {function(number, string, !EventCounts): void} callback
+ * @param {*} thisArg
+ * @return {void}
+ */
+EventCounts.prototype.forEach = function(callback, thisArg) {}
 
 /** @constructor */
 function Performance() {}
+
+/** @const {!EventCounts} */
+Performance.prototype.eventCounts;
 
 /** @type {PerformanceTiming} */
 Performance.prototype.timing;
@@ -253,9 +314,10 @@ Performance.prototype.now = function() {};
 
 /**
  * @param {string} markName
- * @return {undefined}
+ * @param {PerformanceMarkOptions=} markOptions
+ * @return {PerformanceMark|undefined}
  */
-Performance.prototype.mark = function(markName) {};
+Performance.prototype.mark = function(markName, markOptions) {};
 
 /**
  * @param {string=} opt_markName
@@ -265,12 +327,12 @@ Performance.prototype.clearMarks = function(opt_markName) {};
 
 /**
  * @param {string} measureName
- * @param {string=} opt_startMark
- * @param {string=} opt_endMark
- * @return {undefined}
+ * @param {string|PerformanceMeasureOptions=} startOrMeasureOptions
+ * @param {string=} endMark
+ * @return {PerformanceMeasure|undefined}
  */
 Performance.prototype.measure = function(
-    measureName, opt_startMark, opt_endMark) {};
+    measureName, startOrMeasureOptions, endMark) {};
 
 /**
  * @param {string=} opt_measureName
@@ -286,6 +348,24 @@ Window.prototype.performance;
  * @suppress {duplicate}
  */
 var performance;
+
+/**
+ * @constructor
+ * @extends {PerformanceEntry}
+ * @param {string} markName
+ * @param {PerformanceMarkOptions=} markOptions
+ * @see https://www.w3.org/TR/user-timing-3/#performancemark
+ */
+function PerformanceMark(markName, markOptions) {}
+/** @type {Object} (readonly) */ PerformanceMark.prototype.detail;
+
+/**
+ * @constructor
+ * @extends {PerformanceEntry}
+ * @see https://www.w3.org/TR/user-timing-3/#performancemeasure
+ */
+function PerformanceMeasure() {}
+/** @type {Object} (readonly) */ PerformanceMeasure.prototype.detail;
 
 /**
  * @constructor
@@ -315,13 +395,15 @@ PerformanceObserver.prototype.observe = function(options) {};
 PerformanceObserver.prototype.disconnect = function() {};
 
 /**
- * See https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver/takeRecords
- * @return {!PerformanceObserverEntryList}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver/takeRecords
+ * @see https://www.w3.org/TR/performance-timeline-2/#takerecords-method
+ * @return {!Array<!PerformanceEntry>} The current PerformanceEntry list stored
+ *     in the performance observer buffer, emptying it out.
  */
 PerformanceObserver.prototype.takeRecords = function() {};
 
 /** @const {!Array<string>} */
-PerformanceObserver.prototype.supportedEntryTypes;
+PerformanceObserver.supportedEntryTypes;
 
 /**
  * @record

@@ -18,16 +18,14 @@ package com.google.javascript.jscomp.resources;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.common.annotations.GwtIncompatible;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.io.CharStreams;
-import com.google.javascript.jscomp.ConformanceConfig;
 import java.io.IOException;
 import java.io.InputStreamReader;
 
 /**
  * Utility class that handles resource loading.
  */
-@GwtIncompatible("getResource, java.io.InputStreamReader")
 public final class ResourceLoader {
   public static String loadTextResource(Class<?> clazz, String path) {
     try {
@@ -42,24 +40,14 @@ public final class ResourceLoader {
     }
   }
 
-  /** Load the global ConformanceConfig */
-  public static ConformanceConfig loadGlobalConformance(Class<?> clazz) {
-    ConformanceConfig.Builder builder = ConformanceConfig.newBuilder();
-    if (resourceExists(clazz, "global_conformance.binarypb")) {
-      try {
-        builder.mergeFrom(clazz.getResourceAsStream("global_conformance.binarypb"));
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
-    }
-    return builder.build();
+  public static ImmutableMap<String, String> loadPropertiesMap(
+      Class<?> clazz, String resourceName) {
+    return PropertiesParser.parse(loadTextResource(clazz, resourceName));
   }
 
   public static boolean resourceExists(Class<?> clazz, String path) {
     return clazz.getResource(path) != null;
   }
 
-  public static String[] resourceList(Class<?> clazz) {
-    throw new UnsupportedOperationException("resourceList only available in GWT code");
-  }
+  private ResourceLoader() {}
 }

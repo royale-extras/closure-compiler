@@ -19,7 +19,7 @@ package com.google.javascript.jscomp.parsing.parser;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import java.util.EnumMap;
-import java.util.Map;
+import java.util.EnumSet;
 
 /**
  * The JavaScript keywords.
@@ -77,36 +77,28 @@ public enum Keywords {
     //7.8 Literals
     NULL("null", TokenType.NULL),
     TRUE("true", TokenType.TRUE),
-    FALSE("false", TokenType.FALSE),
+  FALSE("false", TokenType.FALSE);
 
-    // TypeScript
-    DECLARE("declare", TokenType.DECLARE),
-    TYPE("type", TokenType.TYPE),
-    MODULE("module", TokenType.MODULE), // Only accepted as alias for namespaces.
-    NAMESPACE("namespace", TokenType.NAMESPACE);
-
-  private static final Map<String, Keywords> KEYWORDS_BY_NAME;
-  private static final Map<TokenType, Keywords> KEYWORDS_BY_TYPE;
+  private static final ImmutableMap<String, Keywords> KEYWORDS_BY_NAME;
+  private static final ImmutableMap<TokenType, Keywords> KEYWORDS_BY_TYPE;
 
   static {
     ImmutableMap.Builder<String, Keywords> keywordsByName = ImmutableMap.builder();
     EnumMap<TokenType, Keywords> keywordsByType = new EnumMap<>(TokenType.class);
-    for (Keywords kw : Keywords.values()) {
+    for (Keywords kw : EnumSet.allOf(Keywords.class)) {
       keywordsByName.put(kw.value, kw);
       keywordsByType.put(kw.type, kw);
     }
-    KEYWORDS_BY_NAME = keywordsByName.build();
+    KEYWORDS_BY_NAME = keywordsByName.buildOrThrow();
     KEYWORDS_BY_TYPE = Maps.immutableEnumMap(keywordsByType);
   }
 
   public final String value;
   public final TokenType type;
-  private final boolean isTypeScriptSpecificKeyword;
 
   Keywords(String value, TokenType type) {
     this.value = value;
     this.type = type;
-    this.isTypeScriptSpecificKeyword = isTypeScriptSpecificKeyword(type);
   }
 
   @Override
@@ -114,24 +106,12 @@ public enum Keywords {
     return value;
   }
 
-  public static boolean isKeyword(String value, boolean includeTypeScriptKeywords) {
-    return get(value, includeTypeScriptKeywords) != null;
+  public static boolean isKeyword(String value) {
+    return get(value) != null;
   }
 
   public static boolean isKeyword(TokenType token) {
     return get(token) != null;
-  }
-
-  public static boolean isTypeScriptSpecificKeyword(TokenType type) {
-    switch (type) {
-      case DECLARE:
-      case TYPE:
-      case MODULE:
-      case NAMESPACE:
-        return true;
-      default:
-        return false;
-    }
   }
 
   /**
@@ -139,29 +119,18 @@ public enum Keywords {
    * be used as a variable identifier, but only in non-strict mode.
    */
   public static boolean isStrictKeyword(TokenType token) {
-    switch(token) {
-      case IMPLEMENTS:
-      case INTERFACE:
-      case LET:
-      case PACKAGE:
-      case PRIVATE:
-      case PROTECTED:
-      case PUBLIC:
-      case STATIC:
-      case YIELD:
-        return true;
-      default:
-        return false;
-    }
+    return switch (token) {
+      case IMPLEMENTS, INTERFACE, LET, PACKAGE, PRIVATE, PROTECTED, PUBLIC, STATIC, YIELD -> true;
+      default -> false;
+    };
   }
 
   public static TokenType getTokenType(String value) {
     return KEYWORDS_BY_NAME.get(value).type;
   }
 
-  public static Keywords get(String value, boolean includeTypeScriptKeywords) {
-    Keywords k = KEYWORDS_BY_NAME.get(value);
-    return (k != null && (includeTypeScriptKeywords || !k.isTypeScriptSpecificKeyword)) ? k : null;
+  public static Keywords get(String value) {
+    return KEYWORDS_BY_NAME.get(value);
   }
 
   public static Keywords get(TokenType token) {

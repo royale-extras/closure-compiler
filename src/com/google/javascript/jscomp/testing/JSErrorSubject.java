@@ -19,9 +19,9 @@ import static com.google.common.truth.Truth.assertAbout;
 
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.Subject;
+import com.google.errorprone.annotations.CheckReturnValue;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.JSError;
-import javax.annotation.CheckReturnValue;
 
 /**
  * A Truth Subject for the JSError class. Usage:
@@ -48,10 +48,10 @@ public final class JSErrorSubject extends Subject {
   }
 
   public void hasType(DiagnosticType type) {
-    check("getType()").that(actual.getType()).isEqualTo(type);
+    check("getType()").that(actual.type()).isEqualTo(type);
   }
 
   public void hasMessage(String msg) {
-    check("description").that(actual.getDescription()).isEqualTo(msg);
+    check("description").that(actual.description()).isEqualTo(msg);
   }
 }

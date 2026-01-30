@@ -27,9 +27,10 @@ import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A summary of a script for use during fixes.
@@ -107,6 +108,11 @@ public final class ScriptMetadata {
   }
 
   private static class FillerCallback extends AbstractPostOrderCallback {
+    private static final QualifiedName GOOG_MODULE = QualifiedName.of("goog.module");
+    private static final QualifiedName GOOG_REQUIRE = QualifiedName.of("goog.require");
+    private static final QualifiedName GOOG_REQUIRETYPE = QualifiedName.of("goog.requireType");
+    private static final QualifiedName GOOG_FORWARDDECLARE =
+        QualifiedName.of("goog.forwardDeclare");
 
     private final ScriptMetadata toFill;
 
@@ -123,19 +129,17 @@ public final class ScriptMetadata {
 
     private void updateSupportsRequireAlias(Node n) {
       switch (n.getToken()) {
-        case MODULE_BODY:
-          break;
-
-        case CALL:
+        case MODULE_BODY -> {}
+        case CALL -> {
           if (n.getChildCount() != 2
-              || !n.getFirstChild().matchesQualifiedName("goog.module")
-              || !n.getSecondChild().isString()) {
+              || !GOOG_MODULE.matches(n.getFirstChild())
+              || !n.getSecondChild().isStringLit()) {
             return;
           }
-          break;
-
-        default:
+        }
+        default -> {
           return;
+        }
       }
 
       this.toFill.supportsRequireAliases = true;
@@ -171,14 +175,14 @@ public final class ScriptMetadata {
       if (call == null
           || !call.isCall()
           || call.getChildCount() != 2
-          || !call.getSecondChild().isString()) {
+          || !call.getSecondChild().isStringLit()) {
         return false;
       }
 
       Node callee = call.getFirstChild();
-      return callee.matchesQualifiedName("goog.require")
-          || callee.matchesQualifiedName("goog.requireType")
-          || callee.matchesQualifiedName("goog.forwardDeclare");
+      return GOOG_REQUIRE.matches(callee)
+          || GOOG_REQUIRETYPE.matches(callee)
+          || GOOG_FORWARDDECLARE.matches(callee);
     }
 
     private void maybeCollectNames(Node n) {

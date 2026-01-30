@@ -16,14 +16,16 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.annotations.GwtIncompatible;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 import com.google.gson.stream.JsonWriter;
 import com.google.javascript.jscomp.LightweightMessageFormatter.LineNumberingFormatter;
 import com.google.javascript.jscomp.SortingErrorManager.ErrorReportGenerator;
 import com.google.javascript.jscomp.SortingErrorManager.ErrorWithLevel;
 import com.google.javascript.jscomp.SourceExcerptProvider.SourceExcerpt;
-import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.TokenUtil;
 import java.io.ByteArrayOutputStream;
@@ -53,26 +55,36 @@ public class JsonErrorReportGenerator implements ErrorReportGenerator {
   }
 
   @Override
-  @GwtIncompatible
   public void generateReport(SortingErrorManager manager) {
     ByteArrayOutputStream bufferedStream = new ByteArrayOutputStream();
-    try (JsonWriter jsonWriter = new JsonWriter(new OutputStreamWriter(bufferedStream, "UTF-8"))) {
+    try (JsonWriter jsonWriter = new JsonWriter(new OutputStreamWriter(bufferedStream, UTF_8))) {
       jsonWriter.beginArray();
       for (ErrorWithLevel message : manager.getSortedDiagnostics()) {
-        String sourceName = message.error.getSourceName();
+        String sourceName = message.error.sourceName();
         int lineNumber = message.error.getLineNumber();
-        int charno = message.error.getCharno();
+        int charno = message.error.charno();
 
         jsonWriter.beginObject();
         jsonWriter.name("level").value(message.level == CheckLevel.ERROR ? "error" : "warning");
-        jsonWriter.name("description").value(message.error.getDescription());
-        jsonWriter.name("key").value(message.error.getType().key);
+        jsonWriter.name("description").value(message.error.description());
+        jsonWriter.name("key").value(message.error.type().key);
+        if (message.error.requirement() != null) {
+          jsonWriter.name("requirement").beginObject();
+          jsonWriter.name("ruleId").value(message.error.requirement().getRuleId());
+          jsonWriter.name("configFiles").beginArray();
+          for (String configFile : message.error.requirement().getConfigFileList()) {
+            jsonWriter.value(configFile);
+          }
+          jsonWriter.endArray();
+          jsonWriter.endObject();
+        }
         jsonWriter.name("source").value(sourceName);
         jsonWriter.name("line").value(lineNumber);
         jsonWriter.name("column").value(charno);
-        Node node = message.error.getNode();
-        if (node != null) {
-          jsonWriter.name("length").value(node.getLength());
+        Node node = message.error.node();
+        int regionLength = message.error.length();
+        if (node != null && regionLength > 0) {
+          jsonWriter.name("length").value(message.error.length());
         }
 
         // extract source excerpt
@@ -94,14 +106,10 @@ public class JsonErrorReportGenerator implements ErrorReportGenerator {
                 b.append(' ');
               }
             }
-            if (message.error.getNode() == null) {
+            if (node == null) {
               b.append("^");
             } else {
-              int length =
-                  Math.max(
-                      1,
-                      Math.min(
-                          message.error.getNode().getLength(), sourceExcerpt.length() - charno));
+              int length = max(1, min(regionLength, sourceExcerpt.length() - charno));
               for (int i = 0; i < length; i++) {
                 b.append("^");
               }
@@ -113,7 +121,7 @@ public class JsonErrorReportGenerator implements ErrorReportGenerator {
 
         OriginalMapping mapping =
             sourceExcerptProvider.getSourceMapping(
-                sourceName, message.error.getLineNumber(), message.error.getCharno());
+                sourceName, message.error.getLineNumber(), message.error.charno());
 
         if (mapping != null) {
           jsonWriter.name("originalLocation").beginObject();
@@ -129,12 +137,12 @@ public class JsonErrorReportGenerator implements ErrorReportGenerator {
       StringBuilder summaryBuilder = new StringBuilder();
       if (manager.getTypedPercent() > 0.0) {
         summaryBuilder.append(
-            SimpleFormat.format(
+            String.format(
                 "%d error(s), %d warning(s), %.1f%% typed",
                 manager.getErrorCount(), manager.getWarningCount(), manager.getTypedPercent()));
       } else {
         summaryBuilder.append(
-            SimpleFormat.format(
+            String.format(
                 "%d error(s), %d warning(s)", manager.getErrorCount(), manager.getWarningCount()));
       }
       jsonWriter.beginObject();
@@ -147,6 +155,6 @@ public class JsonErrorReportGenerator implements ErrorReportGenerator {
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
-    stream.append(bufferedStream.toString());
+    stream.append(bufferedStream.toString(UTF_8));
   }
 }

@@ -20,46 +20,60 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.AbstractCompiler;
+import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
-import com.google.javascript.jscomp.HotSwapCompilerPass;
 import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.QualifiedName;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Walks the AST looking for usages of qualified names, and 'goog.require's of those names. Then,
  * reconciles the two lists, and reports warning for any unnecessary require statements.
  */
 public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
-    implements HotSwapCompilerPass {
+    implements CompilerPass {
   private final AbstractCompiler compiler;
 
   // Keys are the local name of a required namespace. Values are the goog.require CALL node.
-  private final Map<String, Node> requires = new HashMap<>();
+  private final Map<String, Node> requires = new LinkedHashMap<>();
 
   // Adding an entry to usages indicates that the name (either a fully qualified or local name)
   // is used and can be required.  Note that since usages are name-based and not scoped, any usage
   // that shadows an unused require in that file will cause the extra require warning to be missed.
-  private final Set<String> usages = new HashSet<>();
+  private final Set<String> usages = new LinkedHashSet<>();
+
+  /**
+   * This is only relevant for the standalone CheckExtraRequires run. This is used to restrict the
+   * linter rule only for the modules listed in this set
+   */
+  private final @Nullable ImmutableSet<String> requiresToRemove;
 
   public static final DiagnosticType EXTRA_REQUIRE_WARNING =
       DiagnosticType.disabled(
           "JSC_EXTRA_REQUIRE_WARNING", "extra require: ''{0}'' is never referenced in this file");
 
-  // TODO(b/130215517): This should eventually be removed and exceptions supressed
+  // TODO(b/130215517): This should eventually be removed and exceptions suppressed
   private static final ImmutableSet<String> DEFAULT_EXTRA_NAMESPACES =
       ImmutableSet.of(
           "goog.testing.asserts", "goog.testing.jsunit", "goog.testing.JsTdTestCaseAdapter");
 
-  public CheckExtraRequires(AbstractCompiler compiler) {
+  /**
+   * @param requiresToRemove providing a non-null set to this parameter will result in only removing
+   *     the goog.requires that are in this set. If this is null, it will attempt to remove all the
+   *     unnecessary requires.
+   */
+  public CheckExtraRequires(
+      AbstractCompiler compiler, @Nullable ImmutableSet<String> requiresToRemove) {
     this.compiler = compiler;
+    this.requiresToRemove = requiresToRemove;
   }
 
   @Override
@@ -68,12 +82,7 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
     NodeTraversal.traverse(compiler, root, this);
   }
 
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    process(null, scriptRoot);
-  }
-
-  private String extractNamespace(Node call, String... primitiveNames) {
+  private @Nullable String extractNamespace(Node call, String... primitiveNames) {
     Node callee = call.getFirstChild();
     if (!callee.isGetProp()) {
       return null;
@@ -81,7 +90,7 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
     for (String primitiveName : primitiveNames) {
       if (callee.matchesQualifiedName(primitiveName)) {
         Node target = callee.getNext();
-        if (target != null && target.isString()) {
+        if (target != null && target.isStringLit()) {
           return target.getString();
         }
       }
@@ -101,29 +110,24 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
   public void visit(NodeTraversal t, Node n, Node parent) {
     maybeAddJsDocUsages(n);
     switch (n.getToken()) {
-      case NAME:
+      case NAME -> {
         if (!NodeUtil.isLValue(n) && !parent.isGetProp() && !parent.isImportSpec()) {
           visitQualifiedName(n);
         }
-        break;
-      case GETPROP:
+      }
+      case GETPROP -> {
         // If parent is a GETPROP, they will handle all the usages.
         if (!parent.isGetProp() && n.isQualifiedName()) {
           visitQualifiedName(n);
         }
-        break;
-      case CALL:
-        visitCallNode(n, parent);
-        break;
-      case SCRIPT:
+      }
+      case CALL -> visitCallNode(n, parent);
+      case SCRIPT -> {
         visitScriptNode();
         reset();
-        break;
-      case IMPORT:
-        visitImportNode(n);
-        break;
-      default:
-        break;
+      }
+      case IMPORT -> visitImportNode(n);
+      default -> {}
     }
   }
 
@@ -137,7 +141,8 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
     for (Map.Entry<String, Node> entry : requires.entrySet()) {
       String require = entry.getKey();
       Node call = entry.getValue();
-      if (!usages.contains(require)) {
+      if (!usages.contains(require)
+          && (requiresToRemove == null || requiresToRemove.contains(require))) {
         reportExtraRequireWarning(call, require);
       }
     }
@@ -169,9 +174,7 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
    * </pre>
    */
   private void visitRequire(String localName, Node node) {
-    if (!requires.containsKey(localName)) {
-      requires.put(localName, node);
-    }
+    requires.putIfAbsent(localName, node);
   }
 
   private void visitImportNode(Node importNode) {
@@ -181,7 +184,9 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
     }
     Node namedImports = defaultImport.getNext();
     if (namedImports.isImportSpecs()) {
-      for (Node importSpec : namedImports.children()) {
+      for (Node importSpec = namedImports.getFirstChild();
+          importSpec != null;
+          importSpec = importSpec.getNext()) {
         visitRequire(importSpec.getLastChild().getString(), importNode);
       }
     }
@@ -196,7 +201,9 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
       visitRequire(parent.getString(), googRequireCall);
     } else if (parent.isDestructuringLhs() && parent.getFirstChild().isObjectPattern()) {
       if (parent.getFirstChild().hasChildren()) {
-        for (Node stringKey : parent.getFirstChild().children()) {
+        for (Node stringKey = parent.getFirstFirstChild();
+            stringKey != null;
+            stringKey = stringKey.getNext()) {
           Node importName = stringKey.getFirstChild();
           if (!importName.isName()) {
             // invalid reported elsewhere
@@ -212,6 +219,8 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
     }
   }
 
+  private static final QualifiedName GOOG_MODULE_GET = QualifiedName.of("goog.module.get");
+
   private void visitCallNode(Node call, Node parent) {
     String required = extractNamespaceIfRequire(call);
     if (required != null) {
@@ -224,7 +233,7 @@ public class CheckExtraRequires extends NodeTraversal.AbstractPostOrderCallback
       return;
     }
     Node callee = call.getFirstChild();
-    if (callee.matchesQualifiedName("goog.module.get") && call.getSecondChild().isString()) {
+    if (GOOG_MODULE_GET.matches(callee) && call.getSecondChild().isStringLit()) {
       usages.add(call.getSecondChild().getString());
     }
   }

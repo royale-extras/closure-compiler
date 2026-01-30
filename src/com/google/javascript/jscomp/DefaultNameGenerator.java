@@ -26,14 +26,13 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
 
 /**
  * A simple class for generating unique JavaScript variable/property names.
  *
  * <p>This class is not thread safe.
  */
-final class DefaultNameGenerator implements NameGenerator {
+public final class DefaultNameGenerator implements NameGenerator {
 
   /**
    * Represents a char that can be used in renaming as well as how often that char appears in the
@@ -53,7 +52,7 @@ final class DefaultNameGenerator implements NameGenerator {
       this.occurrence = 0;
     }
 
-    // @Override removed for GWT compatibility
+    @Override
     public CharPriority clone() {
       CharPriority result = new CharPriority(name, order);
       result.occurrence = occurrence;
@@ -73,7 +72,7 @@ final class DefaultNameGenerator implements NameGenerator {
     }
   }
 
-  // TODO(user): Maybe we don't need a HashMap to look up.
+  // TODO(user): Maybe we don't need a LinkedHashMap to look up.
   // I started writing a skip-list like data-structure that would let us
   // have O(1) favors() and O(1) reset() but the code got very messy.
   // Lets start with a logical implementation first until performance becomes
@@ -111,12 +110,12 @@ final class DefaultNameGenerator implements NameGenerator {
 
   public DefaultNameGenerator() {
     buildPriorityLookupMap();
-    Set<String> reservedNames = Sets.newHashSetWithExpectedSize(0);
-    reset(reservedNames, "", null);
+    Set<String> reservedNames = Sets.newLinkedHashSetWithExpectedSize(0);
+    reset(reservedNames, "", ImmutableSet.of());
   }
 
   public DefaultNameGenerator(
-      Set<String> reservedNames, String prefix, @Nullable char[] reservedCharacters) {
+      Set<String> reservedNames, String prefix, Set<Character> reservedCharacters) {
     this(reservedNames, prefix, reservedCharacters, reservedCharacters);
   }
 
@@ -135,19 +134,20 @@ final class DefaultNameGenerator implements NameGenerator {
   public DefaultNameGenerator(
       Set<String> reservedNames,
       String prefix,
-      @Nullable char[] reservedFirstCharacters,
-      @Nullable char[] reservedNonFirstCharacters) {
+      Set<Character> reservedFirstCharacters,
+      Set<Character> reservedNonFirstCharacters) {
     buildPriorityLookupMap();
     reset(reservedNames, prefix, reservedFirstCharacters, reservedNonFirstCharacters);
   }
 
-  private DefaultNameGenerator(Set<String> reservedNames, String prefix,
-      @Nullable char[] reservedCharacters,
+  private DefaultNameGenerator(
+      Set<String> reservedNames,
+      String prefix,
+      Set<Character> reservedCharacters,
       Map<Character, CharPriority> priorityLookupMap) {
     // Clone the priorityLookupMap to preserve information about how often
     // characters are used.
-    this.priorityLookupMap = Maps.newHashMapWithExpectedSize(
-        NONFIRST_CHAR.length);
+    this.priorityLookupMap = Maps.newLinkedHashMapWithExpectedSize(NONFIRST_CHAR.length);
     for (Map.Entry<Character, CharPriority> entry :
       priorityLookupMap.entrySet()) {
       this.priorityLookupMap.put(entry.getKey(), entry.getValue().clone());
@@ -157,7 +157,7 @@ final class DefaultNameGenerator implements NameGenerator {
   }
 
   private void buildPriorityLookupMap() {
-    priorityLookupMap = Maps.newHashMapWithExpectedSize(NONFIRST_CHAR.length);
+    priorityLookupMap = Maps.newLinkedHashMapWithExpectedSize(NONFIRST_CHAR.length);
     int order = 0;
     for (char c : NONFIRST_CHAR) {
       priorityLookupMap.put(c, new CharPriority(c, order));
@@ -166,12 +166,12 @@ final class DefaultNameGenerator implements NameGenerator {
   }
 
   /** Returns if name is a badName (let, yield, eval, etc) that must not be generated */
-  private static boolean isBadName(String name) {
+  static boolean isBadName(String name) {
     return BAD_NAMES.contains(name);
   }
 
   @Override
-  public void reset(Set<String> reservedNames, String prefix, @Nullable char[] reservedCharacters) {
+  public void reset(Set<String> reservedNames, String prefix, Set<Character> reservedCharacters) {
     reset(reservedNames, prefix, reservedCharacters, reservedCharacters);
   }
 
@@ -185,8 +185,8 @@ final class DefaultNameGenerator implements NameGenerator {
   public void reset(
       Set<String> reservedNames,
       String prefix,
-      @Nullable char[] reservedFirstCharacters,
-      @Nullable char[] reservedNonFirstCharacters) {
+      Set<Character> reservedFirstCharacters,
+      Set<Character> reservedNonFirstCharacters) {
 
     this.reservedNames = reservedNames;
     this.prefix = prefix;
@@ -203,9 +203,7 @@ final class DefaultNameGenerator implements NameGenerator {
 
   @Override
   public NameGenerator clone(
-      Set<String> reservedNames,
-      String prefix,
-      @Nullable char[] reservedCharacters) {
+      Set<String> reservedNames, String prefix, Set<Character> reservedCharacters) {
     return new DefaultNameGenerator(reservedNames, prefix, reservedCharacters,
         priorityLookupMap);
   }
@@ -227,13 +225,14 @@ final class DefaultNameGenerator implements NameGenerator {
 
   /**
    * Provides the array of available characters based on the specified arrays.
+   *
    * @param chars The list of characters that are legal
    * @param reservedCharacters The characters that should not be used
-   * @return An array of characters to use. Will return the chars array if
-   *    reservedCharacters is null or empty, otherwise creates a new array.
+   * @return An array of characters to use. Will return the chars array if reservedCharacters is
+   *     null or empty, otherwise creates a new array.
    */
-  CharPriority[] reserveCharacters(char[] chars, char[] reservedCharacters) {
-    if (reservedCharacters == null || reservedCharacters.length == 0) {
+  CharPriority[] reserveCharacters(char[] chars, Set<Character> reservedCharacterSet) {
+    if (reservedCharacterSet.isEmpty()) {
       CharPriority[] result = new CharPriority[chars.length];
       for (int i = 0; i < chars.length; i++) {
         result[i] = priorityLookupMap.get(chars[i]);
@@ -241,9 +240,7 @@ final class DefaultNameGenerator implements NameGenerator {
       return result;
     }
     Set<Character> charSet = new LinkedHashSet<>(Chars.asList(chars));
-    for (char reservedCharacter : reservedCharacters) {
-      charSet.remove(reservedCharacter);
-    }
+    charSet.removeAll(reservedCharacterSet);
 
     CharPriority[] result = new CharPriority[charSet.size()];
     int index = 0;
@@ -295,24 +292,27 @@ final class DefaultNameGenerator implements NameGenerator {
   public String generateNextName() {
     String name;
     do {
-      name = prefix;
+      StringBuilder sb = new StringBuilder();
       int i = nameCount;
+      if (!prefix.isEmpty()) {
+        sb.append(prefix);
+      }
 
-      if (name.isEmpty()) {
+      if (sb.length() == 0) {
         int pos = i % firstChars.length;
-        name = String.valueOf(firstChars[pos].name);
+        sb.append(firstChars[pos].name);
         i /= firstChars.length;
       }
 
       while (i > 0) {
         i--;
         int pos = i % nonFirstChars.length;
-        name += nonFirstChars[pos].name;
+        sb.append(nonFirstChars[pos].name);
         i /= nonFirstChars.length;
       }
 
       nameCount++;
-
+      name = sb.toString();
       // Make sure it's not a JS keyword or reserved name.
     } while (TokenStream.isKeyword(name) || reservedNames.contains(name) || isBadName(name));
 

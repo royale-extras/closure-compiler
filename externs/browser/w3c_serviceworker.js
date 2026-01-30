@@ -100,6 +100,9 @@ function PushSubscription() {}
 /** @type {string} */
 PushSubscription.prototype.endpoint;
 
+/** @type {number|null} */
+PushSubscription.prototype.expirationTime;
+
 /**
  * Please note there is an intent to deprecate this field in Chrome 43 or 44.
  * See https://www.chromestatus.com/feature/5283829761703936.
@@ -113,20 +116,23 @@ PushSubscription.prototype.options;
 /** @return {!Promise<boolean>} */
 PushSubscription.prototype.unsubscribe = function() {};
 
-/** @enum {string} */
-// This is commented out since it has not been implemented yet in Chrome beta.
-// Uncomment once it is available.
-// var PushPermissionStatus  = {
-//  GRANTED: 'granted',
-//  DENIED: 'denied',
-//  DEFAULT: 'default'
-//};
+/**
+ * @param {string} name
+ * @return {!ArrayBuffer|null}
+ */
+PushSubscription.prototype.getKey = function(name) {};
+
 
 /**
  * @see https://w3c.github.io/push-api/#idl-def-PushManager
  * @constructor
  */
 function PushManager() {}
+
+/**
+ * @const {!Array<string>}
+ */
+PushManager.supportedContentEncodings;
 
 /**
  * @param {PushSubscriptionOptionsInit=} opt_options
@@ -137,10 +143,11 @@ PushManager.prototype.subscribe = function(opt_options) {};
 /** @return {!Promise<PushSubscription>} */
 PushManager.prototype.getSubscription = function() {};
 
-/** @return {!Promise<PushPermissionStatus>} */
-// This is commented out since it has not been implemented yet in Chrome beta.
-// Uncomment once it is available.
-// PushManager.prototype.hasPermission = function() {};
+/**
+ * @param {PushSubscriptionOptionsInit=} options
+ * @return {!Promise<string>}
+ */
+PushManager.prototype.permissionState = function(options) {};
 
 /**
  * @see https://wicg.github.io/BackgroundSync/spec/#sync-manager-interface
@@ -277,17 +284,17 @@ ServiceWorkerContainer.prototype.controller;
 ServiceWorkerContainer.prototype.ready;
 
 /**
- * @param {string} scriptURL
+ * @param {!TrustedScriptURL|!URL|string} scriptURL
  * @param {RegistrationOptions=} opt_options
  * @return {!Promise<!ServiceWorkerRegistration>}
  */
 ServiceWorkerContainer.prototype.register = function(scriptURL, opt_options) {};
 
 /**
- * @param {string=} opt_documentURL
+ * @param {!URL|string=} documentURL
  * @return {!Promise<!ServiceWorkerRegistration|undefined>}
  */
-ServiceWorkerContainer.prototype.getRegistration = function(opt_documentURL) {};
+ServiceWorkerContainer.prototype.getRegistration = function(documentURL) {};
 
 /**
  * @return {!Promise<Array<!ServiceWorkerRegistration>>}
@@ -300,8 +307,14 @@ ServiceWorkerContainer.prototype.oncontrollerchange;
 /** @type {?function(!ExtendableMessageEvent): void} */
 ServiceWorkerContainer.prototype.onmessage;
 
+/** @type {?function(!MessageEvent<*>)} */
+ServiceWorkerContainer.prototype.onmessageerror;
+
 /** @type {?function(!ErrorEvent): void} */
 ServiceWorkerContainer.prototype.onerror;
+
+/** @return {undefined} */
+ServiceWorkerContainer.prototype.startMessages = function() {};
 
 /**
  * @typedef {{scope: (string|undefined), useCache: (boolean|undefined), updateViaCache: (string|undefined)}}
@@ -419,7 +432,7 @@ ServiceWorkerClient.prototype.postMessage = function(message, opt_transfer) {};
 ServiceWorkerClient.prototype.focus = function() {};
 
 /**
- * @param {string} url
+ * @param {!URL|string} url
  * @return {!Promise<!ServiceWorkerClient>}
  */
 ServiceWorkerClient.prototype.navigate = function(url) {};
@@ -451,7 +464,7 @@ ServiceWorkerClients.prototype.matchAll = function(opt_options) {};
 ServiceWorkerClients.prototype.claim = function() {};
 
 /**
- * @param {string} url
+ * @param {!URL|string} url
  * @return {!Promise<!ServiceWorkerClient>}
  */
 ServiceWorkerClients.prototype.openWindow = function(url) {};
@@ -627,7 +640,7 @@ function FetchEvent(type, opt_eventInitDict) {}
 FetchEvent.prototype.request;
 
 /**
- * @type {!Promise<Response>}
+ * @type {!Promise<!Response|undefined>}
  */
 FetchEvent.prototype.preloadResponse;
 
@@ -668,7 +681,7 @@ FetchEvent.prototype.default = function() {};
  *   bubbles: (boolean|undefined),
  *   cancelable: (boolean|undefined),
  *   request: (!Request|undefined),
- *   preloadResponse: (!Promise<Response>),
+ *   preloadResponse: (!Promise<!Response|undefined>),
  *   client: (!ServiceWorkerClient|undefined),
  *   isReload: (boolean|undefined)
  * }}

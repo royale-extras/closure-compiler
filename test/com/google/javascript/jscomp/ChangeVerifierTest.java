@@ -18,59 +18,235 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assertWithMessage;
+import static org.junit.Assert.assertThrows;
 
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import org.jspecify.annotations.Nullable;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+/**
+ * Test class for ChangeVerifier.java. Test cases in this class roughly do the following:
+ *
+ * <p>1. Creates a compiler instance and parses a script using it.
+ *
+ * <p>2. Creates a new ChangeVerifier class with the same compiler.
+ *
+ * <p>3. Saves a clean snapshot of the parsed script from step#1 using the ChangeVerifier instance
+ * from step#2
+ *
+ * <p>4. Changes the script from step #1.
+ *
+ * <p>5. Either records/skips recording change to the script from #1 into the compiler.
+ *
+ * <p>6. Invokes changeVerifier (which already contains the clean snapshot) and gives it the changed
+ * script from step#1 to compare nodes.
+ */
 @RunWith(JUnit4.class)
 public final class ChangeVerifierTest {
+  private @Nullable Compiler compiler;
+
+  @Before
+  public void setup() {
+    compiler = null;
+  }
 
   @Test
   public void testCorrectValidationOfScriptWithChangeAfterFunction() {
     Node script = parse("function A() {} if (0) { A(); }");
     checkState(script.isScript());
 
-    Compiler compiler = new Compiler();
-    compiler.incrementChangeStamp();
     ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
 
-    // Here we make a change in that doesn't change the script node
-    // child count.
     getCallNode(script).detach();
+    compiler.reportChangeToChangeScope(script);
 
-    // Mark the script as changed
-    compiler.incrementChangeStamp();
-    script.setChangeTime(compiler.getChangeStamp());
-
-    // will throw if no change is detected.
+    // checks that a change was made and reported.
     verifier.checkRecordedChanges("test1", script);
   }
 
   @Test
-  public void testChangeToScriptNotReported() {
+  public void testChangeToScriptNotReported_newChild() {
     Node script = parse("function A() {} if (0) { A(); }");
     checkState(script.isScript());
 
-    Compiler compiler = new Compiler();
-    compiler.incrementChangeStamp();
     ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
 
-    // no change
+    // no change, no problem
     verifier.checkRecordedChanges("test1", script);
 
     // add a statement, but don't report the change.
     script.addChildToBack(IR.exprResult(IR.nullNode()));
 
-    try {
-      verifier.checkRecordedChanges("test2", script);
-      assertWithMessage("exception expected").fail();
-    } catch (IllegalStateException e) {
-      assertThat(e).hasMessageThat().contains("changed scope not marked as changed");
-    }
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("changed scope not marked as changed");
+    assertThat(e).hasMessageThat().contains("differing child count");
+  }
+
+  @Test
+  public void testChangeToScriptNotReported_changeToChild() {
+    Node script = parse("function A() {} if (0) { A(); }");
+    checkState(script.isScript());
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
+
+    // no change, no problem
+    verifier.checkRecordedChanges("test1", script);
+
+    // modify the if condition, but don't report the change.
+    Node ifStatement = script.getLastChild();
+    Node condition = NodeUtil.getConditionExpression(ifStatement);
+    condition.replaceWith(IR.number(1));
+
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e)
+        .hasMessageThat()
+        .contains(
+            """
+            test2: changed scope not marked as changed: SCRIPT: testcode.
+            shallow inequivalence
+            Before: NUMBER 0.0 1:20  [length: 1] [source_file: testcode]
+            After:  NUMBER 1.0 1:20  [length: 1] [source_file: testcode]
+
+            Ancestor nodes:
+            SCRIPT 1:0  [length: 31] [source_file: testcode] [input_id: InputId: testcode] [feature_set: []]
+              IF 1:16  [length: 15] [source_file: testcode]
+                NUMBER 1.0 1:20  [length: 1] [source_file: testcode]
+            """);
+  }
+
+  @Test
+  public void testChangeToScriptNotReported_changeToFunctionName() {
+    Node script = parse("function A() {} if (0) { A(); }");
+    checkState(script.isScript());
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
+
+    // no change, no problem
+    verifier.checkRecordedChanges("test1", script);
+
+    // modify the if condition, but don't report the change.
+    Node functionNode = script.getFirstChild();
+    Node functionNameNode = NodeUtil.getNameNode(functionNode);
+    functionNameNode.replaceWith(IR.name("B"));
+
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("changed scope not marked as changed");
+    assertThat(e)
+        .hasMessageThat()
+        .contains(
+            """
+            function name changed
+            Before: A
+            After:  B
+            """);
+  }
+
+  @Test
+  public void testChangeToFunction_notReported() {
+    Node script = parse("function A() {}");
+    checkState(script.isScript());
+    Node function = script.getFirstChild();
+    checkState(function.isFunction());
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
+
+    // no change, no problem.
+    verifier.checkRecordedChanges("test1", script);
+
+    // add a statement, but don't report the change.
+    function.addChildToBack(IR.exprResult(IR.nullNode()));
+
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("changed scope not marked as changed");
+  }
+
+  @Test
+  public void testChangeToFunction_newlyUnusedParameter() {
+    Node script = parse("function f(x) {}");
+    checkState(script.isScript(), script);
+    Node function = script.getFirstChild();
+    checkState(function.isFunction(), function);
+    Node xParam = NodeUtil.getFunctionParameters(function).getOnlyChild();
+    checkState(xParam.matchesName("x"), xParam);
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
+
+    // no change, no problem.
+    verifier.checkRecordedChanges("test1", script);
+
+    // mark parameter x as unused
+    xParam.setUnusedParameter(true);
+
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("changed scope not marked as changed");
+    assertThat(e)
+        .hasMessageThat()
+        .contains(
+            """
+            shallow inequivalence
+            Before: NAME x 1:11  [length: 1] [source_file: testcode]
+            After:  NAME x 1:11  [length: 1] [source_file: testcode] [is_unused_parameter: 1]
+
+            Ancestor nodes:
+            FUNCTION f 1:0  [length: 16] [source_file: testcode]
+              PARAM_LIST 1:10  [length: 3] [source_file: testcode]
+                NAME x 1:11  [length: 1] [source_file: testcode] [is_unused_parameter: 1]
+            """);
+  }
+
+  @Test
+  public void testChangeToArrowFunction_notReported() {
+    Node script = parse("() => {}");
+    checkState(script.isScript());
+    Node function = script.getFirstFirstChild();
+    checkState(function.isArrowFunction());
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
+
+    // no change, no problem.
+    verifier.checkRecordedChanges("test1", script);
+
+    // add a statement, but don't report the change.
+    function.addChildToBack(IR.exprResult(IR.nullNode()));
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("changed scope not marked as changed");
+  }
+
+  @Test
+  public void testChangeToArrowFunction_correctlyReportedChange() {
+    Node script = parse("() => {}");
+    checkState(script.isScript());
+
+    Node function = script.getFirstFirstChild();
+    checkState(function.isArrowFunction());
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
+
+    // no change, no problem.
+    verifier.checkRecordedChanges("test1", script);
+
+    // add a statement, and report the change.
+    function.addChildToBack(IR.exprResult(IR.nullNode()));
+    compiler.reportChangeToChangeScope(function);
+
+    // checks that a change was made and recorded.
+    verifier.checkRecordedChanges("test2", script);
   }
 
   @Test
@@ -79,8 +255,6 @@ public final class ChangeVerifierTest {
 
     checkState(script.isScript());
 
-    Compiler compiler = new Compiler();
-    compiler.incrementChangeStamp();
     ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
 
     // no change
@@ -91,12 +265,10 @@ public final class ChangeVerifierTest {
     fnNode.detach();
     compiler.reportChangeToChangeScope(script);
 
-    try {
-      verifier.checkRecordedChanges("test2", script);
-      assertWithMessage("exception expected").fail();
-    } catch (IllegalStateException e) {
-      assertThat(e).hasMessageThat().contains("deleted scope was not reported");
-    }
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("deleted scope was not reported");
 
     // now try again after reporting the function deletion.
     compiler.reportFunctionDeleted(fnNode);
@@ -111,8 +283,6 @@ public final class ChangeVerifierTest {
 
     checkState(script.isScript());
 
-    Compiler compiler = new Compiler();
-    compiler.incrementChangeStamp();
     ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(script);
 
     // no change
@@ -122,54 +292,52 @@ public final class ChangeVerifierTest {
     Node fnNode = script.getFirstChild();
     compiler.reportFunctionDeleted(fnNode);
 
-    try {
-      verifier.checkRecordedChanges("test2", script);
-      assertWithMessage("exception expected").fail();
-    } catch (IllegalStateException e) {
-      assertThat(e).hasMessageThat().contains("existing scope is improperly marked as deleted");
-    }
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", script));
+    assertThat(e).hasMessageThat().contains("existing scope is improperly marked as deleted");
   }
 
   @Test
   public void testChangeVerification() {
-    Compiler compiler = new Compiler();
+    Node mainScript = parse("");
 
-    Node mainScript = IR.script();
-    Node main = IR.root(mainScript);
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(mainScript);
 
-    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(main);
+    verifier.checkRecordedChanges(mainScript);
 
-    verifier.checkRecordedChanges(main);
+    mainScript.addChildToFront(IR.function(IR.name("A"), IR.paramList(), IR.block()));
+    compiler.reportChangeToChangeScope(mainScript);
 
-    mainScript.addChildToFront(
-        IR.function(IR.name("A"), IR.paramList(), IR.block()));
-    compiler.incrementChangeStamp();
-    mainScript.setChangeTime(compiler.getChangeStamp());
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class, () -> verifier.checkRecordedChanges("test2", mainScript));
+    // ensure that e was thrown from the right code-path
+    // especially important if it's something as frequent
+    // as an IllegalArgumentException, etc.
+    assertThat(e).hasMessageThat().contains("new scope not explicitly marked as changed:");
 
-    try {
-      verifier.checkRecordedChanges(main);
-      assertWithMessage("method should throw").fail();
-    } catch (IllegalStateException e) {
-      // ensure that e was thrown from the right code-path
-      // especially important if it's something as frequent
-      // as an IllegalArgumentException, etc.
-      assertThat(e).hasMessageThat().startsWith("new scope not explicitly marked as changed:");
-    }
+    // works fine when the newly created function scope is marked as changed.
+    Node fnNode = mainScript.getFirstChild();
+    compiler.reportChangeToChangeScope(fnNode);
+    verifier.checkRecordedChanges(mainScript);
   }
 
-  private static Node parse(String js) {
-    Compiler compiler = new Compiler();
+  /** Initializes a new compiler, parses the script using it and returns the script node */
+  private Node parse(String js) {
+    compiler = new Compiler();
     compiler.initCompilerOptionsIfTesting();
     Node n = compiler.parseTestCode(js);
     assertThat(compiler.getErrors()).isEmpty();
     return n;
   }
 
+  /** Performs a depth first search and returns the first call node it finds */
   private static Node getCallNode(Node n) {
     if (n.isCall()) {
       return n;
     }
-    for (Node c : n.children()) {
+    for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
       Node result = getCallNode(c);
       if (result != null) {
         return result;

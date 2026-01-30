@@ -33,6 +33,7 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.SYMBOL_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.UNKNOWN_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.VOID_TYPE;
 
+import com.google.errorprone.annotations.CheckReturnValue;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Outcome;
 import com.google.javascript.rhino.jstype.EnumElementType;
@@ -49,7 +50,7 @@ import com.google.javascript.rhino.jstype.TemplateType;
 import com.google.javascript.rhino.jstype.TemplatizedType;
 import com.google.javascript.rhino.jstype.UnionType;
 import com.google.javascript.rhino.jstype.Visitor;
-import javax.annotation.CheckReturnValue;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Chainable reverse abstract interpreter providing basic functionality.
@@ -58,7 +59,7 @@ public abstract class ChainableReverseAbstractInterpreter
     implements ReverseAbstractInterpreter {
   final JSTypeRegistry typeRegistry;
   private ChainableReverseAbstractInterpreter firstLink;
-  private ChainableReverseAbstractInterpreter nextLink;
+  private @Nullable ChainableReverseAbstractInterpreter nextLink;
 
   /**
    * Constructs an interpreter, which is the only link in a chain. Interpreters
@@ -111,13 +112,14 @@ public abstract class ChainableReverseAbstractInterpreter
   }
 
   /**
-   * Returns the type of a node in the given scope if the node corresponds to a
-   * name whose type is capable of being refined.
+   * Returns the type of a node in the given scope if the node corresponds to a name whose type is
+   * capable of being refined.
+   *
    * @return The current type of the node if it can be refined, null otherwise.
    */
-  protected JSType getTypeIfRefinable(Node node, FlowScope scope) {
+  protected @Nullable JSType getTypeIfRefinable(Node node, FlowScope scope) {
     switch (node.getToken()) {
-      case NAME:
+      case NAME -> {
         StaticTypedSlot nameVar = scope.getSlot(node.getString());
         if (nameVar != null) {
           JSType nameVarType = nameVar.getType();
@@ -127,8 +129,8 @@ public abstract class ChainableReverseAbstractInterpreter
           return nameVarType;
         }
         return null;
-
-      case GETPROP:
+      }
+      case GETPROP -> {
         String qualifiedName = node.getQualifiedName();
         if (qualifiedName == null) {
           return null;
@@ -145,8 +147,8 @@ public abstract class ChainableReverseAbstractInterpreter
           propVarType = getNativeType(UNKNOWN_TYPE);
         }
         return propVarType;
-      default:
-        break;
+      }
+      default -> {}
     }
     return null;
   }
@@ -160,24 +162,23 @@ public abstract class ChainableReverseAbstractInterpreter
   @CheckReturnValue
   protected FlowScope declareNameInScope(FlowScope scope, Node node, JSType type) {
     switch (node.getToken()) {
-      case NAME:
+      case NAME -> {
         return scope.inferSlotType(node.getString(), type);
-
-      case GETPROP:
+      }
+      case GETPROP -> {
         String qualifiedName = node.getQualifiedName();
         checkNotNull(qualifiedName);
 
         JSType origType = node.getJSType();
         origType = origType == null ? getNativeType(UNKNOWN_TYPE) : origType;
         return scope.inferQualifiedSlot(node, qualifiedName, origType, type, false);
-
-      case THIS:
+      }
+      case THIS -> {
         // "this" references aren't currently modeled in the CFG.
         return scope;
-
-      default:
-        throw new IllegalArgumentException("Node cannot be refined. \n" +
-            node.toStringTree());
+      }
+      default ->
+          throw new IllegalArgumentException("Node cannot be refined. \n" + node.toStringTree());
     }
   }
 
@@ -435,38 +436,38 @@ public abstract class ChainableReverseAbstractInterpreter
     }
 
     @Override
-    public JSType caseNoObjectType() {
+    public @Nullable JSType caseNoObjectType() {
       return (value.equals("object") || value.equals("function")) ==
           resultEqualsValue ? getNativeType(NO_OBJECT_TYPE) : null;
     }
 
     @Override
-    public JSType caseBooleanType() {
+    public @Nullable JSType caseBooleanType() {
       return matchesExpectation("boolean") ? getNativeType(BOOLEAN_TYPE) : null;
     }
 
     @Override
-    public JSType caseFunctionType(FunctionType type) {
+    public @Nullable JSType caseFunctionType(FunctionType type) {
       return matchesExpectation("function") ? type : null;
     }
 
     @Override
-    public JSType caseNullType() {
+    public @Nullable JSType caseNullType() {
       return matchesExpectation("object") ? getNativeType(NULL_TYPE) : null;
     }
 
     @Override
-    public JSType caseNumberType() {
+    public @Nullable JSType caseNumberType() {
       return matchesExpectation("number") ? getNativeType(NUMBER_TYPE) : null;
     }
 
     @Override
-    public JSType caseBigIntType() {
+    public @Nullable JSType caseBigIntType() {
       return matchesExpectation("bigint") ? getNativeType(BIGINT_TYPE) : null;
     }
 
     @Override
-    public JSType caseObjectType(ObjectType type) {
+    public @Nullable JSType caseObjectType(ObjectType type) {
       if (value.equals("function")) {
         JSType ctorType = getNativeType(FUNCTION_TYPE);
         if (resultEqualsValue) {
@@ -481,27 +482,27 @@ public abstract class ChainableReverseAbstractInterpreter
     }
 
     @Override
-    public JSType caseStringType() {
+    public @Nullable JSType caseStringType() {
       return matchesExpectation("string") ? getNativeType(STRING_TYPE) : null;
     }
 
     @Override
-    public JSType caseSymbolType() {
+    public @Nullable JSType caseSymbolType() {
       return matchesExpectation("symbol") ? getNativeType(SYMBOL_TYPE) : null;
     }
 
     @Override
-    public JSType caseVoidType() {
+    public @Nullable JSType caseVoidType() {
       return matchesExpectation("undefined") ? getNativeType(VOID_TYPE) : null;
     }
   }
 
   /**
-   * Returns a version of {@code type} that is restricted by some knowledge
-   * about the result of the {@code typeof} operation.
-   * <p>
-   * The behavior of the {@code typeof} operator can be summarized by the
-   * following table:
+   * Returns a version of {@code type} that is restricted by some knowledge about the result of the
+   * {@code typeof} operation.
+   *
+   * <p>The behavior of the {@code typeof} operator can be summarized by the following table:
+   *
    * <table>
    * <tr><th>type</th><th>result</th></tr>
    * <tr><td>{@code undefined}</td><td>"undefined"</td></tr>
@@ -514,17 +515,16 @@ public abstract class ChainableReverseAbstractInterpreter
    * <tr><td>{@code Object} (which implements [[Call]])</td>
    *     <td>"function"</td></tr>
    * </table>
+   *
    * @param type the type to restrict
-   * @param value A value known to be equal or not equal to the result of the
-   *        {@code typeof} operation
-   * @param resultEqualsValue {@code true} if the {@code typeOf} result is known
-   *        to equal {@code value}; {@code false} if it is known <em>not</em> to
-   *        equal {@code value}
-   * @return the restricted type or null if no version of the type matches the
-   *         restriction
+   * @param value A value known to be equal or not equal to the result of the {@code typeof}
+   *     operation
+   * @param resultEqualsValue {@code true} if the {@code typeOf} result is known to equal {@code
+   *     value}; {@code false} if it is known <em>not</em> to equal {@code value}
+   * @return the restricted type or null if no version of the type matches the restriction
    */
-  JSType getRestrictedByTypeOfResult(JSType type, String value,
-                                     boolean resultEqualsValue) {
+  @Nullable JSType getRestrictedByTypeOfResult(
+      JSType type, String value, boolean resultEqualsValue) {
     if (type == null) {
       if (resultEqualsValue) {
         JSType result = getNativeTypeForTypeOf(value);
@@ -541,41 +541,32 @@ public abstract class ChainableReverseAbstractInterpreter
   }
 
   /**
-   * If we definitely know what a type is based on the typeof result,
-   * return it.  Otherwise, return null.
+   * If we definitely know what a type is based on the typeof result, return it. Otherwise, return
+   * null.
    *
-   * The typeof operation in JS is poorly defined, and this function works
-   * for both the native typeof and goog.typeOf. It should not be made public,
-   * because its semantics are informally defined, and would be wrong in
-   * the general case.
+   * <p>The typeof operation in JS is poorly defined, and this function works for both the native
+   * typeof and goog.typeOf. It should not be made public, because its semantics are informally
+   * defined, and would be wrong in the general case.
    */
-  private JSType getNativeTypeForTypeOf(String value) {
-    switch (value) {
-      case "number":
-        return getNativeType(NUMBER_TYPE);
-      case "boolean":
-        return getNativeType(BOOLEAN_TYPE);
-      case "string":
-        return getNativeType(STRING_TYPE);
-      case "symbol":
-        return getNativeType(SYMBOL_TYPE);
-      case "undefined":
-        return getNativeType(VOID_TYPE);
-      case "object":
-        // NOTE: This is broader than it needs to be if it's from goog.typeof, but (a) it's more
-        // consistent with common usage of the native builtin typeof, (b) it's more consistent with
-        // TypeScript, and (c) it's more useful than simply not narrowing.
-        return typeRegistry.createUnionType(getNativeType(OBJECT_TYPE), getNativeType(NULL_TYPE));
-      case "function":
-        return getNativeType(FUNCTION_TYPE);
-      default:
-        return null;
-    }
+  private @Nullable JSType getNativeTypeForTypeOf(String value) {
+    return switch (value) {
+      case "number" -> getNativeType(NUMBER_TYPE);
+      case "boolean" -> getNativeType(BOOLEAN_TYPE);
+      case "string" -> getNativeType(STRING_TYPE);
+      case "symbol" -> getNativeType(SYMBOL_TYPE);
+      case "undefined" -> getNativeType(VOID_TYPE);
+      case "object" ->
+          // NOTE: This is broader than it needs to be if it's from goog.typeof, but (a) it's more
+          // consistent with common usage of the native builtin typeof, (b) it's more consistent
+          // with
+          // TypeScript, and (c) it's more useful than simply not narrowing.
+          typeRegistry.createUnionType(getNativeType(OBJECT_TYPE), getNativeType(NULL_TYPE));
+      case "function" -> getNativeType(FUNCTION_TYPE);
+      default -> null;
+    };
   }
 
-  /**
-   * For when {@code goog.isArray} or {@code Array.isArray} returns true.
-   */
+  /** For when {@code goog.isArray} or {@code Array.isArray} returns true. */
   final Visitor<JSType> restrictToArrayVisitor =
       new RestrictByTrueTypeOfResultVisitor() {
         @Override
@@ -584,19 +575,17 @@ public abstract class ChainableReverseAbstractInterpreter
         }
 
         @Override
-        public JSType caseObjectType(ObjectType type) {
+        public @Nullable JSType caseObjectType(ObjectType type) {
           JSType arrayType = getNativeType(ARRAY_TYPE);
           return arrayType.isSubtypeOf(type) ? arrayType : null;
         }
       };
 
-  /**
-   * For when {@code goog.isArray} or {@code Array.isArray} returns false.
-   */
+  /** For when {@code goog.isArray} or {@code Array.isArray} returns false. */
   final Visitor<JSType> restrictToNotArrayVisitor =
       new RestrictByFalseTypeOfResultVisitor() {
         @Override
-        public JSType caseObjectType(ObjectType type) {
+        public @Nullable JSType caseObjectType(ObjectType type) {
           return type.isSubtypeOf(getNativeType(ARRAY_TYPE)) ? null : type;
         }
       };

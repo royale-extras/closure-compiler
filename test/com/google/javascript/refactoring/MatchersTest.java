@@ -32,7 +32,6 @@ import org.junit.runners.JUnit4;
 /**
  * Unit tests for JsFlume {@link Matchers}.
  *
- * @author mknichel@google.com (Mark Knichel)
  */
 @RunWith(JUnit4.class)
 public class MatchersTest {
@@ -120,10 +119,13 @@ public class MatchersTest {
     assertTrue(Matchers.constructor("Foo").matches(ctorNode, null));
 
     // TODO(mknichel): Make this test case work.
-    // input = "ns = {\n"
-    //     + "  /** @constructor */\n"
-    //     + "  Foo: function() {}\n"
-    //     + "};";
+    // input =
+    //     """
+    //     ns = {
+    //       /** @constructor */
+    //       Foo: function() {}
+    //     };
+    //     """;
     // root = compileToScriptRoot(getCompiler(input));
     // ctorNode = root.getFirstFirstChild().getLastChild().getFirstChild();
     // assertTrue(Matchers.constructor("ns.Foo").matches(ctorNode, null));
@@ -141,11 +143,13 @@ public class MatchersTest {
 
   @Test
   public void testNewClass_specificClass() {
-    String externs = ""
-        + "/** @constructor */\n"
-        + "function Foo() {};\n"
-        + "/** @constructor */\n"
-        + "function Bar() {};";
+    String externs =
+        """
+        /** @constructor */
+        function Foo() {};
+        /** @constructor */
+        function Bar() {};
+        """;
     String input = "var foo = new Foo();";
     Compiler compiler = getCompiler(externs, input);
     NodeMetadata metadata = new NodeMetadata(compiler);
@@ -193,11 +197,13 @@ public class MatchersTest {
 
   @Test
   public void testFunctionCall_prototype() {
-    String externs = ""
-        + "/** @constructor */\n"
-        + "function Foo() {};\n"
-        + "Foo.prototype.bar = function() {};\n"
-        + "Foo.prototype.baz = function() {};\n";
+    String externs =
+        """
+        /** @constructor */
+        function Foo() {};
+        Foo.prototype.bar = function() {};
+        Foo.prototype.baz = function() {};
+        """;
     String input = "var foo = new Foo(); foo.bar();";
     Compiler compiler = getCompiler(externs, input);
     NodeMetadata metadata = new NodeMetadata(compiler);
@@ -241,10 +247,12 @@ public class MatchersTest {
 
   @Test
   public void testAssignmentWithRhs() {
-    String externs = ""
-        + "var goog = {};\n"
-        + "goog.number = function() {};\n"
-        + "var someObj = {};\n";
+    String externs =
+        """
+        var goog = {};
+        goog.number = function() {};
+        var someObj = {};
+        """;
     String input = "someObj.foo = goog.number();";
     Compiler compiler = getCompiler(externs, input);
     Node root = compileToScriptRoot(compiler);
@@ -259,11 +267,13 @@ public class MatchersTest {
 
   @Test
   public void testPrototypeDeclarations() {
-    String input = ""
-        + "/** @constructor */\n"
-        + "function Foo() {}\n"
-        + "Foo.prototype.bar = 3;\n"
-        + "Foo.prototype.baz = function() {};\n";
+    String input =
+        """
+        /** @constructor */
+        function Foo() {}
+        Foo.prototype.bar = 3;
+        Foo.prototype.baz = function() {};
+        """;
     Compiler compiler = getCompiler(input);
     NodeMetadata metadata = new NodeMetadata(compiler);
     Node root = compileToScriptRoot(compiler);
@@ -350,10 +360,12 @@ public class MatchersTest {
 
   @Test
   public void testPropertyAccess_instance() {
-    String externs = ""
-        + "/** @constructor */\n"
-        + "function Foo() {};\n"
-        + "Foo.prototype.bar = 3;\n";
+    String externs =
+        """
+        /** @constructor */
+        function Foo() {};
+        Foo.prototype.bar = 3;
+        """;
     String input = "var foo = new Foo(); foo.bar;";
     Compiler compiler = getCompiler(externs, input);
     Node root = compileToScriptRoot(compiler);
@@ -368,12 +380,14 @@ public class MatchersTest {
   @Test
   public void testConstructorPropertyDeclaration() {
     String externs = "";
-    String input = ""
-        + "/** @constructor */\n"
-        + "function MyClass() {\n"
-        + "  this.foo = 5;\n"
-        + "  var bar = 10;\n"
-        + "}";
+    String input =
+        """
+        /** @constructor */
+        function MyClass() {
+          this.foo = 5;
+          var bar = 10;
+        }
+        """;
     Compiler compiler = getCompiler(externs, input);
     Node root = compileToScriptRoot(compiler);
     // The ASSIGN node
@@ -390,17 +404,21 @@ public class MatchersTest {
   @Test
   public void testIsPrivate() {
     String externs = "";
-    String input = ""
-        + "/** @private */\n"
-        + "var foo = 3;";
+    String input =
+        """
+        /** @private */
+        var foo = 3;
+        """;
     Compiler compiler = getCompiler(externs, input);
     Node root = compileToScriptRoot(compiler);
     Node node = root.getFirstChild();
     assertTrue(Matchers.isPrivate().matches(node, new NodeMetadata(compiler)));
 
-    input = ""
-        + "/** @package */\n"
-        + "var foo = 3;";
+    input =
+        """
+        /** @package */
+        var foo = 3;
+        """;
     compiler = getCompiler(externs, input);
     root = compileToScriptRoot(compiler);
     node = root.getFirstChild();

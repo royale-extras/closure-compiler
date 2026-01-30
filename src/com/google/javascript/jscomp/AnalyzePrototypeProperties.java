@@ -31,6 +31,7 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Analyzes properties on prototypes.
@@ -52,22 +53,22 @@ class AnalyzePrototypeProperties implements CompilerPass {
   private final boolean anchorUnusedVars;
   private final boolean rootScopeUsesAreGlobal;
 
-  private final JSModuleGraph moduleGraph;
-  private final JSModule firstModule;
+  private final JSChunkGraph chunkGraph;
+  private final @Nullable JSChunk firstChunk;
 
   // Properties that are implicitly used as part of the JS language.
   private static final ImmutableSet<String> IMPLICITLY_USED_PROPERTIES =
       ImmutableSet.of("length", "toString", "valueOf");
 
   // A graph where the nodes are property names or variable names,
-  // and the edges signify the modules where the property is referenced.
+  // and the edges signify the chunks where the property is referenced.
   // For example, if we had the code:
   //
-  // Foo.prototype.bar = function(x) { x.baz(); }; // in module 2.;
+  // Foo.prototype.bar = function(x) { x.baz(); }; // in chunk 2.;
   //
   // then this would be represented in the graph by a node representing
   // "bar", a node representing "baz", and an edge between them representing
-  // module #2.
+  // chunk #2.
   //
   // Similarly, if we had:
   //
@@ -75,7 +76,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
   //
   // then there would be a node for "scotch", a node for "age", and an edge
   // from scotch to age.
-  private final LinkedDirectedGraph<NameInfo, JSModule> symbolGraph =
+  private final LinkedDirectedGraph<NameInfo, JSChunk> symbolGraph =
       LinkedDirectedGraph.createWithoutAnnotations();
 
   // A dummy node for representing global references.
@@ -99,7 +100,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
    * Creates a new pass for analyzing prototype properties.
    *
    * @param compiler The compiler.
-   * @param moduleGraph The graph for resolving module dependencies.
+   * @param chunkGraph The graph for resolving chunk dependencies.
    * @param canModifyExterns If true, then we can move prototype properties that are declared in the
    *     externs file.
    * @param anchorUnusedVars If true, then we must mark all vars as referenced, even if they are
@@ -109,20 +110,20 @@ class AnalyzePrototypeProperties implements CompilerPass {
    */
   AnalyzePrototypeProperties(
       AbstractCompiler compiler,
-      JSModuleGraph moduleGraph,
+      JSChunkGraph chunkGraph,
       boolean canModifyExterns,
       boolean anchorUnusedVars,
       boolean rootScopeUsesAreGlobal) {
     this.compiler = compiler;
-    this.moduleGraph = moduleGraph;
+    this.chunkGraph = chunkGraph;
     this.canModifyExterns = canModifyExterns;
     this.anchorUnusedVars = anchorUnusedVars;
     this.rootScopeUsesAreGlobal = rootScopeUsesAreGlobal;
 
-    if (moduleGraph.getModuleCount() > 1) {
-      firstModule = moduleGraph.getRootModule();
+    if (chunkGraph.getChunkCount() > 1) {
+      firstChunk = chunkGraph.getRootChunk();
     } else {
-      firstModule = null;
+      firstChunk = null;
     }
 
     globalNode.markReference(null);
@@ -132,11 +133,11 @@ class AnalyzePrototypeProperties implements CompilerPass {
 
     for (String property : IMPLICITLY_USED_PROPERTIES) {
       NameInfo nameInfo = getNameInfoForName(property, PROPERTY);
-      if (moduleGraph == null) {
+      if (chunkGraph == null) {
         symbolGraph.connect(externNode, null, nameInfo);
       } else {
-        for (JSModule module : moduleGraph.getAllModules()) {
-          symbolGraph.connect(externNode, module, nameInfo);
+        for (JSChunk chunk : chunkGraph.getAllChunks()) {
+          symbolGraph.connect(externNode, chunk, nameInfo);
         }
       }
     }
@@ -151,7 +152,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
 
     NodeTraversal.traverse(compiler, root, new ProcessProperties());
 
-    FixedPointGraphTraversal<NameInfo, JSModule> t =
+    FixedPointGraphTraversal<NameInfo, JSChunk> t =
         FixedPointGraphTraversal.newTraversal(new PropagateReferences());
     t.computeFixedPoint(symbolGraph, ImmutableSet.of(externNode, globalNode));
   }
@@ -224,7 +225,14 @@ class AnalyzePrototypeProperties implements CompilerPass {
       } else {
         // TODO(moz): It's not yet clear if we need another kind of NameContext for block scopes
         // in ES6, use anonymous node for now and investigate later.
-        checkState(NodeUtil.createsBlockScope(root) || root.isModuleBody(), scope);
+        // TODO(b/189993301): Test effects of pushing anonymousNode for member and computed field
+        // defs in CrossChunkMethodMotion (and test class fields there as well)
+        checkState(
+            NodeUtil.createsBlockScope(root)
+                || root.isModuleBody()
+                || root.isComputedFieldDef()
+                || root.isMemberFieldDef(),
+            scope);
         symbolStack.push(new NameContext(anonymousNode, scope));
       }
     }
@@ -267,29 +275,42 @@ class AnalyzePrototypeProperties implements CompilerPass {
           }
           break;
 
+        case OPTCHAIN_GETPROP:
+          addSymbolUse(n.getString(), t.getChunk(), PROPERTY);
+          break;
+
         case GETPROP:
-          String propName = n.getSecondChild().getString();
+          String propName = n.getString();
 
           if (n.isQualifiedName()) {
             if (propName.equals("prototype")) {
-              if (processPrototypeRef(t, n)) {
+              if (handlePossibleAssignmentToPrototype(t, n)) {
+                // The reference is being assigned to not read from, so don't record this as a
+                // reference.
                 return;
               }
-            } else if (compiler.getCodingConvention().isExported(propName)) {
-              addGlobalUseOfSymbol(propName, t.getModule(), PROPERTY);
+            } else if (compiler.getCodingConvention().isExported(propName, /* local= */ false)) {
+              // TODO(bradfordcsmith): We don't seem to have any tests that cover this case.
+              // This class has no unit tests of its own and it is only used by
+              // CrossChunkMethodMotion.
+              addGlobalUseOfSymbol(propName, t.getChunk(), PROPERTY);
               return;
             } else {
-              // Do not mark prototype prop assigns as a 'use' in the global scope.
               if (parent.isAssign() && n == parent.getFirstChild()) {
                 String rValueName = getPrototypePropertyNameFromRValue(n);
                 if (rValueName != null) {
+                  // e.g. `Foo.prototype.bar = something`
+                  // We record the declaration of `bar` when we look at the `Foo.prototype`
+                  // Node via the call to handlePossibleAssignmentToPrototype() above.
+                  // Now that we're looking at the whole `Foo.prototype.bar` node,
+                  // we just need to make sure we don't record it as a read reference.
                   return;
                 }
               }
             }
           }
 
-          addSymbolUse(propName, t.getModule(), PROPERTY);
+          addSymbolUse(propName, t.getChunk(), PROPERTY);
           break;
 
         case OBJECTLIT:
@@ -318,9 +339,9 @@ class AnalyzePrototypeProperties implements CompilerPass {
               case GETTER_DEF:
               case SETTER_DEF:
               case MEMBER_FUNCTION_DEF:
-                if (!propNode.isQuotedString()) {
+                if (!propNode.isQuotedStringKey()) {
                   // May be STRING, GET, or SET, but NUMBER isn't interesting.
-                  addSymbolUse(propNode.getString(), t.getModule(), PROPERTY);
+                  addSymbolUse(propNode.getString(), t.getChunk(), PROPERTY);
                 }
                 break;
 
@@ -350,10 +371,10 @@ class AnalyzePrototypeProperties implements CompilerPass {
               if (var.getInitialValue() != null && var.getInitialValue().isFunction()) {
                 if (t.inGlobalHoistScope()) {
                   if (!processGlobalFunctionDeclaration(t, n, var)) {
-                    addGlobalUseOfSymbol(name, t.getModule(), VAR);
+                    addGlobalUseOfSymbol(name, t.getChunk(), VAR);
                   }
                 } else {
-                  addSymbolUse(name, t.getModule(), VAR);
+                  addSymbolUse(name, t.getChunk(), VAR);
                 }
               }
 
@@ -381,7 +402,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
       }
     }
 
-    private void addSymbolUse(String name, JSModule module, SymbolType type) {
+    private void addSymbolUse(String name, JSChunk chunk, SymbolType type) {
       NameInfo info = getNameInfoForName(name, type);
       NameInfo def = null;
       // Skip all anonymous nodes. We care only about symbols with names.
@@ -392,12 +413,12 @@ class AnalyzePrototypeProperties implements CompilerPass {
         }
       }
       if (!def.equals(info)) {
-        symbolGraph.connect(def, module, info);
+        symbolGraph.connect(def, chunk, info);
       }
     }
 
     /** If this is a non-function prototype assign, return the prop name. Otherwise, return null. */
-    private String processNonFunctionPrototypeAssign(Node n, Node parent) {
+    private @Nullable String processNonFunctionPrototypeAssign(Node n, Node parent) {
       if (isAssignRValue(n, parent) && !n.isFunction()) {
         return getPrototypePropertyNameFromRValue(n);
       }
@@ -430,10 +451,10 @@ class AnalyzePrototypeProperties implements CompilerPass {
      * in multiple expressions (i.e., if there's a prototype property assignment in a more complex
      * expression).
      */
-    private String getPrototypePropertyNameFromRValue(Node rValue) {
+    private @Nullable String getPrototypePropertyNameFromRValue(Node rValue) {
       Node lValue = NodeUtil.getBestLValue(rValue);
       if (lValue == null
-          || !((NodeUtil.mayBeObjectLitKey(lValue) && !lValue.isQuotedString())
+          || !((NodeUtil.mayBeObjectLitKey(lValue) && !lValue.isQuotedStringKey())
               || NodeUtil.isExprAssign(lValue.getGrandparent()))) {
         return null;
       }
@@ -472,12 +493,13 @@ class AnalyzePrototypeProperties implements CompilerPass {
         String name = nameNode.getString();
         getNameInfoForName(name, VAR)
             .getDeclarations()
-            .add(new GlobalFunction(nameNode, v, t.getModule()));
+            .add(new GlobalFunction(nameNode, v, t.getChunk()));
 
         // If the function name is exported, we should create an edge here
         // so that it's never removed.
-        if (compiler.getCodingConvention().isExported(name) || anchorUnusedVars) {
-          addGlobalUseOfSymbol(name, t.getModule(), VAR);
+        if (compiler.getCodingConvention().isExported(name, /* local= */ false)
+            || anchorUnusedVars) {
+          addGlobalUseOfSymbol(name, t.getChunk(), VAR);
         }
 
         return true;
@@ -486,53 +508,52 @@ class AnalyzePrototypeProperties implements CompilerPass {
     }
 
     /**
-     * Processes the GETPROP of prototype, which can either be under another GETPROP (in the case of
-     * Foo.prototype.bar), or can be under an assignment (in the case of Foo.prototype = ...).
+     * Examines a qualified name ending in `.prototype`.
      *
+     * <p>If it is part of an assignment like `foo.prototype = {}` or `foo.prototype.bar = x`,
+     * record this reference as the definition of one or more prototype properties and return
+     * `true`.
+     *
+     * @param ref A reference to some qualified name that ends with `.prototype`
      * @return True if a declaration was added.
      */
-    private boolean processPrototypeRef(NodeTraversal t, Node ref) {
+    private boolean handlePossibleAssignmentToPrototype(NodeTraversal t, Node ref) {
       Node root = NodeUtil.getRootOfQualifiedName(ref);
 
       Node n = ref.getParent();
       switch (n.getToken()) {
+        case GETPROP -> {
           // Foo.prototype.getBar = function() { ... }
-        case GETPROP:
-          Node dest = n.getSecondChild();
           Node parent = n.getParent();
           Node grandParent = parent.getParent();
 
-          if (dest.isString()
-              && NodeUtil.isExprAssign(grandParent)
+          if (NodeUtil.isExprAssign(grandParent)
               && NodeUtil.isNameDeclOrSimpleAssignLhs(n, parent)) {
-            String name = dest.getString();
             PrototypeProperty prop =
-                new AssignmentPrototypeProperty(grandParent, maybeGetVar(t, root), t.getModule());
-            getNameInfoForName(name, PROPERTY).getDeclarations().add(prop);
+                new AssignmentPrototypeProperty(grandParent, maybeGetVar(t, root), t.getChunk());
+            getNameInfoForName(n.getString(), PROPERTY).getDeclarations().add(prop);
             return true;
           }
-          break;
-
+        }
+        case ASSIGN -> {
           // Foo.prototype = { "getBar" : function() { ... } }
-        case ASSIGN:
           Node map = n.getSecondChild();
           if (map.isObjectLit()) {
             for (Node key = map.getFirstChild(); key != null; key = key.getNext()) {
-              if (!key.isQuotedString() && !key.isComputedProp()) {
+              if (!key.isQuotedStringKey() && !key.isComputedProp()) {
                 // We won't consider quoted or computed properties for any kind of modification,
                 // so key may be STRING_KEY, GETTER_DEF, SETTER_DEF, or MEMBER_FUNCTION_DEF
                 String name = key.getString();
                 PrototypeProperty prop =
                     new LiteralPrototypeProperty(
-                        key.getFirstChild(), n, maybeGetVar(t, root), t.getModule());
+                        key.getFirstChild(), n, maybeGetVar(t, root), t.getChunk());
                 getNameInfoForName(name, PROPERTY).getDeclarations().add(prop);
               }
             }
             return true;
           }
-          break;
-        default:
-          break;
+        }
+        default -> {}
       }
       return false;
     }
@@ -553,15 +574,15 @@ class AnalyzePrototypeProperties implements CompilerPass {
               : null;
       getNameInfoForName(name, PROPERTY)
           .getDeclarations()
-          .add(new ClassMemberFunction(n, var, t.getModule()));
+          .add(new ClassMemberFunction(n, var, t.getChunk()));
     }
 
-    private Var maybeGetVar(NodeTraversal t, Node maybeName) {
+    private @Nullable Var maybeGetVar(NodeTraversal t, Node maybeName) {
       return maybeName.isName() ? t.getScope().getVar(maybeName.getString()) : null;
     }
 
-    private void addGlobalUseOfSymbol(String name, JSModule module, SymbolType type) {
-      symbolGraph.connect(globalNode, module, getNameInfoForName(name, type));
+    private void addGlobalUseOfSymbol(String name, JSChunk chunk, SymbolType type) {
+      symbolGraph.connect(globalNode, chunk, getNameInfoForName(name, type));
     }
   }
 
@@ -569,8 +590,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       if (n.isGetProp()) {
-        symbolGraph.connect(
-            externNode, firstModule, getNameInfoForName(n.getLastChild().getString(), PROPERTY));
+        symbolGraph.connect(externNode, firstChunk, getNameInfoForName(n.getString(), PROPERTY));
       } else if (n.isMemberFunctionDef() || n.isGetterDef() || n.isSetterDef()) {
         // As of 2019-08-29 the only user of this class is CrossChunkMethodMotion, which never
         // moves static methods, but that could change. So, we're intentionally including static
@@ -591,18 +611,18 @@ class AnalyzePrototypeProperties implements CompilerPass {
         // /** @type {!ObjWithFooMethod} */
         // let objWithFooMethod = Foo; // yes, this is valid
         //
-        symbolGraph.connect(externNode, firstModule, getNameInfoForName(n.getString(), PROPERTY));
+        symbolGraph.connect(externNode, firstChunk, getNameInfoForName(n.getString(), PROPERTY));
       }
     }
   }
 
-  private class PropagateReferences implements EdgeCallback<NameInfo, JSModule> {
+  private class PropagateReferences implements EdgeCallback<NameInfo, JSChunk> {
     @Override
-    public boolean traverseEdge(NameInfo start, JSModule edge, NameInfo dest) {
+    public boolean traverseEdge(NameInfo start, JSChunk edge, NameInfo dest) {
       if (start.isReferenced()) {
-        JSModule startModule = start.getDeepestCommonModuleRef();
-        if (startModule != null && moduleGraph.dependsOn(startModule, edge)) {
-          return dest.markReference(startModule);
+        JSChunk startChunk = start.getDeepestCommonChunkRef();
+        if (startChunk != null && chunkGraph.dependsOn(startChunk, edge)) {
+          return dest.markReference(startChunk);
         } else {
           return dest.markReference(edge);
         }
@@ -616,8 +636,8 @@ class AnalyzePrototypeProperties implements CompilerPass {
     /** The variable for the root of this symbol. */
     Var getRootVar();
 
-    /** Returns the module where this appears. */
-    JSModule getModule();
+    /** Returns the chunk where this appears. */
+    JSChunk getChunk();
   }
 
   private enum SymbolType {
@@ -631,15 +651,15 @@ class AnalyzePrototypeProperties implements CompilerPass {
    */
   static class GlobalFunction implements Symbol {
     private final Var var;
-    private final JSModule module;
+    private final JSChunk chunk;
 
-    GlobalFunction(Node nameNode, Var var, JSModule module) {
+    GlobalFunction(Node nameNode, Var var, JSChunk chunk) {
       Node parent = nameNode.getParent();
       checkState(
           (NodeUtil.isNameDeclaration(parent) && var.isGlobal())
               || NodeUtil.isFunctionDeclaration(parent));
       this.var = var;
-      this.module = module;
+      this.chunk = chunk;
     }
 
     @Override
@@ -648,8 +668,8 @@ class AnalyzePrototypeProperties implements CompilerPass {
     }
 
     @Override
-    public JSModule getModule() {
-      return module;
+    public JSChunk getChunk() {
+      return chunk;
     }
   }
 
@@ -662,14 +682,14 @@ class AnalyzePrototypeProperties implements CompilerPass {
   static class ClassMemberFunction implements Property {
     private final Node node;
     private final Var var;
-    private final JSModule module;
+    private final JSChunk chunk;
 
-    ClassMemberFunction(Node node, Var var, JSModule module) {
+    ClassMemberFunction(Node node, Var var, JSChunk chunk) {
       checkState(node.getParent().isClassMembers());
       checkState(node.isMemberFunctionDef() || node.isSetterDef() || node.isGetterDef());
       this.node = node;
       this.var = var;
-      this.module = module;
+      this.chunk = chunk;
     }
 
     @Override
@@ -678,8 +698,8 @@ class AnalyzePrototypeProperties implements CompilerPass {
     }
 
     @Override
-    public JSModule getModule() {
-      return module;
+    public JSChunk getChunk() {
+      return chunk;
     }
 
     /** Returns the function node within the definition. */
@@ -729,13 +749,15 @@ class AnalyzePrototypeProperties implements CompilerPass {
   static class AssignmentPrototypeProperty implements PrototypeProperty {
     private final Node exprNode;
     private final Var rootVar;
-    private final JSModule module;
+    private final JSChunk chunk;
 
-    /** @param node An EXPR node. */
-    AssignmentPrototypeProperty(Node node, Var rootVar, JSModule module) {
+    /**
+     * @param node An EXPR node.
+     */
+    AssignmentPrototypeProperty(Node node, Var rootVar, JSChunk chunk) {
       this.exprNode = node;
       this.rootVar = rootVar;
-      this.module = module;
+      this.chunk = chunk;
     }
 
     @Override
@@ -758,8 +780,8 @@ class AnalyzePrototypeProperties implements CompilerPass {
     }
 
     @Override
-    public JSModule getModule() {
-      return module;
+    public JSChunk getChunk() {
+      return chunk;
     }
   }
 
@@ -773,13 +795,13 @@ class AnalyzePrototypeProperties implements CompilerPass {
     private final Node value;
     private final Node assign;
     private final Var rootVar;
-    private final JSModule module;
+    private final JSChunk chunk;
 
-    LiteralPrototypeProperty(Node value, Node assign, Var rootVar, JSModule module) {
+    LiteralPrototypeProperty(Node value, Node assign, Var rootVar, JSChunk chunk) {
       this.value = value;
       this.assign = assign;
       this.rootVar = rootVar;
-      this.module = module;
+      this.chunk = chunk;
     }
 
     @Override
@@ -798,8 +820,8 @@ class AnalyzePrototypeProperties implements CompilerPass {
     }
 
     @Override
-    public JSModule getModule() {
-      return module;
+    public JSChunk getChunk() {
+      return chunk;
     }
   }
 
@@ -814,7 +836,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
     // corresponding function. Otherwise, it will be null.
     final Scope scope;
 
-    NameContext(NameInfo name, Scope scope) {
+    NameContext(NameInfo name, @Nullable Scope scope) {
       this.name = name;
       this.scope = scope;
     }
@@ -827,7 +849,7 @@ class AnalyzePrototypeProperties implements CompilerPass {
 
     private boolean referenced = false;
     private final Deque<Symbol> declarations = new ArrayDeque<>();
-    private JSModule deepestCommonModuleRef = null;
+    private @Nullable JSChunk deepestCommonChunkRef = null;
 
     // True if this property is a function that reads a variable from an
     // outer scope which isn't the global scope.
@@ -868,38 +890,38 @@ class AnalyzePrototypeProperties implements CompilerPass {
     }
 
     /**
-     * Mark a reference in a given module to this property name, and record the deepest common
-     * module reference.
+     * Mark a reference in a given chunk to this property name, and record the deepest common chunk
+     * reference.
      *
-     * @param module The module where it was referenced.
+     * @param chunk The chunk where it was referenced.
      * @return Whether the name info has changed.
      */
-    boolean markReference(JSModule module) {
+    boolean markReference(@Nullable JSChunk chunk) {
       boolean hasChanged = false;
       if (!referenced) {
         referenced = true;
         hasChanged = true;
       }
 
-      JSModule originalDeepestCommon = deepestCommonModuleRef;
+      JSChunk originalDeepestCommon = deepestCommonChunkRef;
 
-      if (deepestCommonModuleRef == null) {
-        deepestCommonModuleRef = module;
+      if (deepestCommonChunkRef == null) {
+        deepestCommonChunkRef = chunk;
       } else {
-        deepestCommonModuleRef =
-            moduleGraph.getDeepestCommonDependencyInclusive(deepestCommonModuleRef, module);
+        deepestCommonChunkRef =
+            chunkGraph.getDeepestCommonDependencyInclusive(deepestCommonChunkRef, chunk);
       }
 
-      if (originalDeepestCommon != deepestCommonModuleRef) {
+      if (originalDeepestCommon != deepestCommonChunkRef) {
         hasChanged = true;
       }
 
       return hasChanged;
     }
 
-    /** Returns the deepest common module of all the references to this property. */
-    JSModule getDeepestCommonModuleRef() {
-      return deepestCommonModuleRef;
+    /** Returns the deepest common chunk of all the references to this property. */
+    JSChunk getDeepestCommonChunkRef() {
+      return deepestCommonChunkRef;
     }
 
     /**

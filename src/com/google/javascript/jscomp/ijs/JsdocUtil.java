@@ -20,14 +20,13 @@ import com.google.javascript.jscomp.Var;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.SimpleSourceFile;
 import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import com.google.javascript.rhino.Token;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Static utility methods for dealing with inspecting and constructing JSDoc objects.
@@ -53,8 +52,8 @@ final class JsdocUtil {
     return makeBuilderWithType(null, new Node(Token.QMARK)).build();
   }
 
-  private static JSDocInfoBuilder makeBuilderWithType(@Nullable JSDocInfo oldJSDoc, Node typeAst) {
-    JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(oldJSDoc);
+  private static JSDocInfo.Builder makeBuilderWithType(@Nullable JSDocInfo oldJSDoc, Node typeAst) {
+    JSDocInfo.Builder builder = JSDocInfo.Builder.maybeCopyFrom(oldJSDoc);
     builder.recordType(
         new JSTypeExpression(typeAst.srcrefTree(SYNTETIC_SRCINFO_NODE), SYNTHETIC_FILE_NAME));
     return builder;
@@ -65,13 +64,13 @@ final class JsdocUtil {
   }
 
   private static JSDocInfo getConstJSDoc(JSDocInfo oldJSDoc, Node typeAst) {
-    JSDocInfoBuilder builder = makeBuilderWithType(oldJSDoc, typeAst);
+    JSDocInfo.Builder builder = makeBuilderWithType(oldJSDoc, typeAst);
     builder.recordConstancy();
     return builder.build();
   }
 
   static JSDocInfo markConstant(JSDocInfo oldJSDoc) {
-    JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(oldJSDoc);
+    JSDocInfo.Builder builder = JSDocInfo.Builder.maybeCopyFrom(oldJSDoc);
     builder.recordConstancy();
     return builder.build();
   }
@@ -80,7 +79,7 @@ final class JsdocUtil {
     if (inlineJsdoc == null || !inlineJsdoc.hasType()) {
       return classicJsdoc;
     }
-    JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(classicJsdoc);
+    JSDocInfo.Builder builder = JSDocInfo.Builder.maybeCopyFrom(classicJsdoc);
     builder.recordType(inlineJsdoc.getType());
     return builder.build();
   }
@@ -98,30 +97,36 @@ final class JsdocUtil {
         || jsdoc.hasEnumParameterType();
   }
 
-  static JSDocInfo getJSDocForRhs(Node rhs, JSDocInfo oldJSDoc) {
+  static @Nullable JSDocInfo getJSDocForRhs(Node rhs, JSDocInfo oldJSDoc) {
     switch (NodeUtil.getKnownValueType(rhs)) {
-      case BOOLEAN:
+      case BOOLEAN -> {
         return getConstJSDoc(oldJSDoc, "boolean");
-      case NUMBER:
+      }
+      case NUMBER -> {
         return getConstJSDoc(oldJSDoc, "number");
-      case BIGINT:
+      }
+      case BIGINT -> {
         return getConstJSDoc(oldJSDoc, "bigint");
-      case STRING:
+      }
+      case STRING -> {
         return getConstJSDoc(oldJSDoc, "string");
-      case NULL:
+      }
+      case NULL -> {
         return getConstJSDoc(oldJSDoc, "null");
-      case VOID:
+      }
+      case VOID -> {
         return getConstJSDoc(oldJSDoc, "void");
-      case OBJECT:
+      }
+      case OBJECT -> {
         if (rhs.isRegExp()) {
           return getConstJSDoc(oldJSDoc, new Node(Token.BANG, IR.string("RegExp")));
         }
-        break;
-      case UNDETERMINED:
+      }
+      case UNDETERMINED -> {
         if (oldJSDoc != null && oldJSDoc.getDescription() != null) {
           return getConstJSDoc(oldJSDoc, "string");
         }
-        break;
+      }
     }
     if (rhs.isCast()) {
       return getConstJSDoc(oldJSDoc, rhs.getJSDocInfo().getType().getRoot());
@@ -129,7 +134,7 @@ final class JsdocUtil {
     return null;
   }
 
-  static JSDocInfo getJSDocForName(Var decl, JSDocInfo oldJSDoc) {
+  static @Nullable JSDocInfo getJSDocForName(Var decl, JSDocInfo oldJSDoc) {
     if (decl == null) {
       return null;
     }
@@ -139,25 +144,22 @@ final class JsdocUtil {
     }
     Node typeAst = expr.getRoot();
     switch (typeAst.getToken()) {
-      case EQUALS:
+      case EQUALS -> {
         Node typeRoot = typeAst.getFirstChild().cloneTree();
         if (!decl.isDefaultParam()) {
           typeRoot = new Node(Token.PIPE, typeRoot, IR.string("undefined"));
         }
         typeAst = typeRoot;
-        break;
-      case ITER_REST:
-        {
-          Node newType = new Node(Token.BANG);
-          Node array = IR.string("Array");
-          newType.addChildToBack(array);
-          Node block = new Node(Token.BLOCK, typeAst.getFirstChild().cloneTree());
-          array.addChildToBack(block);
-          typeAst = newType;
-          break;
-        }
-      default:
-        break;
+      }
+      case ITER_REST -> {
+        Node newType = new Node(Token.BANG);
+        Node array = IR.string("Array");
+        newType.addChildToBack(array);
+        Node block = new Node(Token.BLOCK, typeAst.getFirstChild().cloneTree());
+        array.addChildToBack(block);
+        typeAst = newType;
+      }
+      default -> {}
     }
     return getConstJSDoc(oldJSDoc, typeAst);
   }

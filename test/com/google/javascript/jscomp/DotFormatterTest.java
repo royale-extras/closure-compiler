@@ -58,10 +58,13 @@ public final class DotFormatterTest {
   public void testToDotSimple() throws Exception {
     Node ast = new Node(Token.BITOR);
 
-    String expected = "digraph AST {\n" +
-        "  node [color=lightblue2, style=filled];\n" +
-        "  node0 [label=\"BITOR\"];\n" +
-        "}\n";
+    String expected =
+        """
+        digraph AST {
+          node [color=lightblue2, style=filled];
+          node0 [label="BITOR"];
+        }
+        """;
     test(expected, ast);
   }
 
@@ -71,10 +74,12 @@ public final class DotFormatterTest {
     Node ast = Node.newString(Token.NAME, "dummy");
 
     String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"NAME(dummy)\"];\n"
-            + "}\n";
+        """
+        digraph AST {
+          node [color=lightblue2, style=filled];
+          node0 [label="NAME(dummy)"];
+        }
+        """;
     test(expected, ast);
   }
 
@@ -85,10 +90,12 @@ public final class DotFormatterTest {
     ;
 
     String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"STRING_KEY(key)\"];\n"
-            + "}\n";
+        """
+        digraph AST {
+          node [color=lightblue2, style=filled];
+          node0 [label="STRING_KEY(key)"];
+        }
+        """;
     test(expected, ast);
   }
 
@@ -97,16 +104,19 @@ public final class DotFormatterTest {
   public void testToDot3Elements_nodesWithoutNames() throws Exception {
     Node ast = new Node(Token.BLOCK);
     ast.addChildToBack(Node.newString(Token.NAME, ""));
-    ast.addChildToBack(Node.newString(Token.STRING, ""));
+    ast.addChildToBack(Node.newString(Token.STRINGLIT, ""));
 
-    String expected = "digraph AST {\n" +
-        "  node [color=lightblue2, style=filled];\n" +
-        "  node0 [label=\"BLOCK\"];\n" +
-        "  node1 [label=\"NAME\"];\n" +
-        "  node0 -> node1 [weight=1];\n" +
-        "  node2 [label=\"STRING\"];\n" +
-        "  node0 -> node2 [weight=1];\n" +
-        "}\n";
+    String expected =
+        """
+        digraph AST {
+          node [color=lightblue2, style=filled];
+          node0 [label="BLOCK"];
+          node1 [label="NAME"];
+          node0 -> node1 [weight=1];
+          node2 [label="STRINGLIT"];
+          node0 -> node2 [weight=1];
+        }
+        """;
     test(expected, ast);
   }
 
@@ -115,17 +125,19 @@ public final class DotFormatterTest {
   public void testToDot3Elements_NodesCreatedWithNewString() throws Exception {
     Node ast = new Node(Token.BLOCK);
     ast.addChildToBack(Node.newString(Token.NAME, "a"));
-    ast.addChildToBack(Node.newString(Token.STRING, "b"));
+    ast.addChildToBack(Node.newString(Token.STRINGLIT, "b"));
 
     String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"BLOCK\"];\n"
-            + "  node1 [label=\"NAME(a)\"];\n"
-            + "  node0 -> node1 [weight=1];\n"
-            + "  node2 [label=\"STRING(b)\"];\n"
-            + "  node0 -> node2 [weight=1];\n"
-            + "}\n";
+        """
+        digraph AST {
+          node [color=lightblue2, style=filled];
+          node0 [label="BLOCK"];
+          node1 [label="NAME(a)"];
+          node0 -> node1 [weight=1];
+          node2 [label="STRINGLIT(b)"];
+          node0 -> node2 [weight=1];
+        }
+        """;
     test(expected, ast);
   }
 
@@ -135,19 +147,21 @@ public final class DotFormatterTest {
     Node ast = new Node(Token.IMPORT);
     ast.addChildToBack(new Node(Token.EMPTY));
     ast.addChildToBack(Node.newString(Token.IMPORT_STAR, "name"));
-    ast.addChildToBack(Node.newString(Token.STRING, "module-name"));
+    ast.addChildToBack(Node.newString(Token.STRINGLIT, "module-name"));
 
     String expected =
-        "digraph AST {\n"
-            + "  node [color=lightblue2, style=filled];\n"
-            + "  node0 [label=\"IMPORT\"];\n"
-            + "  node1 [label=\"EMPTY\"];\n"
-            + "  node0 -> node1 [weight=1];\n"
-            + "  node2 [label=\"IMPORT_STAR(name)\"];\n"
-            + "  node0 -> node2 [weight=1];\n"
-            + "  node3 [label=\"STRING(module-nam)\"];\n"
-            + "  node0 -> node3 [weight=1];\n"
-            + "}\n";
+        """
+        digraph AST {
+          node [color=lightblue2, style=filled];
+          node0 [label="IMPORT"];
+          node1 [label="EMPTY"];
+          node0 -> node1 [weight=1];
+          node2 [label="IMPORT_STAR(name)"];
+          node0 -> node2 [weight=1];
+          node3 [label="STRINGLIT(module-nam)"];
+          node0 -> node3 [weight=1];
+        }
+        """;
     test(expected, ast);
   }
 

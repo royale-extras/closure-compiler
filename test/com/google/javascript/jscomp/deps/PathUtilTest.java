@@ -22,11 +22,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for the {@link PathUtil} class.
- *
- * @author agrieve@google.com (Andrew Grieve)
- */
+/** Unit tests for the {@link PathUtil} class. */
 @RunWith(JUnit4.class)
 public final class PathUtilTest {
 

@@ -15,6 +15,8 @@
  */
 package com.google.javascript.jscomp;
 
+import static java.lang.Math.max;
+
 import com.google.common.collect.ImmutableMap;
 import com.google.errorprone.annotations.Immutable;
 
@@ -39,7 +41,7 @@ public final class ReplacedStringsDecoder {
 
   public ReplacedStringsDecoder(VariableMap variableMap) {
     // VariableMap is not an immutable type, so we extract the map instead of directly using it.
-    this.originalToNewNameMap = ImmutableMap.copyOf(variableMap.getOriginalNameToNewNameMap());
+    this.originalToNewNameMap = variableMap.getOriginalNameToNewNameMap();
   }
 
   /**
@@ -67,7 +69,7 @@ public final class ReplacedStringsDecoder {
     }
     String[] originalBits = originalStr.split(ARGUMENT_PLACE_HOLDER, -1);
     StringBuilder sb = new StringBuilder(originalBits[0]);
-    for (int i = 1; i < Math.max(originalBits.length, suppliedBits.length); i++) {
+    for (int i = 1; i < max(originalBits.length, suppliedBits.length); i++) {
       // Replace missing bits with "-". Shouldn't happen except that we aren't
       // escaping the replacement token at the moment.
       sb.append(i < suppliedBits.length ? suppliedBits[i] : "-");

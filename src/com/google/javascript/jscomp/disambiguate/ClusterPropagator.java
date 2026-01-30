@@ -19,40 +19,25 @@ package com.google.javascript.jscomp.disambiguate;
 import com.google.javascript.jscomp.graph.FixedPointGraphTraversal;
 
 /** A callback to propagate clusterings across a type graph. */
-final class ClusterPropagator implements FixedPointGraphTraversal.EdgeCallback<FlatType, Object> {
+final class ClusterPropagator
+    implements FixedPointGraphTraversal.EdgeCallback<ColorGraphNode, Object> {
 
   ClusterPropagator() {}
 
   @Override
-  public boolean traverseEdge(FlatType src, Object unused, FlatType dest) {
+  public boolean traverseEdge(ColorGraphNode src, Object unused, ColorGraphNode dest) {
     int startDestPropCount = dest.getAssociatedProps().size();
 
-    /**
-     * We make sure to check invalidation on the source first to preempt property propagation.
-     * There's no point in porpagating any properties in that case. Clearing them eagerly saves time
-     * and memory.
-     */
-    invalidatePropertiesIfInvalidating(src);
-
-    for (PropertyClustering prop : src.getAssociatedProps()) {
+    for (PropertyClustering prop : src.getAssociatedProps().keySet()) {
       if (prop.isInvalidated()) {
         continue;
       }
 
-      dest.getAssociatedProps().add(prop);
+      dest.getAssociatedProps().putIfAbsent(prop, ColorGraphNode.PropAssociation.SUPERTYPE);
       prop.getClusters().union(src, dest);
     }
 
-    invalidatePropertiesIfInvalidating(dest);
-
     // Were any properties added to dest?
     return startDestPropCount < dest.getAssociatedProps().size();
-  }
-
-  private static void invalidatePropertiesIfInvalidating(FlatType flat) {
-    if (flat.isInvalidating()) {
-      flat.getAssociatedProps().forEach(PropertyClustering::invalidate);
-      flat.getAssociatedProps().clear();
-    }
   }
 }

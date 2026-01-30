@@ -40,18 +40,19 @@
 package com.google.javascript.rhino.jstype;
 
 import com.google.common.collect.ImmutableSortedMap;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.javascript.rhino.Node;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 
 /**
  * A builder for record types.
  *
  */
-public class RecordTypeBuilder {
+public final class RecordTypeBuilder {
   private boolean isEmpty = true;
   private boolean isDeclared = true;
   private final JSTypeRegistry registry;
-  private final HashMap<String, RecordProperty> properties = new HashMap<>();
+  private final LinkedHashMap<String, RecordProperty> properties = new LinkedHashMap<>();
 
   public RecordTypeBuilder(JSTypeRegistry registry) {
     this.registry = registry;
@@ -63,15 +64,15 @@ public class RecordTypeBuilder {
   }
 
   /**
-   * Adds a property with the given name and type to the record type.
-   * If you add a property that has already been added, then {@link #build}
-   * will fail.
+   * Adds a property with the given name and type to the record type. If you add a property that has
+   * already been added, then {@link #build} will fail.
    *
    * @param name the name of the new property
    * @param type the JSType of the new property
    * @param propertyNode the node that holds this property definition
    * @return The builder itself for chaining purposes.
    */
+  @CanIgnoreReturnValue
   public RecordTypeBuilder addProperty(String name, JSType type, Node propertyNode) {
     isEmpty = false;
     properties.put(name, new RecordProperty(type, propertyNode));
@@ -80,16 +81,17 @@ public class RecordTypeBuilder {
 
   /**
    * Creates a record. Fails if any duplicate property names were added.
+   *
    * @return The record type.
    */
   public JSType build() {
-     // If we have an empty record, simply return the object type.
+    // If we have an empty record, simply return the object type.
     if (isEmpty) {
-       return registry.getNativeObjectType(JSTypeNative.OBJECT_TYPE);
+      return registry.getNativeObjectType(JSTypeNative.OBJECT_TYPE);
     }
     ImmutableSortedMap.Builder<String, RecordProperty> m = ImmutableSortedMap.naturalOrder();
     m.putAll(this.properties);
-    return new RecordType(registry, m.build(), isDeclared);
+    return new RecordType(registry, m.buildOrThrow(), isDeclared);
   }
 
   static class RecordProperty {

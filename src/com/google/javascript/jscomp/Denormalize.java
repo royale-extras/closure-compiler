@@ -19,8 +19,9 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Predicates.alwaysTrue;
 
-import com.google.javascript.jscomp.NodeTraversal.Callback;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.Behavior;
+import com.google.javascript.jscomp.ReferenceCollector.Behavior;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -43,21 +44,22 @@ import com.google.javascript.rhino.Token;
  * </code> becomes <code>if (y) { var x = 0; }</code>, effectively undoing what {@link
  * HoistVarsOutOfBlocks} does.
  */
-class Denormalize implements CompilerPass, Callback, Behavior {
+class Denormalize implements CompilerPass, NodeTraversal.Callback, Behavior {
 
   private final AbstractCompiler compiler;
+  private final FeatureSet outputFeatureSet;
 
-  Denormalize(AbstractCompiler compiler) {
+  Denormalize(AbstractCompiler compiler, FeatureSet outputFeatureSet) {
     this.compiler = compiler;
+    this.outputFeatureSet = outputFeatureSet;
   }
 
   @Override
   public void process(Node externs, Node root) {
     NodeTraversal.traverse(compiler, root, this);
     // Don't inline the VAR declaration if this compilation involves old-style ctemplates.
-    if (compiler.getOptions().syntheticBlockStartMarker == null) {
-      (new ReferenceCollectingCallback(compiler, this, new SyntacticScopeCreator(compiler)))
-          .process(root);
+    if (compiler.getOptions().getSyntheticBlockStartMarker() == null) {
+      (new ReferenceCollector(compiler, this, new SyntacticScopeCreator(compiler))).process(root);
     }
   }
 
@@ -94,9 +96,7 @@ class Denormalize implements CompilerPass, Callback, Behavior {
           Node assignNode = lhs.getParent();
           if (assignNode.getParent().isExprResult()) {
             Node rhs = lhs.getNext();
-            assignNode
-                .getGrandparent()
-                .replaceChild(assignNode.getParent(), IR.var(lhs.detach(), rhs.detach()));
+            assignNode.getParent().replaceWith(IR.var(lhs.detach(), rhs.detach()));
 
             Node var = declaration.getNode().getParent();
             checkState(var.isVar(), var);
@@ -116,6 +116,7 @@ class Denormalize implements CompilerPass, Callback, Behavior {
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     maybeCollapseIntoForStatements(n, parent);
+    maybeCollapseLogicalAssignShorthand(t, n, parent);
     maybeCollapseAssignShorthand(n, parent);
   }
 
@@ -149,8 +150,8 @@ class Denormalize implements CompilerPass, Callback, Behavior {
             && forVar.getString().equals(name.getString())) {
           // OK, the names match, and the var declaration does not have an
           // initializer. Move it into the loop.
-          parent.removeChild(n);
-          forNode.replaceChild(forVar, n);
+          n.detach();
+          forVar.replaceWith(n);
           compiler.reportChangeToEnclosingScope(parent);
         }
       }
@@ -168,7 +169,7 @@ class Denormalize implements CompilerPass, Callback, Behavior {
       // Move the current node into the FOR loop initializer.
       Node forNode = nextSibling;
       Node oldInitializer = forNode.getFirstChild();
-      parent.removeChild(n);
+      n.detach();
 
       Node newInitializer;
       if (n.isVar()) {
@@ -177,28 +178,86 @@ class Denormalize implements CompilerPass, Callback, Behavior {
         // Extract the expression from EXPR_RESULT node.
         checkState(n.hasOneChild(), n);
         newInitializer = n.getFirstChild();
-        n.removeChild(newInitializer);
+        newInitializer.detach();
       }
 
-      forNode.replaceChild(oldInitializer, newInitializer);
+      oldInitializer.replaceWith(newInitializer);
 
       compiler.reportChangeToEnclosingScope(forNode);
     }
   }
 
   private void maybeCollapseAssignShorthand(Node n, Node parent) {
-    if (n.isAssign() && n.getFirstChild().isName()
-        && NodeUtil.hasCorrespondingAssignmentOp(n.getLastChild())
-        && n.getLastChild().getFirstChild().isName()) {
-      Node op = n.getLastChild();
-      Token assignOp = NodeUtil.getAssignOpFromOp(op);
-      if (n.getFirstChild().getString().equals(op.getFirstChild().getString())) {
-        op.setToken(assignOp);
-        Node opDetached = op.detach();
-        opDetached.setJSDocInfo(n.getJSDocInfo());
-        parent.replaceChild(n, opDetached);
-        compiler.reportChangeToEnclosingScope(parent);
-      }
+    if (!isCollapsableAssign(n)) {
+      return;
     }
+    Node op = n.getLastChild();
+    Token assignOp = getAssignOpFromOp(op);
+    if (n.getFirstChild().getString().equals(op.getFirstChild().getString())) {
+      op.setToken(assignOp);
+      Node opDetached = op.detach();
+      opDetached.setJSDocInfo(n.getJSDocInfo());
+      n.replaceWith(opDetached);
+      compiler.reportChangeToEnclosingScope(parent);
+    }
+  }
+
+  private void maybeCollapseLogicalAssignShorthand(NodeTraversal t, Node n, Node parent) {
+    if (!isCollapsableLogicalAssign(n)) {
+      return;
+    }
+    Node op = n.getLastChild();
+    Token assignOp = getAssignOpFromOp(n);
+    if (n.getFirstChild().getString().equals(op.getFirstChild().getString())) {
+      op.setToken(assignOp);
+      Node opDetached = op.detach();
+      opDetached.setJSDocInfo(n.getJSDocInfo());
+      n.replaceWith(opDetached);
+      NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.LOGICAL_ASSIGNMENT, compiler);
+      compiler.reportChangeToEnclosingScope(parent);
+    }
+  }
+
+  private boolean isCollapsableAssign(Node n) {
+    return n.isAssign()
+        && n.getFirstChild().isName()
+        && hasCorrespondingAssignmentOp(n.getLastChild())
+        && n.getLastChild().getFirstChild().isName();
+  }
+
+  private boolean isCollapsableLogicalAssign(Node n) {
+    return outputFeatureSet.has(Feature.LOGICAL_ASSIGNMENT)
+        && (n.isOr() || n.isAnd() || n.isNullishCoalesce())
+        && n.getFirstChild().isName()
+        && n.getLastChild().isAssign()
+        && n.getLastChild().getFirstChild().isName();
+  }
+
+  private Token getAssignOpFromOp(Node n) {
+    return switch (n.getToken()) {
+      case BITOR -> Token.ASSIGN_BITOR;
+      case BITXOR -> Token.ASSIGN_BITXOR;
+      case BITAND -> Token.ASSIGN_BITAND;
+      case LSH -> Token.ASSIGN_LSH;
+      case RSH -> Token.ASSIGN_RSH;
+      case URSH -> Token.ASSIGN_URSH;
+      case ADD -> Token.ASSIGN_ADD;
+      case SUB -> Token.ASSIGN_SUB;
+      case MUL -> Token.ASSIGN_MUL;
+      case EXPONENT -> Token.ASSIGN_EXPONENT;
+      case DIV -> Token.ASSIGN_DIV;
+      case MOD -> Token.ASSIGN_MOD;
+      case OR -> Token.ASSIGN_OR;
+      case AND -> Token.ASSIGN_AND;
+      case COALESCE -> Token.ASSIGN_COALESCE;
+      default -> throw new IllegalStateException("Unexpected operator: " + n);
+    };
+  }
+
+  private boolean hasCorrespondingAssignmentOp(Node n) {
+    return switch (n.getToken()) {
+      case BITOR, BITXOR, BITAND, LSH, RSH, URSH, ADD, SUB, MUL, DIV, MOD -> true;
+      default -> false;
+    };
   }
 }

@@ -18,19 +18,19 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.annotations.GwtIncompatible;
 import com.google.common.collect.Iterables;
-import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import javax.annotation.Nullable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
+import org.jspecify.annotations.Nullable;
 import org.xml.sax.Attributes;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.EntityResolver;
@@ -42,49 +42,14 @@ import org.xml.sax.XMLReader;
 /**
  * A MessageBundle that parses messages from an XML Translation Bundle (XTB)
  * file.
- *
- * TODO(moz): Make this GWT compatible.
  */
-@GwtIncompatible("Currently not used in GWT version")
 @SuppressWarnings("sunapi")
 public final class XtbMessageBundle implements MessageBundle {
-  /**
-   * Detects an ICU-formatted plural or select message. Any placeholders occurring inside these
-   * messages must be rewritten in ICU format.
-   */
-  static boolean isStartOfIcuMessage(String part) {
-    // ICU messages start with a '{' followed by an identifier, followed by a ',' and then 'plural'
-    // or 'select' follows by another comma.
-    // the 'startsWith' check is redundant but should allow us to skip using the matcher
-    if (!part.startsWith("{")) {
-      return false;
-    }
-    int commaIndex = part.indexOf(',', 1);
-    // if commaIndex == 1 that means the identifier is empty, which isn't allowed.
-    if (commaIndex <= 1) {
-      return false;
-    }
-    int nextBracketIndex = part.indexOf('{', 1);
-    return (nextBracketIndex == -1 || nextBracketIndex > commaIndex)
-        && (part.startsWith("plural,", commaIndex + 1)
-            || part.startsWith("select,", commaIndex + 1));
-  }
-
-  static String asIcuPlaceholder(String phName) {
-    return SimpleFormat.format("{%s}", phName);
-  }
-
   private static final SecureEntityResolver NOOP_RESOLVER
       = new SecureEntityResolver();
 
   private final Map<String, JsMessage> messages;
   private final JsMessage.IdGenerator idGenerator;
-
-  public XtbMessageBundle(
-      InputStream xtb, @Nullable String projectId,
-      @SuppressWarnings("unused") boolean unused) {
-    this(xtb, projectId);
-  }
 
   /**
    * Creates an instance and initializes it with the messages in an XTB file.
@@ -93,7 +58,7 @@ public final class XtbMessageBundle implements MessageBundle {
    * @param projectId  the translation console project id (i.e. name)
    */
   public XtbMessageBundle(InputStream xtb, @Nullable String projectId) {
-    this.messages = new HashMap<>();
+    this.messages = new LinkedHashMap<>();
     this.idGenerator = new GoogleJsMessageIdGenerator(projectId);
 
     try {
@@ -158,10 +123,19 @@ public final class XtbMessageBundle implements MessageBundle {
     private static final String PLACEHOLDER_ELEM_NAME = "ph";
     private static final String PLACEHOLDER_NAME_ATT_NAME = "name";
 
-    boolean isIcuMessage;
+    private static final String BRANCH_ELEM_NAME = "branch";
+    private static final String BRANCH_NAME_ATT_NAME = "variants";
+    private static final String MALE_GENDER_CASE = "MASCULINE";
+    private static final String FEMALE_GENDER_CASE = "FEMININE";
+    private static final String NEUTER_GENDER_CASE = "NEUTER";
+    private static final String OTHER_GENDER_CASE = "OTHER";
+
+    private static final String GENDER_VARIANT_PATTERN = "grammatical_gender_case:\\s*(\\w+)";
+    private static final Pattern GET_STRING_PATTERN = Pattern.compile(GENDER_VARIANT_PATTERN);
+    private String genderCase;
 
     String lang;
-    JsMessage.Builder msgBuilder;
+    JsMessage.@Nullable Builder msgBuilder;
 
     @Override
     public void setDocumentLocator(Locator locator) {}
@@ -182,28 +156,45 @@ public final class XtbMessageBundle implements MessageBundle {
     public void startElement(String uri, String localName, String qName,
                              Attributes atts) {
       switch (qName) {
-        case BUNDLE_ELEM_NAME:
+        case BUNDLE_ELEM_NAME -> {
           checkState(lang == null);
           lang = atts.getValue(LANG_ATT_NAME);
           checkState(lang != null && !lang.isEmpty());
-          break;
-        case TRANSLATION_ELEM_NAME:
+        }
+        case TRANSLATION_ELEM_NAME -> {
           checkState(msgBuilder == null);
           String id = atts.getValue(MESSAGE_ID_ATT_NAME);
           checkState(id != null && !id.isEmpty());
-          msgBuilder = new JsMessage.Builder(id);
-          break;
-        case PLACEHOLDER_ELEM_NAME:
+          msgBuilder = new JsMessage.Builder().setKey(id).setId(id);
+        }
+        case PLACEHOLDER_ELEM_NAME -> {
           checkState(msgBuilder != null);
           String phRef = atts.getValue(PLACEHOLDER_NAME_ATT_NAME);
-          if (isIcuMessage) {
-            msgBuilder.appendStringPart(asIcuPlaceholder(phRef));
+          if (msgBuilder.hasGenderedVariants()) {
+            msgBuilder.appendCanonicalPlaceholderReference(
+                JsMessage.GrammaticalGenderCase.valueOf(genderCase), phRef);
           } else {
-            phRef = JsMessageVisitor.toLowerCamelCaseWithNumericSuffixes(phRef);
-            msgBuilder.appendPlaceholderReference(phRef);
+            msgBuilder.appendCanonicalPlaceholderReference(phRef);
           }
-          break;
-        default: // fall out
+        }
+        case BRANCH_ELEM_NAME -> {
+          checkState(msgBuilder != null);
+          String gender = atts.getValue(BRANCH_NAME_ATT_NAME);
+          // Gender case must be one of the following: MALE, FEMALE, NEUTER, or OTHER.
+
+          Matcher matcher = GET_STRING_PATTERN.matcher(gender);
+          if (matcher.find()) {
+            genderCase = matcher.group(1);
+            checkState(
+                genderCase.equals(MALE_GENDER_CASE)
+                    || genderCase.equals(FEMALE_GENDER_CASE)
+                    || genderCase.equals(NEUTER_GENDER_CASE)
+                    || genderCase.equals(OTHER_GENDER_CASE),
+                "Gender case must be one of the following: MASCULINE, FEMININE, NEUTER, or OTHER.");
+            msgBuilder.addGenderedMessageKey(JsMessage.GrammaticalGenderCase.valueOf(genderCase));
+          }
+        }
+        default -> {}
       }
     }
 
@@ -217,27 +208,33 @@ public final class XtbMessageBundle implements MessageBundle {
         String key = msgBuilder.getKey();
         messages.put(key, msgBuilder.build());
         msgBuilder = null;
-        isIcuMessage = false;
       }
     }
 
     @Override
-    public void characters(char ch[], int start, int length) {
+    public void characters(char[] ch, int start, int length) {
       if (msgBuilder != null) {
         String part = String.valueOf(ch, start, length);
-        if (!msgBuilder.hasParts()) {
-          isIcuMessage = isStartOfIcuMessage(part);
-        }
         // Append a string literal to the message.
-        msgBuilder.appendStringPart(part);
+        if (msgBuilder.hasGenderedVariants()) {
+          msgBuilder.appendStringPart(JsMessage.GrammaticalGenderCase.valueOf(genderCase), part);
+        } else {
+          msgBuilder.appendStringPart(part);
+        }
       }
     }
 
     @Override
-    public void ignorableWhitespace(char ch[], int start, int length) {
+    public void ignorableWhitespace(char[] ch, int start, int length) {
       if (msgBuilder != null) {
         // Preserve whitespace in messages.
-        msgBuilder.appendStringPart(String.valueOf(ch, start, length));
+        if (msgBuilder.hasGenderedVariants()) {
+          msgBuilder.appendStringPart(
+              JsMessage.GrammaticalGenderCase.valueOf(genderCase),
+              String.valueOf(ch, start, length));
+        } else {
+          msgBuilder.appendStringPart(String.valueOf(ch, start, length));
+        }
       }
     }
 

@@ -31,7 +31,7 @@ public final class RemoveWeakSourcesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testSingleModule() {
+  public void testSingleChunk() {
     SourceFile strongSrc1 = SourceFile.fromCode("a.js", "var a = 1;", SourceKind.STRONG);
     SourceFile strongSrc2 = SourceFile.fromCode("b.js", "var b = 2;", SourceKind.STRONG);
     SourceFile weakSrc1 = SourceFile.fromCode("c.js", "var c = 3;", SourceKind.WEAK);
@@ -46,7 +46,7 @@ public final class RemoveWeakSourcesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testMultipleModules() {
+  public void testMultipleChunks() {
     SourceFile strongSrc1 = SourceFile.fromCode("a.js", "var a = 1;", SourceKind.STRONG);
     SourceFile strongSrc2 = SourceFile.fromCode("b.js", "var b = 2;", SourceKind.STRONG);
     SourceFile weakSrc1 = SourceFile.fromCode("c.js", "var c = 3;", SourceKind.WEAK);
@@ -57,31 +57,31 @@ public final class RemoveWeakSourcesTest extends CompilerTestCase {
     SourceFile emptyWeakSrc3 = SourceFile.fromCode("e.js", "");
     SourceFile fillFileSrc = SourceFile.fromCode("$fillFile", "");
 
-    JSModule moduleBefore1 = new JSModule("m1");
-    moduleBefore1.add(strongSrc1);
-    moduleBefore1.add(weakSrc1);
-    JSModule moduleAfter1 = new JSModule("m1");
-    moduleAfter1.add(strongSrc1);
+    JSChunk chunkBefore1 = new JSChunk("m1");
+    chunkBefore1.add(strongSrc1);
+    chunkBefore1.add(weakSrc1);
+    JSChunk chunkAfter1 = new JSChunk("m1");
+    chunkAfter1.add(strongSrc1);
 
-    JSModule moduleBefore2 = new JSModule("m2");
-    moduleBefore2.add(weakSrc2);
-    moduleBefore2.add(strongSrc2);
-    JSModule moduleAfter2 = new JSModule("m2");
-    moduleAfter2.add(strongSrc2);
+    JSChunk chunkBefore2 = new JSChunk("m2");
+    chunkBefore2.add(weakSrc2);
+    chunkBefore2.add(strongSrc2);
+    JSChunk chunkAfter2 = new JSChunk("m2");
+    chunkAfter2.add(strongSrc2);
 
-    JSModule moduleBefore3 = new JSModule("m3");
-    moduleBefore3.add(weakSrc3);
-    JSModule moduleAfter3 = new JSModule("m3");
-    moduleAfter3.add(fillFileSrc);
+    JSChunk chunkBefore3 = new JSChunk("m3");
+    chunkBefore3.add(weakSrc3);
+    JSChunk chunkAfter3 = new JSChunk("m3");
+    chunkAfter3.add(fillFileSrc);
 
-    JSModule weakModule = new JSModule("$weak$");
-    weakModule.add(emptyWeakSrc1);
-    weakModule.add(emptyWeakSrc2);
-    weakModule.add(emptyWeakSrc3);
+    JSChunk weakChunk = new JSChunk("$weak$");
+    weakChunk.add(emptyWeakSrc1);
+    weakChunk.add(emptyWeakSrc2);
+    weakChunk.add(emptyWeakSrc3);
 
-    // Expect the weak sources to be emptied and moved to a separate final module.
+    // Expect the weak sources to be emptied and moved to a separate final chunk.
     test(
-        srcs(new JSModule[] {moduleBefore1, moduleBefore2, moduleBefore3}),
-        expected(new JSModule[] {moduleAfter1, moduleAfter2, moduleAfter3, weakModule}));
+        srcs(new JSChunk[] {chunkBefore1, chunkBefore2, chunkBefore3}),
+        expected(new JSChunk[] {chunkAfter1, chunkAfter2, chunkAfter3, weakChunk}));
   }
 }

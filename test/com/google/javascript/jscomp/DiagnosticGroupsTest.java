@@ -37,18 +37,30 @@ public final class DiagnosticGroupsTest {
   public void lintChecksGroupIsDisjointFromEveryOtherGroup() throws Exception {
     DiagnosticGroup lintChecks = DiagnosticGroups.LINT_CHECKS;
     for (DiagnosticGroup group : DiagnosticGroups.getRegisteredGroups().values()) {
-      // TODO(lharker): stop ignoring USE_OF_GOOG_PROVIDE after migrating rules_closure
-      // code to suppress useOfGoogProvide instead of lintChecks.
-      if (group.equals(lintChecks) || group.equals(DiagnosticGroups.USE_OF_GOOG_PROVIDE)) {
+      if (group.equals(lintChecks)
+          // TODO(lharker): stop ignoring USE_OF_GOOG_PROVIDE after migrating rules_closure
+          // code to suppress useOfGoogProvide instead of lintChecks.
+          || group.equals(DiagnosticGroups.USE_OF_GOOG_PROVIDE)
+          // We need a separate group for "lintVarDeclarations" so code that really cannot be
+          // updated to use only `let` and `const` can suppress the warnings about `var` without
+          // suppressing all lint checks.
+          || group.equals(DiagnosticGroups.LINT_VAR_DECLARATIONS)) {
         continue;
       }
       assertWithMessage(
-              "DiagnosticTypes common to DiagnosticGroups "
-                  + lintChecks.getName()
-                  + " and "
-                  + group.getName())
+              "DiagnosticTypes common to DiagnosticGroups %s and %s",
+              lintChecks.getName(), group.getName())
           .that(Sets.intersection(lintChecks.getTypes(), group.getTypes()))
           .isEmpty();
+    }
+  }
+
+  @Test
+  public void conformanceErrorsCannotBeDowngraded() {
+    for (DiagnosticGroup group : DiagnosticGroups.getRegisteredGroups().values()) {
+      assertWithMessage("Group '%s' should not include JSC_CONFORMANCE_ERROR", group.getName())
+          .that(group.getTypes())
+          .doesNotContain(CheckConformance.CONFORMANCE_ERROR);
     }
   }
 }

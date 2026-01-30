@@ -18,51 +18,48 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.javascript.jscomp.NodeTraversal.AbstractPreOrderCallback;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.jscomp.SyntacticScopeCreator.RedeclarationHandler;
 import com.google.javascript.rhino.IR;
-import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Checks that all variables are declared, that file-private variables are accessed only in the file
- * that declares them, and that any var references that cross module boundaries respect declared
- * module dependencies.
+ * that declares them, and that any var references that cross chunk boundaries respect declared
+ * chunk dependencies.
  */
-class VarCheck implements ScopedCallback, HotSwapCompilerPass {
+class VarCheck implements ScopedCallback, CompilerPass {
 
   static final DiagnosticType UNDEFINED_VAR_ERROR = DiagnosticType.error(
       "JSC_UNDEFINED_VARIABLE",
       "variable {0} is undeclared");
 
-  static final DiagnosticType VIOLATED_MODULE_DEP_ERROR =
+  static final DiagnosticType VIOLATED_CHUNK_DEP_ERROR =
       DiagnosticType.error(
-          "JSC_VIOLATED_MODULE_DEPENDENCY",
-          "module {0} cannot reference {2}, defined in module {1}, since {1} loads after {0}");
+          "JSC_VIOLATED_CHUNK_DEPENDENCY",
+          "chunk {0} cannot reference {2}, defined in chunk {1}, since {1} loads after {0}");
 
-  static final DiagnosticType MISSING_MODULE_DEP_ERROR =
+  static final DiagnosticType MISSING_CHUNK_DEP_ERROR =
       DiagnosticType.warning(
-          "JSC_MISSING_MODULE_DEPENDENCY",
-          "missing module dependency; module {0} should depend"
-              + " on module {1} because it references {2}");
+          "JSC_MISSING_CHUNK_DEPENDENCY",
+          "missing chunk dependency; chunk {0} should depend"
+              + " on chunk {1} because it references {2}");
 
-  static final DiagnosticType STRICT_MODULE_DEP_ERROR = DiagnosticType.disabled(
-      "JSC_STRICT_MODULE_DEPENDENCY",
-      // The newline below causes the JS compiler not to complain when the
-      // referenced module's name changes because, for example, it's a
-      // synthetic module.
-      "cannot reference {2} because of a missing module dependency\n"
-      + "defined in module {1}, referenced from module {0}");
+  static final DiagnosticType STRICT_CHUNK_DEP_ERROR =
+      DiagnosticType.disabled(
+          "JSC_STRICT_CHUNK_DEPENDENCY",
+          // The newline below causes the JS compiler not to complain when the
+          // referenced chunk's name changes because, for example, it's a
+          // synthetic chunk.
+          "cannot reference {2} because of a missing chunk dependency\n"
+              + "defined in chunk {1}, referenced from chunk {0}");
 
   static final DiagnosticType NAME_REFERENCE_IN_EXTERNS_ERROR =
       DiagnosticType.warning(
@@ -80,28 +77,29 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
           "JSC_VAR_MULTIPLY_DECLARED_ERROR",
           "Variable {0} declared more than once. First occurrence: {1}");
 
+  static final DiagnosticType BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR =
+      DiagnosticType.error(
+          "JSC_BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR",
+          "Block-scoped variable {0} declared more than once. First occurrence: {1}");
+
   static final DiagnosticType VAR_ARGUMENTS_SHADOWED_ERROR =
     DiagnosticType.error(
         "JSC_VAR_ARGUMENTS_SHADOWED_ERROR",
         "Shadowing \"arguments\" is not allowed");
 
-  static final DiagnosticType BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR =
-      DiagnosticType.error(
-          "JSC_BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR",
-          "Duplicate let / const / class / function declaration in the same scope is not allowed.");
-
   // The arguments variable is special, in that it's declared in every local
   // scope, but not explicitly declared.
   private static final String ARGUMENTS = "arguments";
+  // The IRFactory parse step adds references to this special name for @closureUnaware support, but
+  // it's not actually defined anywhere - just a compiler internal implementation detail.
+  private static final String JSCOMP_CLOSURE_UNAWARE_CODE_SHADOW_HOST_NAME =
+      "$jscomp_wrap_closure_unaware_code";
 
-  private static final Node googLoadModule = IR.getprop(IR.name("goog"), "loadModule");
-  private static final Node googProvide = IR.getprop(IR.name("goog"), "provide");
   private static final Node googForwardDeclare = IR.getprop(IR.name("goog"), "forwardDeclare");
 
-  // Vars that still need to be declared in externs. These will be declared
-  // at the end of the pass, or when we see the equivalent var declared
-  // in the normal code.
-  private final Set<String> varsToDeclareInExterns = new LinkedHashSet<>();
+  // Vars that were referenced in the externs without being declared in externs, even if they were
+  // defined in code. These will be declared at the end of this pass.
+  private final Set<String> undefinedNamesFromExterns = new LinkedHashSet<>();
 
   private final AbstractCompiler compiler;
 
@@ -113,19 +111,6 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
 
   private RedeclarationCheckHandler dupHandler;
 
-  /**
-   * The roots of all `goog.provide`d namespaces mapping to the strength of the strongest file that
-   * provides them.
-   *
-   * <p>This also includes `goog.module.declareLegacyNamespace` namespaces.
-   *
-   * <p>The default value is an empty map in case the check is run without collecting provided
-   * namespaces. In that case, we assume none exist, which is the most conservative option.
-   */
-  private ImmutableMap<String, SourceKind> namespaceRootsToMaxStrength = ImmutableMap.of();
-
-  private final boolean closurePass;
-
   VarCheck(AbstractCompiler compiler) {
     this(compiler, false);
   }
@@ -135,7 +120,6 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
     this.strictExternCheck = compiler.getErrorLevel(
         JSError.make("", 0, 0, UNDEFINED_EXTERN_VAR_ERROR)) == CheckLevel.ERROR;
     this.validityCheck = validityCheck;
-    this.closurePass = compiler.getOptions() != null && compiler.getOptions().closurePass;
   }
 
   /**
@@ -155,47 +139,30 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
   public void process(Node externs, Node root) {
     ScopeCreator scopeCreator = createScopeCreator();
 
-    if (closurePass) {
-      gatherImplicitVars(compiler.getRoot());
-    }
-
     // Don't run externs-checking in sanity check mode. Normalization will
     // remove duplicate VAR declarations, which will make
     // externs look like they have assigns.
     if (!validityCheck) {
-      NodeTraversal traversal = new NodeTraversal(
-          compiler, new NameRefInExternsCheck(), scopeCreator);
-      traversal.traverse(externs);
+      NodeTraversal.builder()
+          .setCompiler(compiler)
+          .setCallback(new NameRefInExternsCheck())
+          .setScopeCreator(scopeCreator)
+          .traverse(externs);
     }
 
-    NodeTraversal t = new NodeTraversal(compiler, this, scopeCreator);
-    t.traverseRoots(externs, root);
+    NodeTraversal.builder()
+        .setCompiler(compiler)
+        .setCallback(this)
+        .setScopeCreator(scopeCreator)
+        .traverseRoots(externs, root);
 
-    for (String varName : varsToDeclareInExterns) {
-      createSynthesizedExternVar(compiler, varName);
+    for (String varName : undefinedNamesFromExterns) {
+      createSynthesizedExternVar(varName, /* isFromUndefinedCodeRef= */ false);
     }
 
     if (dupHandler != null) {
       dupHandler.removeDuplicates();
     }
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    checkState(scriptRoot.isScript());
-
-    if (closurePass) {
-      // Only run over the new script.
-      gatherImplicitVars(compiler.getRoot());
-    }
-
-    SyntacticScopeCreator scopeCreator = createScopeCreator();
-    NodeTraversal t = new NodeTraversal(compiler, this, scopeCreator);
-    // Note we use the global scope to prevent wrong "undefined-var errors" on
-    // variables that are defined in other JS files.
-    Scope topScope = scopeCreator.createScope(compiler.getRoot(), null);
-    t.traverseWithScope(scriptRoot, topScope);
-    // TODO(bashir) Check if we need to createSynthesizedExternVar like process.
   }
 
   @Override
@@ -213,7 +180,6 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
   /** Validates that a NAME node does not refer to an undefined name. */
   private void checkName(NodeTraversal t, Node n, Node parent) {
     String varName = n.getString();
-    SourceKind useStrength = strengthOf(n);
 
     // Only a function can have an empty name.
     if (varName.isEmpty()) {
@@ -231,19 +197,6 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
 
     Scope scope = t.getScope();
     Var var = scope.getVar(varName);
-    Scope varScope = var != null ? var.getScope() : null;
-
-    // Check if this variable is reference in the externs, if so mark it as a duplicate.
-    if (varScope != null
-        && varScope.isGlobal()
-        && (parent.isVar() || NodeUtil.isFunctionDeclaration(parent))
-        && varsToDeclareInExterns.contains(varName)) {
-      createSynthesizedExternVar(varName);
-
-      JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(n.getJSDocInfo());
-      builder.addSuppression("duplicate");
-      n.setJSDocInfo(builder.build());
-    }
 
     // Check that the var has been declared.
     if (var == null) {
@@ -260,20 +213,17 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
         return;
       }
 
-      SourceKind defStrength = this.namespaceRootsToMaxStrength.get(varName);
-      if (defStrength == null) {
-        // Fall though.
-        // No namespace declares this var.
-      } else if (useStrength.equals(SourceKind.STRONG) && defStrength.equals(SourceKind.WEAK)) {
-        // Fall though.
-        // This use will be retained but its definition will be deleted.
-      } else {
-        return; // Assume this var is declared as a namespace.
-      }
-
       this.handleUndeclaredVariableRef(t, n);
       scope.getGlobalScope().declare(varName, n, compiler.getSynthesizedExternsInput());
 
+      return;
+    }
+
+    if (var.isImplicitGoogNamespace()
+        && var.getImplicitGoogNamespaceStrength().equals(SourceKind.WEAK)
+        && strengthOf(n).equals(SourceKind.STRONG)) {
+      // This use will be retained but its definition will be deleted.
+      this.handleUndeclaredVariableRef(t, n);
       return;
     }
 
@@ -284,31 +234,29 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
       return;
     }
 
-    // Check module dependencies.
-    JSModule currModule = currInput.getModule();
-    JSModule varModule = varInput.getModule();
-    JSModuleGraph moduleGraph = compiler.getModuleGraph();
-    if (!validityCheck && varModule != currModule && varModule != null && currModule != null) {
-      if (varModule.isWeak()) {
+    // Check chunk dependencies.
+    JSChunk currChunk = currInput.getChunk();
+    JSChunk varChunk = varInput.getChunk();
+    JSChunkGraph chunkGraph = compiler.getChunkGraph();
+    if (!validityCheck && varChunk != currChunk && varChunk != null && currChunk != null) {
+      if (varChunk.isWeak()) {
         this.handleUndeclaredVariableRef(t, n);
       }
 
-      if (moduleGraph.dependsOn(currModule, varModule)) {
-        // The module dependency was properly declared.
+      if (chunkGraph.dependsOn(currChunk, varChunk)) {
+        // The chunk dependency was properly declared.
       } else {
         if (scope.isGlobal()) {
-          if (moduleGraph.dependsOn(varModule, currModule)) {
-            // The variable reference violates a declared module dependency.
-            t.report(
-                n, VIOLATED_MODULE_DEP_ERROR, currModule.getName(), varModule.getName(), varName);
+          if (chunkGraph.dependsOn(varChunk, currChunk)) {
+            // The variable reference violates a declared chunk dependency.
+            t.report(n, VIOLATED_CHUNK_DEP_ERROR, currChunk.getName(), varChunk.getName(), varName);
           } else {
-            // The variable reference is between two modules that have no dependency relationship.
+            // The variable reference is between two chunks that have no dependency relationship.
             // This should probably be considered an error, but just issue a warning for now.
-            t.report(
-                n, MISSING_MODULE_DEP_ERROR, currModule.getName(), varModule.getName(), varName);
+            t.report(n, MISSING_CHUNK_DEP_ERROR, currChunk.getName(), varChunk.getName(), varName);
           }
         } else {
-          t.report(n, STRICT_MODULE_DEP_ERROR, currModule.getName(), varModule.getName(), varName);
+          t.report(n, STRICT_CHUNK_DEP_ERROR, currChunk.getName(), varChunk.getName(), varName);
         }
       }
     }
@@ -330,6 +278,8 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
 
     if (n.getParent().isTypeOf()) {
       // `typeof` is used for existence checks.
+    } else if (varName.equals(JSCOMP_CLOSURE_UNAWARE_CODE_SHADOW_HOST_NAME)) {
+      // Compiler internal, we just create an extern for it.
     } else if (strictExternCheck && t.getInput().isExtern()) {
       // The extern checks are stricter, don't report a second error.
     } else {
@@ -342,82 +292,11 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
       // declared or marked as an extern. A failure at this point means that we have created
       // some variable/generated some code with an undefined reference.
       throw new IllegalStateException("Unexpected variable " + varName);
-    } else {
-      createSynthesizedExternVar(varName);
-    }
-  }
-
-  private void gatherImplicitVars(Node root) {
-    GatherImplicitClosureGlobals closureGlobals = new GatherImplicitClosureGlobals();
-    NodeTraversal.traverse(compiler, root, closureGlobals);
-    namespaceRootsToMaxStrength = ImmutableMap.copyOf(closureGlobals.roots);
-  }
-
-  /** Looks for goog.provided roots and legacy goog.modules (including in goog.loadModules). */
-  private static final class GatherImplicitClosureGlobals extends AbstractPreOrderCallback {
-    private final LinkedHashMap<String, SourceKind> roots = new LinkedHashMap<>();
-
-    @Override
-    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
-      // Don't traverse the entire AST. We just need to find goog.provides and legacy goog.modules.
-      switch (n.getToken()) {
-        case MODULE_BODY:
-          if (parent.getBooleanProp(Node.GOOG_MODULE)) {
-            addGoogModuleIfLegacy(n);
-          }
-          return false;
-        case EXPR_RESULT:
-          Node call = n.getOnlyChild();
-          if (!call.isCall()) {
-            return false;
-          }
-          Node target = call.getFirstChild();
-          Node arg = target.getNext();
-          if (arg == null) {
-            return false;
-          }
-          if (target.matchesQualifiedName(googProvide)) {
-            addRootNs(arg);
-          } else if (target.matchesQualifiedName(googLoadModule) && arg.isFunction()) {
-            addGoogModuleIfLegacy(NodeUtil.getFunctionBody(arg));
-          }
-          return false;
-        case SCRIPT:
-        case ROOT:
-          return true;
-        default:
-          return false;
-      }
-    }
-
-    private void addGoogModuleIfLegacy(Node googModuleBody) {
-      Node googModuleCall = googModuleBody.getFirstChild();
-      if (googModuleCall == null || !NodeUtil.isExprCall(googModuleCall)) {
-        return; // This is bad code, but another pass reports the error.
-      }
-      Node legacyNamespace = googModuleCall.getNext();
-      if (legacyNamespace != null
-          && NodeUtil.isGoogModuleDeclareLegacyNamespaceCall(legacyNamespace)) {
-        addRootNs(googModuleCall.getFirstChild().getSecondChild());
-      }
-    }
-
-    private void addRootNs(Node nsArg) {
-      String fullNs = nsArg.getString();
-      int indexOfDot = fullNs.indexOf('.');
-      String rootName = (indexOfDot == -1) ? fullNs : fullNs.substring(0, indexOfDot);
-
-      this.roots.merge(rootName, strengthOf(nsArg), this::strongerOf);
-    }
-
-    private SourceKind strongerOf(SourceKind left, SourceKind right) {
-      if (left.equals(SourceKind.STRONG) || right.equals(SourceKind.STRONG)) {
-        return SourceKind.STRONG;
-      } else if (left.equals(SourceKind.EXTERN) || right.equals(SourceKind.EXTERN)) {
-        // Externs are strgoner because they aren't deleted.
-        return SourceKind.EXTERN;
-      }
-      return SourceKind.WEAK;
+    } else if (!undefinedNamesFromExterns.contains(varName)) {
+      // Skip this case if the name is already going to be added as an "undefined name from extern"
+      // That declaration must take priority, to avoid the RemoveUnnecessarySyntheticExterns pass
+      // accidentally treating the synthetic extern as unnecessary.
+      createSynthesizedExternVar(varName, /* isFromUndefinedCodeRef= */ true);
     }
   }
 
@@ -432,7 +311,7 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
       for (String requiredSymbol : REQUIRED_SYMBOLS) {
         Var var = scope.getVar(requiredSymbol);
         if (var == null) {
-          varsToDeclareInExterns.add(requiredSymbol);
+          undefinedNamesFromExterns.add(requiredSymbol);
         }
       }
     }
@@ -444,11 +323,14 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
    */
   static final ImmutableSet<String> REQUIRED_SYMBOLS =
       ImmutableSet.of(
+          // go/keep-sorted start
+          "AggregateError",
           "Array",
           "Error",
           "Float32Array",
           "Function",
           "Infinity",
+          "JSCOMPILER_PRESERVE", // added by CheckSideEffects
           "JSCompiler_renameProperty",
           "Map",
           "Math",
@@ -457,10 +339,12 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
           "Object",
           "Promise",
           "RangeError",
+          "ReferenceError",
           "Reflect",
           "RegExp",
           "Set",
           "String",
+          "SuppressedError",
           "Symbol",
           "TypeError",
           "WeakMap",
@@ -471,13 +355,15 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
           "parseInt",
           "self",
           "undefined",
-          "window");
+          "window"
+          // go/keep-sorted end
+          );
 
   /**
-   * Create a new variable in a synthetic script. This will prevent
-   * subsequent compiler passes from crashing.
+   * Create a new variable in a synthetic script. This will prevent subsequent compiler passes from
+   * crashing.
    */
-  static void createSynthesizedExternVar(AbstractCompiler compiler, String varName) {
+  private void createSynthesizedExternVar(String varName, boolean isFromUndefinedCodeRef) {
     Node nameNode = IR.name(varName);
 
     // Mark the variable as constant if it matches the coding convention
@@ -491,24 +377,16 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
     }
 
     Node syntheticExternVar = IR.var(nameNode);
+    syntheticExternVar.setIsSynthesizedUnfulfilledNameDeclaration(isFromUndefinedCodeRef);
     getSynthesizedExternsRoot(compiler).addChildToBack(syntheticExternVar);
     compiler.reportChangeToEnclosingScope(syntheticExternVar);
   }
 
   /**
-   * Create a new variable in a synthetic script. This will prevent
-   * subsequent compiler passes from crashing.
+   * A check for name references in the externs inputs. These used to prevent a variable from
+   * getting renamed, but no longer have any effect.
    */
-  private void createSynthesizedExternVar(String varName) {
-    createSynthesizedExternVar(compiler, varName);
-    varsToDeclareInExterns.remove(varName);
-  }
-
-  /**
-   * A check for name references in the externs inputs. These used to prevent
-   * a variable from getting renamed, but no longer have any effect.
-   */
-  private class NameRefInExternsCheck implements Callback {
+  private class NameRefInExternsCheck implements NodeTraversal.Callback {
 
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
@@ -521,24 +399,25 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
     public void visit(NodeTraversal t, Node n, Node parent) {
       if (n.isName()) {
         switch (parent.getToken()) {
-          case VAR:
-          case LET:
-          case CONST:
-          case FUNCTION:
-          case CLASS:
-          case PARAM_LIST:
-          case DEFAULT_VALUE:
-          case ITER_REST:
-          case OBJECT_REST:
-          case ARRAY_PATTERN:
+          case VAR,
+              LET,
+              CONST,
+              FUNCTION,
+              CLASS,
+              PARAM_LIST,
+              DEFAULT_VALUE,
+              ITER_REST,
+              OBJECT_REST,
+              ARRAY_PATTERN -> {
             // These are okay.
             return;
-          case STRING_KEY:
+          }
+          case STRING_KEY -> {
             if (parent.getParent().isObjectPattern()) {
               return;
             }
-            break;
-          case GETPROP:
+          }
+          case GETPROP -> {
             if (n == parent.getFirstChild()) {
               Scope scope = t.getScope();
               Var var = scope.getVar(n.getString());
@@ -550,13 +429,12 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
                 // of goog.
                 return;
               }
-              if (!namespaceRootsToMaxStrength.containsKey(n.getString())) {
-                t.report(n, UNDEFINED_EXTERN_VAR_ERROR, n.getString());
-              }
-              varsToDeclareInExterns.add(n.getString());
+              t.report(n, UNDEFINED_EXTERN_VAR_ERROR, n.getString());
+              undefinedNamesFromExterns.add(n.getString());
             }
             return;
-          case ASSIGN:
+          }
+          case ASSIGN -> {
             // Don't warn for the "window.foo = foo;" nodes added by
             // DeclaredGlobalExternsOnWindow, nor for alias declarations
             // of the form "/** @const */ ns.Foo = Bar;"
@@ -565,28 +443,27 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
                 && parent.getFirstChild().isQualifiedName()) {
               return;
             }
-            break;
-          case NAME:
+          }
+          case NAME -> {
             // Don't warn for simple var assignments "/** @const */ var foo = bar;"
             // They are used to infer the types of namespace aliases.
             if (NodeUtil.isNameDeclaration(parent.getParent())) {
               return;
             }
-            break;
-          case OR:
+          }
+          case OR -> {
             // Don't warn for namespace declarations: "/** @const */ var ns = ns || {};"
             if (NodeUtil.isNamespaceDecl(parent.getParent())) {
               return;
             }
-            break;
-          default:
-            break;
+          }
+          default -> {}
         }
         t.report(n, NAME_REFERENCE_IN_EXTERNS_ERROR, n.getString());
         Scope scope = t.getScope();
         Var var = scope.getVar(n.getString());
         if (var == null) {
-          varsToDeclareInExterns.add(n.getString());
+          undefinedNamesFromExterns.add(n.getString());
         }
       }
     }
@@ -618,29 +495,35 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
     public void onRedeclaration(
         Scope s, String name, Node n, CompilerInput input) {
       Node parent = NodeUtil.getDeclaringParent(n);
-
       Var origVar = s.getVar(name);
       // origNode will be null for `arguments`, since there's no node that declares it.
       Node origNode = origVar.getNode();
       Node origParent = (origNode == null) ? null : NodeUtil.getDeclaringParent(origNode);
-      if (parent.isLet()
-          || parent.isConst()
-          || parent.isClass()
-          || (origParent != null
-              && (origParent.isLet() || origParent.isConst() || origParent.isClass()))) {
-        compiler.report(JSError.make(n, BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR));
-        return;
-      } else if (parent.isFunction()
-          // Redeclarations of functions in global scope are fairly common, so allow them
-          // (at least for now).
-          && !s.isGlobal()
-          && origParent != null
-          && (origParent.isFunction()
-              || origParent.isLet()
-              || origParent.isConst()
-              || origParent.isClass())) {
-        compiler.report(JSError.make(n, BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR));
-        return;
+
+      switch (parent.getToken()) {
+        case CLASS, CONST, LET -> {
+          reportBlockScopedMultipleDeclaration(n, name, origNode);
+          return;
+        }
+        default -> {}
+      }
+
+      if (origParent != null) {
+        switch (origParent.getToken()) {
+          case CLASS, CONST, LET -> {
+            reportBlockScopedMultipleDeclaration(n, name, origNode);
+            return;
+          }
+          case FUNCTION -> {
+            // Redeclarations of functions in global scope are fairly common, so allow them
+            // (at least for now).
+            if (!s.isGlobal() && parent.isFunction()) {
+              reportBlockScopedMultipleDeclaration(n, name, origNode);
+              return;
+            }
+          }
+          default -> {}
+        }
       }
 
       // Don't allow multiple variables to be declared at the top-level scope
@@ -656,19 +539,13 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
           return;
         }
         if (!allowDupe) {
-          compiler.report(
-              JSError.make(
-                  n,
-                  VAR_MULTIPLY_DECLARED_ERROR,
-                  name,
-                  (origVar.getInput() != null ? origVar.getInput().getName() : "??")));
+          reportVarMultiplyDeclared(compiler, n, name, origNode);
         }
       } else if (name.equals(ARGUMENTS)
           && !(NodeUtil.isNameDeclaration(n.getParent()) && n.isName())) {
         // Disallow shadowing "arguments" as we can't handle with our current
         // scope modeling.
-        compiler.report(
-            JSError.make(n, VAR_ARGUMENTS_SHADOWED_ERROR));
+        compiler.report(JSError.make(n, VAR_ARGUMENTS_SHADOWED_ERROR));
       }
     }
 
@@ -681,6 +558,22 @@ class VarCheck implements ScopedCallback, HotSwapCompilerPass {
         }
       }
     }
+  }
+
+  static void reportVarMultiplyDeclared(
+      AbstractCompiler compiler, Node current, String name, @Nullable Node original) {
+    compiler.report(JSError.make(current, VAR_MULTIPLY_DECLARED_ERROR, name, locationOf(original)));
+  }
+
+  private void reportBlockScopedMultipleDeclaration(
+      Node current, String name, @Nullable Node original) {
+    compiler.report(
+        JSError.make(
+            current, BLOCK_SCOPED_DECL_MULTIPLY_DECLARED_ERROR, name, locationOf(original)));
+  }
+
+  private static String locationOf(@Nullable Node n) {
+    return (n == null) ? "<unknown>" : n.getLocation();
   }
 
   /** Lazily create a "new" externs root for undeclared variables. */

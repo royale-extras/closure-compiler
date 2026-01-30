@@ -17,8 +17,8 @@
 package com.google.javascript.jscomp.deps;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.common.annotations.GwtIncompatible;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
@@ -30,7 +30,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +43,6 @@ import java.util.regex.Pattern;
  *
  * <p>See //javascript/closure/deps.js for an example file.
  */
-@GwtIncompatible("java.util.regex")
 public final class DepsFileRegexParser extends JsFileLineParser {
   private static final Logger logger = Logger.getLogger(DepsFileRegexParser.class.getName());
 
@@ -100,7 +98,7 @@ public final class DepsFileRegexParser extends JsFileLineParser {
    * @throws IOException Thrown if the file could not be read.
    */
   public List<DependencyInfo> parseFile(String filePath) throws IOException {
-    return parseFileReader(filePath, Files.newReader(new File(filePath), StandardCharsets.UTF_8));
+    return parseFileReader(filePath, Files.newReader(new File(filePath), UTF_8));
   }
 
   /**

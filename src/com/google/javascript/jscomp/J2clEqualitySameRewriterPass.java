@@ -17,9 +17,11 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.javascript.jscomp.colors.Color;
+import com.google.javascript.jscomp.colors.StandardColors;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.JSType;
+import org.jspecify.annotations.Nullable;
 
 /** An optimization pass to re-write J2CL Equality.$same. */
 public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
@@ -43,22 +45,39 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
       return node;
     }
 
-    if (!isEqualitySameCall(node)) {
+    // Do not optimize if any parameters were removed during optimizations
+    if (!node.hasXChildren(3)) {
       return node;
     }
 
-    Node replacement = trySubstituteEqualitySame(node);
+    Node replacement = null;
+    if (isStringEqualsMethod(node)) {
+      replacement = trySubstituteStringEquals(node);
+    } else if (isEqualitySameCall(node)) {
+      replacement = trySubstituteEqualitySame(node);
+    }
+
     if (replacement == null) {
       return node;
     }
 
-    replacement.useSourceInfoIfMissingFrom(node);
+    replacement.srcrefIfMissing(node);
     node.replaceWith(replacement);
     reportChangeToEnclosingScope(replacement);
     return replacement;
   }
 
-  private Node trySubstituteEqualitySame(Node callNode) {
+  private @Nullable Node trySubstituteStringEquals(Node callNode) {
+    NodeValue firstExprValue = getKnownLiteralValue(callNode.getSecondChild());
+    if (firstExprValue == NodeValue.UNKNOWN || firstExprValue == NodeValue.NULL_OR_UNDEFINED) {
+      // Potential NPE, don't optimize.
+      return null;
+    }
+
+    return trySubstituteEqualitySame(callNode);
+  }
+
+  private @Nullable Node trySubstituteEqualitySame(Node callNode) {
     Node firstExpr = callNode.getSecondChild();
     NodeValue firstExprValue = getKnownLiteralValue(firstExpr);
     Node secondExpr = callNode.getLastChild();
@@ -97,12 +116,19 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
   }
 
   private boolean canOnlyBeObject(Node n) {
-    JSType type = n.getJSType();
-    if (type == null) {
+    Color color = n.getColor();
+    // Safe as long as the color is a) not the UNKNOWN native color and b) not any primitive
+    if (color == null) {
       return false;
     }
-    type = type.restrictByNotNullOrUndefined();
-    return !type.isUnknownType() && !type.isEmptyType() && !type.isAllType() && type.isObjectType();
+
+    if (color.isUnion()) {
+      // ignore null/undefined
+      color = color.subtractNullOrVoid();
+    }
+
+    // In theory we could allow unions of multiple objects here
+    return !color.isUnion() && !color.isPrimitive() && !color.equals(StandardColors.UNKNOWN);
   }
 
   private Node rewriteAsStrictEq(Node firstExpr, Node secondExpr) {
@@ -111,7 +137,7 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
     return IR.sheq(firstExpr, secondExpr);
   }
 
-  private Node rewriteNumberCheck(Node firstExpr, Node secondExpr) {
+  private @Nullable Node rewriteNumberCheck(Node firstExpr, Node secondExpr) {
     Double firstValue = NodeUtil.getNumberValue(firstExpr);
     Double secondValue = NodeUtil.getNumberValue(secondExpr);
 
@@ -126,7 +152,7 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
       return rewriteAsStrictEq(firstExpr, secondExpr);
     }
 
-    if (useTypes && (!canBeNumber(firstExpr) || !canBeNumber(secondExpr))) {
+    if (useTypes && (canOnlyBeObject(firstExpr) || canOnlyBeObject(secondExpr))) {
       // Since one side is not number, there is no risk of -0 vs 0 or NaN vs NaN comparision.
       return rewriteAsStrictEq(firstExpr, secondExpr);
     }
@@ -136,15 +162,6 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
 
   private static boolean isSafeNumber(Double d) {
     return d != null && d != 0 && !d.isNaN();
-  }
-
-  private static boolean canBeNumber(Node n) {
-    JSType type = n.getJSType();
-    if (type == null) {
-      return true;
-    }
-    type = type.restrictByNotNullOrUndefined();
-    return type.isUnknownType() || type.isEmptyType() || type.isAllType() || !type.isObjectType();
   }
 
   private enum NodeValue {
@@ -157,41 +174,34 @@ public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
   }
 
   private static NodeValue getKnownLiteralValue(Node n) {
-    switch (NodeUtil.getKnownValueType(n)) {
-      case VOID:
-        return NodeUtil.canBeSideEffected(n) ? NodeValue.UNKNOWN : NodeValue.NULL_OR_UNDEFINED;
-      case NULL:
-        return NodeValue.NULL_OR_UNDEFINED;
-
-      case STRING:
-      case BOOLEAN:
-      case OBJECT:
-      case BIGINT:
-        return NodeValue.NON_NULL;
-
-      case NUMBER:
-        return NodeValue.NUMBER;
-
-      case UNDETERMINED:
-        return NodeValue.UNKNOWN;
-    }
-    throw new AssertionError("Unknown ValueType");
+    return switch (NodeUtil.getKnownValueType(n)) {
+      case VOID -> NodeUtil.canBeSideEffected(n) ? NodeValue.UNKNOWN : NodeValue.NULL_OR_UNDEFINED;
+      case NULL -> NodeValue.NULL_OR_UNDEFINED;
+      case STRING, BOOLEAN, OBJECT, BIGINT -> NodeValue.NON_NULL;
+      case NUMBER -> NodeValue.NUMBER;
+      case UNDETERMINED -> NodeValue.UNKNOWN;
+    };
   }
 
   private static boolean isEqualitySameCall(Node node) {
-    return node.isCall()
-        // Do not optimize if one or both parameters were removed
-        && node.hasXChildren(3)
-        && isEqualitySameMethodName(node.getFirstChild());
+    return node.isCall() && hasName(node.getFirstChild(), "Equality", "$same");
   }
 
-  private static boolean isEqualitySameMethodName(Node fnName) {
+  private static boolean isStringEqualsMethod(Node node) {
+    return node.isCall()
+        && hasName(
+            node.getFirstChild(),
+            "String",
+            "m_equals__java_lang_String__java_lang_Object__boolean");
+  }
+
+  private static boolean hasName(Node fnName, String className, String methodName) {
     if (!fnName.isQualifiedName()) {
       return false;
     }
     // NOTE: This should be rewritten to use method name + file name of definition site
     // like other J2CL passes, which is more precise.
     String originalQname = fnName.getOriginalQualifiedName();
-    return originalQname.endsWith(".$same") && originalQname.contains("Equality");
+    return originalQname.endsWith(methodName) && originalQname.contains(className);
   }
 }

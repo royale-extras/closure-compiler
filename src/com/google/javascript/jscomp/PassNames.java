@@ -21,23 +21,28 @@ package com.google.javascript.jscomp;
  * symbolic name here.
  */
 public final class PassNames {
+  public static final String AFTER_EARLY_OPTIMIZATION_LOOP = "afterEarlyOptimizationLoop";
   public static final String AFTER_MAIN_OPTIMIZATIONS = "afterMainOptimizations";
   public static final String AFTER_STANDARD_CHECKS = "afterStandardChecks";
   public static final String AMBIGUATE_PROPERTIES = "ambiguateProperties";
   public static final String ANALYZER_CHECKS = "analyzerChecks";
   public static final String ANGULAR_PASS = "angularPass";
+  public static final String BEFORE_EARLY_OPTIMIZATION_LOOP = "beforeEarlyOptimizationLoop";
+  public static final String BEFORE_EARLY_OPTIMIZATIONS_TRANSPILATION =
+      "beforeEarlyOptimizationsTranspilation";
   public static final String BEFORE_STANDARD_OPTIMIZATIONS = "beforeStandardOptimizations";
+  public static final String OBFUSCATION_PASS_MARKER = "obfuscationPassMarker";
   public static final String BEFORE_MAIN_OPTIMIZATIONS = "beforeMainOptimizations";
   public static final String BEFORE_TYPE_CHECKING = "beforeTypeChecking";
-  public static final String BEFORE_PRE_TYPECHECK_TRANSPILATION = "beforePreTypeCheckTranspilation";
   public static final String BEFORE_SERIALIZATION = "beforeSerialization";
+  public static final String BEFORE_VARIABLE_RENAMING = "beforeVariableRenaming";
+  public static final String BEFORE_EXTRACT_PROTOTYPE_MEMBER_DECLARATIONS =
+      "beforeExtractPrototypeMemberDeclarations";
   public static final String CHECK_CONFORMANCE = "checkConformance";
-  public static final String CHECK_CONST_PARAMS = "checkConstParams";
   public static final String CHECK_REG_EXP = "checkRegExp";
   public static final String CHECK_TYPES = "checkTypes";
   public static final String CHECK_VARIABLE_REFERENCES = "checkVariableReferences";
   public static final String CHECK_VARS = "checkVars";
-  public static final String CLOSURE_REWRITE_CLASS = "closureRewriteClass";
   public static final String COALESCE_VARIABLE_NAMES = "coalesceVariableNames";
   public static final String COLLAPSE_ANONYMOUS_FUNCTIONS = "collapseAnonymousFunctions";
   public static final String COLLAPSE_OBJECT_LITERALS = "collapseObjectLiterals";
@@ -52,8 +57,7 @@ public final class PassNames {
   public static final String DESERIALIZE_COMPILER_STATE = "deserializeCompilerState";
   public static final String DEVIRTUALIZE_METHODS = "devirtualizeMethods";
   public static final String DISAMBIGUATE_PROPERTIES = "disambiguateProperties";
-  public static final String ES6_EXTRACT_CLASSES = "Es6ExtractClasses";
-  public static final String ES6_REWRITE_CLASS_EXTENDS = "Es6ExtractClassExtends";
+  public static final String ES6_NORMALIZE_CLASSES = "es6NormalizeClasses";
   public static final String EXPLOIT_ASSIGN = "exploitAssign";
   public static final String EXPORT_TEST_FUNCTIONS = "exportTestFunctions";
   public static final String EXTERN_EXPORTS = "externExports";
@@ -70,23 +74,23 @@ public final class PassNames {
   public static final String INLINE_PROPERTIES = "inlineProperties";
   public static final String INLINE_TYPE_ALIASES = "inlineTypeAliases";
   public static final String INLINE_VARIABLES = "inlineVariables";
+  public static final String LATE_PEEPHOLE_OPTIMIZATIONS = "latePeepholeOptimizations";
   public static final String LINT_CHECKS = "lintChecks";
-  public static final String MOVE_FUNCTION_DECLARATIONS = "moveFunctionDeclarations";
-  public static final String NAME_ANONYMOUS_FUNCTIONS = "nameAnonymousFunctions";
+  public static final String MARK_UNNORMALIZED = "markUnnormalized";
   public static final String NORMALIZE = "normalize";
-  public static final String OPTIMIZE_ARGUMENTS_ARRAY = "optimizeArgumentsArray";
+  public static final String OPTIMIZATIONS_HALFWAY_POINT = "optimizationsHalfwayPoint";
   public static final String OPTIMIZE_CALLS = "optimizeCalls";
   public static final String PARSE_INPUTS = "parseInputs";
   public static final String PEEPHOLE_OPTIMIZATIONS = "peepholeOptimizations";
   public static final String REWRITE_COMMON_JS_MODULES = "rewriteCommonJsModules";
   public static final String REWRITE_SCRIPTS_TO_ES6_MODULES = "rewriteScriptsToEs6Modules";
-  public static final String REMOVE_UNREACHABLE_CODE = "removeUnreachableCode";
   public static final String REMOVE_UNUSED_CODE = "removeUnusedCode";
   public static final String REPLACE_ID_GENERATORS = "replaceIdGenerators";
   public static final String REPLACE_MESSAGES = "replaceMessages";
   public static final String RESOLVE_TYPES = "resolveTypes";
   public static final String REWRITE_FUNCTION_EXPRESSIONS = "rewriteFunctionExpressions";
-  public static final String RUNTIME_TYPE_CHECK = "runtimeTypeCheck";
+  public static final String RENAME_PROPERTIES = "renameProperties";
+  public static final String BEFORE_RENAME_PROPERTIES = "beforeRenameProperties";
   public static final String STRIP_SIDE_EFFECT_PROTECTION = "stripSideEffectProtection";
   public static final String WIZ_PASS = "wizPass";
 

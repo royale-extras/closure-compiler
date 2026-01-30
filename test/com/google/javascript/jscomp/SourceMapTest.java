@@ -18,26 +18,28 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.debugging.sourcemap.SourceMapConsumer;
 import com.google.debugging.sourcemap.SourceMapConsumerV3;
 import com.google.debugging.sourcemap.SourceMapTestCase;
 import com.google.javascript.jscomp.SourceMap.Format;
 import java.io.IOException;
-import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** @author johnlenz@google.com (John Lenz) */
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 @RunWith(JUnit4.class)
 public final class SourceMapTest extends SourceMapTestCase {
 
   public SourceMapTest() {}
 
-  private List<SourceMap.LocationMapping> mappings;
+  private ImmutableList<SourceMap.LocationMapping> mappings;
+  private ImmutableMap.Builder<String, SourceMapInput> inputMaps;
 
   @Test
   public void testPrefixReplacement1() throws IOException {
@@ -48,16 +50,16 @@ public final class SourceMapTest extends SourceMapTestCase {
         Compiler.joinPathParts("pre", "file1"),
         "alert(2);",
         Compiler.joinPathParts("pre", "file2"),
-        Joiner.on('\n')
-            .join(
-                "{",
-                "\"version\":3,",
-                "\"file\":\"testcode\",",
-                "\"lineCount\":1,",
-                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
-                "\"sources\":[\"file1\",\"file2\"],",
-                "\"names\":[\"alert\"]",
-                "}\n"));
+        """
+        {
+        "version":3,
+        "file":"testcode",
+        "lineCount":1,
+        "mappings":"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;",
+        "sources":["file1","file2"],
+        "names":["alert"]
+        }
+        """);
   }
 
   @Test
@@ -69,16 +71,16 @@ public final class SourceMapTest extends SourceMapTestCase {
         Compiler.joinPathParts("pre", "file1"),
         "alert(2);",
         "pre/file2",
-        Joiner.on('\n')
-            .join(
-                "{",
-                "\"version\":3,",
-                "\"file\":\"testcode\",",
-                "\"lineCount\":1,",
-                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
-                "\"sources\":[\"src1\",\"src2\"],",
-                "\"names\":[\"alert\"]",
-                "}\n"));
+        """
+        {
+        "version":3,
+        "file":"testcode",
+        "lineCount":1,
+        "mappings":"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;",
+        "sources":["src1","src2"],
+        "names":["alert"]
+        }
+        """);
   }
 
   @Test
@@ -93,16 +95,16 @@ public final class SourceMapTest extends SourceMapTestCase {
         "file1",
         "alert(2);",
         "file2",
-        Joiner.on('\n')
-            .join(
-                "{",
-                "\"version\":3,",
-                "\"file\":\"testcode\",",
-                "\"lineCount\":1,",
-                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
-                "\"sources\":[\"x\",\"y\"],",
-                "\"names\":[\"alert\"]",
-                "}\n"));
+        """
+        {
+        "version":3,
+        "file":"testcode",
+        "lineCount":1,
+        "mappings":"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;",
+        "sources":["x","y"],
+        "names":["alert"]
+        }
+        """);
   }
 
   @Test
@@ -117,16 +119,16 @@ public final class SourceMapTest extends SourceMapTestCase {
         "file1",
         "alert(2);",
         "file2",
-        Joiner.on('\n')
-            .join(
-                "{",
-                "\"version\":3,",
-                "\"file\":\"testcode\",",
-                "\"lineCount\":1,",
-                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
-                "\"sources\":[\"x\",\"y2\"],",
-                "\"names\":[\"alert\"]",
-                "}\n"));
+        """
+        {
+        "version":3,
+        "file":"testcode",
+        "lineCount":1,
+        "mappings":"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;",
+        "sources":["x","y2"],
+        "names":["alert"]
+        }
+        """);
   }
 
   @Test
@@ -137,23 +139,128 @@ public final class SourceMapTest extends SourceMapTestCase {
         "file1",
         "alert(2);",
         "file2",
-        Joiner.on('\n')
-            .join(
-                "{",
-                "\"version\":3,",
-                "\"file\":\"mapped/testcode\",",
-                "\"lineCount\":1,",
-                "\"mappings\":\"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;\",",
-                "\"sources\":[\"mapped/file1\",\"mapped/file2\"],",
-                "\"names\":[\"alert\"]",
-                "}\n"));
+        """
+        {
+        "version":3,
+        "file":"mapped/testcode",
+        "lineCount":1,
+        "mappings":"A,aAAAA,KAAA,CAAM,CAAN,C,CCAAA,KAAA,CAAM,CAAN;",
+        "sources":["mapped/file1","mapped/file2"],
+        "names":["alert"]
+        }
+        """);
+  }
+
+  // This is taken from SourceMapJsLangTest. That test can't run under J2CL because it
+  // uses a parameterized runner but we do want to test this basic behavior under J2CL.
+  @Test
+  public void testRepeatedCompilation() throws Exception {
+    // Run compiler twice feeding sourcemaps from the first run as input to the second run.
+    // This way we ensure that compiler works fine with its own sourcemaps and doesn't lose
+    // important information.
+    String fileContent = "function foo() {} alert(foo());";
+    String fileName = "foo.js";
+    RunResult firstCompilation = compile(fileContent, fileName);
+    String newFileName = fileName + ".compiled";
+    inputMaps.put(
+        newFileName,
+        new SourceMapInput(
+            SourceFile.fromCode("sourcemap", firstCompilation.sourceMapFileContent)));
+
+    RunResult secondCompilation = compile(firstCompilation.generatedSource, newFileName);
+    check(
+        fileName,
+        fileContent,
+        secondCompilation.generatedSource,
+        secondCompilation.sourceMapFileContent);
+  }
+
+  // Tests that when a generated intermediate file contains a source map, we
+  // only map the source positions that the intermediate map specifies. If a
+  // mapping is sourceless, it is omitted from the final source map.
+  @Test
+  public void testIntermediateFilesOmitUnmappedCode() throws IOException {
+    // This map has been massaged to have a sourceless mapping covering the `alert` identifier.
+    // Pretend it was synthetically generated during transforms.
+    String generatedFile = "generated.tsx.js";
+    String generatedSource = "'use strict';function foo(){}alert(foo());";
+    String generatedSourceMap =
+        """
+        {
+        "version":3,
+        "file":"testcode",
+        "lineCount":1,
+        "mappings":"A,aAAAA,QAASA,IAAG,EAAG,E,KAAG,CAAMA,GAAA,EAAN;",
+        "sources":["foo.js"],
+        "names":["foo"]
+        }
+        """;
+
+    inputMaps.put(
+        generatedFile, new SourceMapInput(SourceFile.fromCode("sourcemap", generatedSourceMap)));
+
+    RunResult compilation = compile(generatedSource, generatedFile);
+    assertThat(compilation.sourceMapFileContent)
+        .isEqualTo(
+            """
+            {
+            "version":3,
+            "file":"testcode",
+            "lineCount":1,
+            "mappings":"A,aAAAA,QAASA,IAAG,EAAG,E,MAASA,GAAAA;",
+            "sources":["foo.js"],
+            "names":["foo"]
+            }
+            """);
+  }
+
+  // Tests that empty "default" source maps, like those provided by Gulp, are
+  // ignored and do not cause the compiler to treat the file as an intermediate
+  // source file.
+  @Test
+  public void testEmptySourceMapsAreIgnored() throws IOException {
+    // https://github.com/gulp-sourcemaps/gulp-sourcemaps/blob/91b94954/src/init/index.js#L116-L124
+    String file = "input.js";
+    String code = "inputCode";
+    String emptySourceMap =
+        """
+        {
+        "version":3,
+        "names":[],
+        "mappings":"",
+        "sources":["foo/bar/baz.js"],
+        "sourcesContent":["inputCode"],
+        "file":"foo/bar/baz.js"
+        }
+        """;
+
+    inputMaps.put(file, new SourceMapInput(SourceFile.fromCode("sourcemap", emptySourceMap)));
+
+    RunResult compilation = compile(code, file);
+    assertThat(compilation.sourceMapFileContent)
+        .isEqualTo(
+            """
+            {
+            "version":3,
+            "file":"testcode",
+            "lineCount":1,
+            "mappings":"A,aAAAA;",
+            "sources":["input.js"],
+            "names":["inputCode"]
+            }
+            """);
   }
 
   @Override
   protected CompilerOptions getCompilerOptions() {
     CompilerOptions options = super.getCompilerOptions();
     if (mappings != null) {
-      options.sourceMapLocationMappings = mappings;
+      options.setSourceMapLocationMappings(mappings);
+    }
+
+    if (!this.inputMaps.buildOrThrow().isEmpty()) {
+      options.setApplyInputSourceMaps(true);
+      options.setInputSourceMaps(this.inputMaps.buildOrThrow());
     }
     return options;
   }
@@ -162,6 +269,7 @@ public final class SourceMapTest extends SourceMapTestCase {
   @Before
   public void setUp() {
     super.setUp();
+    this.inputMaps = ImmutableMap.builder();
   }
 
   private void checkSourceMap2(

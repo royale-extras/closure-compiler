@@ -16,16 +16,21 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** @author nicksantos@google.com (Nick Santos) */
+/**
+ * @author nicksantos@google.com (Nick Santos)
+ */
 @RunWith(JUnit4.class)
 public final class ProcessDefinesTest extends CompilerTestCase {
 
@@ -35,14 +40,17 @@ public final class ProcessDefinesTest extends CompilerTestCase {
 
   private final Map<String, Node> overrides = new HashMap<>();
   private GlobalNamespace namespace;
-  private boolean checksOnly;
+  private ProcessDefines.Mode mode;
+  private boolean recognizeClosureDefines = true;
+
+  private boolean enableJ2clPasses = false;
 
   @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
     overrides.clear();
-    checksOnly = false;
+    mode = ProcessDefines.Mode.CHECK_AND_OPTIMIZE;
 
     // ProcessDefines emits warnings if the user tries to re-define a constant,
     // but the constant is not defined anywhere in the binary.
@@ -51,19 +59,30 @@ public final class ProcessDefinesTest extends CompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
+    if (enableJ2clPasses) {
+      J2clSourceFileChecker.markToRunJ2clPasses(compiler);
+    }
     return new ProcessDefinesWithInjectedNamespace(compiler);
   }
 
+  private FeatureSet outputFeatureSet = FeatureSet.ES2017;
+
+  private static final Pattern ZONE_INPUT_PATTERN = Pattern.compile(".*/packages/zone.js/.*\\.js");
+
   @Override
-  protected int getNumRepetitions() {
-    // Only do one repetition, so that we can make sure the first pass keeps
-    // GlobalNamespace up to date.
-    return 1;
+  protected CompilerOptions getOptions() {
+    CompilerOptions options = super.getOptions();
+
+    options.setOutputFeatureSet(outputFeatureSet);
+    options.setEnableZonesDefineName("javascript.angular2.ENABLE_ZONES");
+    options.setZoneInputPattern(ZONE_INPUT_PATTERN);
+
+    return options;
   }
 
   /**
-   * Helper for tests that expects definitions to remain unchanged, such
-   * that {@code definitions+js} is converted to {@code definitions+expected}.
+   * Helper for tests that expects definitions to remain unchanged, such that {@code definitions+js}
+   * is converted to {@code definitions+expected}.
    */
   private void testWithPrefix(String definitions, String js, String expected) {
     test(definitions + js, definitions + expected);
@@ -93,8 +112,14 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   }
 
   @Test
+  public void testDefineBadType_nullishCoalesce() {
+    test(srcs("/** @define {string} */ var DEF = 'a' ?? 'b'"));
+    testError("/** @define {string} */ var DEF = 'a' ?? null", ProcessDefines.INVALID_DEFINE_VALUE);
+  }
+
+  @Test
   public void testChecksOnlyProducesErrors() {
-    checksOnly = true;
+    mode = ProcessDefines.Mode.CHECK;
     test(
         srcs("/** @define {Object} */ var DEF = {}"),
         error(ProcessDefines.INVALID_DEFINE_TYPE),
@@ -102,8 +127,8 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   }
 
   @Test
-  public void testChecksOnlyProducesUnknownDefineWarning() {
-    checksOnly = true;
+  public void testUnknownDefineWarning() {
+    mode = ProcessDefines.Mode.OPTIMIZE;
     overrides.put("a.B", new Node(Token.TRUE));
     test("var a = {};", "var a = {};", warning(ProcessDefines.UNKNOWN_DEFINE_WARNING));
   }
@@ -143,6 +168,13 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   }
 
   @Test
+  public void testGoogDefineWithBadValue() {
+    testError(
+        "/** @define {boolean} */ var DEF = goog.define('DEF_XYZ', new Boolean(true));",
+        ProcessDefines.INVALID_DEFINE_VALUE);
+  }
+
+  @Test
   public void testDefineWithLet() {
     testError(
         "/** @define {boolean} */ let DEF = new Boolean(true);",
@@ -164,9 +196,9 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   @Test
   public void testNonDefineInExternsPlusUsage() {
     testError(
-        DEFAULT_EXTERNS + "/** @const {boolean} */ var EXTERN_NON_DEF;",
-        "/** @define {boolean} */ var DEF = EXTERN_NON_DEF",
-        ProcessDefines.INVALID_DEFINE_VALUE);
+        externs(DEFAULT_EXTERNS + "/** @const {boolean} */ var EXTERN_NON_DEF;"),
+        srcs("/** @define {boolean} */ var DEF = EXTERN_NON_DEF"),
+        error(ProcessDefines.INVALID_DEFINE_VALUE));
   }
 
   @Test
@@ -177,29 +209,34 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   @Test
   public void testDefineWithDependentValue() {
     test(
-        lines(
-            "/** @define {boolean} */ var BASE = false;",
-            "/** @define {boolean} */ var DEF = !BASE;"),
-        lines(
-            "/** @define {boolean} */ var BASE = false;",
-            "/** @define {boolean} */ var DEF = !BASE"));
+        """
+        /** @define {boolean} */ var BASE = false;
+        /** @define {boolean} */ var DEF = !BASE;
+        """,
+        """
+        /** @define {boolean} */ var BASE = false;
+        /** @define {boolean} */ var DEF = !BASE
+        """);
     test(
-        lines(
-            "var a = {};",
-            "/** @define {boolean} */ a.BASE = false;",
-            "/** @define {boolean} */ a.DEF = !a.BASE;"),
-        lines(
-            "var a={};",
-            "/** @define {boolean} */ a.BASE = false;",
-            "/** @define {boolean} */ a.DEF = !a.BASE"));
+        """
+        var a = {};
+        /** @define {boolean} */ a.BASE = false;
+        /** @define {boolean} */ a.DEF = !a.BASE;
+        """,
+        """
+        var a={};
+        /** @define {boolean} */ a.BASE = false;
+        /** @define {boolean} */ a.DEF = !a.BASE
+        """);
   }
 
   @Test
   public void testDefineWithInvalidDependentValue() {
     testError(
-        lines(
-            "var BASE = false;", //
-            "/** @define {boolean} */ var DEF = !BASE;"),
+        """
+        var BASE = false;
+        /** @define {boolean} */ var DEF = !BASE;
+        """,
         ProcessDefines.INVALID_DEFINE_VALUE);
   }
 
@@ -208,10 +245,14 @@ public final class ProcessDefinesTest extends CompilerTestCase {
     overrides.put("DEF_OVERRIDE_TO_TRUE", new Node(Token.TRUE));
     overrides.put("DEF_OVERRIDE_TO_FALSE", new Node(Token.FALSE));
     test(
-        "/** @define {boolean} */ var DEF_OVERRIDE_TO_TRUE = false;"
-            + "/** @define {boolean} */ var DEF_OVERRIDE_TO_FALSE = true",
-        "/** @define {boolean} */ var DEF_OVERRIDE_TO_TRUE = true;"
-            + "/** @define {boolean} */var DEF_OVERRIDE_TO_FALSE=false");
+        """
+        /** @define {boolean} */ var DEF_OVERRIDE_TO_TRUE = false;
+        /** @define {boolean} */ var DEF_OVERRIDE_TO_FALSE = true
+        """,
+        """
+        /** @define {boolean} */ var DEF_OVERRIDE_TO_TRUE = true;
+        /** @define {boolean} */var DEF_OVERRIDE_TO_FALSE=false
+        """);
   }
 
   @Test
@@ -264,7 +305,7 @@ public final class ProcessDefinesTest extends CompilerTestCase {
 
   @Test
   public void testMisspelledOverride() {
-    overrides.put("DEF_BAD_OVERIDE", new Node(Token.TRUE));  // NOTYPO: Intentional misspelling.
+    overrides.put("DEF_BAD_OVERIDE", new Node(Token.TRUE)); // NOTYPO: Intentional misspelling.
     test(
         "/** @define {boolean} */ var DEF_BAD_OVERRIDE = true",
         "/** @define {boolean} */ var DEF_BAD_OVERRIDE = true",
@@ -281,9 +322,10 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testSimpleReassign1() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */ var DEF = false;", //
-                "DEF = true;")),
+            """
+            /** @define {boolean} */ var DEF = false;
+            DEF = true;
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
 
@@ -291,10 +333,11 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testSimpleReassign2() {
     test(
         srcs(
-            lines(
-                "/** @define {number|boolean} */ var DEF=false;", //
-                "DEF=true;",
-                "DEF=3")),
+            """
+            /** @define {number|boolean} */ var DEF=false;
+            DEF=true;
+            DEF=3
+            """),
         error(ProcessDefines.NON_CONST_DEFINE),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
@@ -303,38 +346,42 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testSimpleReassign3() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */ var DEF = false;", //
-                "var x;",
-                "x = DEF = true;")),
+            """
+            /** @define {boolean} */ var DEF = false;
+            var x;
+            x = DEF = true;
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
 
   @Test
   public void testDefineAssignedToSimpleAlias() {
     testSame(
-        lines(
-            "const x = true;", //
-            "const ALIAS = x;",
-            "/** @define {boolean} */ const DEF2 = ALIAS;"));
+        """
+        const x = true;
+        const ALIAS = x;
+        /** @define {boolean} */ const DEF2 = ALIAS;
+        """);
   }
 
   @Test
   public void testDefineAssignedToNonConstAlias() {
     testError(
-        lines(
-            "let X = true;", //
-            "X = false;",
-            "/** @define {boolean} */ const DEF2 = X;"),
+        """
+        let X = true;
+        X = false;
+        /** @define {boolean} */ const DEF2 = X;
+        """,
         ProcessDefines.INVALID_DEFINE_VALUE);
   }
 
   @Test
   public void testDefineAssignedToEnumAlias() {
     testError(
-        lines(
-            "/** @enum {string} */ const E = {A: 'a'};", //
-            "/** @define {string} */ const DEF2 = E.A;"),
+        """
+        /** @enum {string} */ const E = {A: 'a'};
+        /** @define {string} */ const DEF2 = E.A;
+        """,
         // TODO(sdh): It would be nice if this worked, but doesn't seem worth implementing.
         ProcessDefines.INVALID_DEFINE_VALUE);
   }
@@ -343,50 +390,56 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testDefineAssignedToDefineAlias() {
     overrides.put("DEF2", new Node(Token.TRUE));
     test(
-        lines(
-            "/** @define {boolean} */ const DEF1 = false;",
-            "const ALIAS = DEF1;",
-            "/** @define {boolean} */ const DEF2 = ALIAS;"),
-        lines(
-            "/** @define {boolean} */ const DEF1 = false;",
-            "const ALIAS = DEF1;",
-            "/** @define {boolean} */ const DEF2 = true;"));
+        """
+        /** @define {boolean} */ const DEF1 = false;
+        const ALIAS = DEF1;
+        /** @define {boolean} */ const DEF2 = ALIAS;
+        """,
+        """
+        /** @define {boolean} */ const DEF1 = false;
+        const ALIAS = DEF1;
+        /** @define {boolean} */ const DEF2 = true;
+        """);
   }
 
   @Test
   public void testDefineAssignedToQualifiedNameAlias() {
     overrides.put("DEF1", new Node(Token.TRUE));
     test(
-        lines(
-            "const ns = {};",
-            "/** @define {boolean} */ const DEF1 = false;",
-            "/** @const */ ns.ALIAS = DEF1;",
-            "/** @define {boolean} */ const DEF2 = ns.ALIAS;"),
-        lines(
-            "const ns = {};",
-            "/** @define {boolean} */ const DEF1 = true;",
-            "/** @const */ ns.ALIAS = DEF1;",
-            "/** @define {boolean} */ const DEF2 = ns.ALIAS;"));
+        """
+        const ns = {};
+        /** @define {boolean} */ const DEF1 = false;
+        /** @const */ ns.ALIAS = DEF1;
+        /** @define {boolean} */ const DEF2 = ns.ALIAS;
+        """,
+        """
+        const ns = {};
+        /** @define {boolean} */ const DEF1 = true;
+        /** @const */ ns.ALIAS = DEF1;
+        /** @define {boolean} */ const DEF2 = ns.ALIAS;
+        """);
   }
 
   @Test
   public void testDefineAssignedToNonconstDefineAlias() {
     testError(
-        lines(
-            "/** @define {boolean} */ const DEF1 = false;",
-            "var ALIAS = DEF1;",
-            "/** @define {boolean} */ const DEF2 = ALIAS;"),
+        """
+        /** @define {boolean} */ const DEF1 = false;
+        var ALIAS = DEF1;
+        /** @define {boolean} */ const DEF2 = ALIAS;
+        """,
         ProcessDefines.INVALID_DEFINE_VALUE);
   }
 
   @Test
   public void testDefineAssignedToNonconstQualifiedNameAlias() {
     testError(
-        lines(
-            "const ns = {};",
-            "/** @define {boolean} */ const DEF1 = false;",
-            "ns.ALIAS = DEF1;",
-            "/** @define {boolean} */ const DEF2 = ns.ALIAS;"),
+        """
+        const ns = {};
+        /** @define {boolean} */ const DEF1 = false;
+        ns.ALIAS = DEF1;
+        /** @define {boolean} */ const DEF2 = ns.ALIAS;
+        """,
         ProcessDefines.INVALID_DEFINE_VALUE);
   }
 
@@ -409,9 +462,10 @@ public final class ProcessDefinesTest extends CompilerTestCase {
     overrides.put("DEF_OVERRIDE_TO_TRUE", new Node(Token.TRUE));
     test(
         srcs(
-            lines(
-                "DEF_OVERRIDE_TO_TRUE = 3;", //
-                "/** @define {boolean|number} */ var DEF_OVERRIDE_TO_TRUE = false;")),
+            """
+            DEF_OVERRIDE_TO_TRUE = 3;
+            /** @define {boolean|number} */ var DEF_OVERRIDE_TO_TRUE = false;
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
 
@@ -466,11 +520,12 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testDeclareInFunctionScope_withOtherSet() {
     test(
         srcs(
-            lines(
-                "var DEF = 0;", //
-                "function foo() {",
-                "  /** @define {boolean} */ DEF=true;",
-                "};")),
+            """
+            var DEF = 0;
+            function foo() {
+              /** @define {boolean} */ DEF=true;
+            };
+            """),
         error(ProcessDefines.INVALID_DEFINE_LOCATION));
   }
 
@@ -478,6 +533,13 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testDeclareInBlockScope() {
     testError(
         "{ /** @define {boolean} */ const DEF=true; };", //
+        ProcessDefines.INVALID_DEFINE_LOCATION);
+  }
+
+  @Test
+  public void testDeclareInClassStaticBlock() {
+    testError(
+        "class C {static {/** @define {boolean} */ const DEF=true;}}",
         ProcessDefines.INVALID_DEFINE_LOCATION);
   }
 
@@ -503,8 +565,9 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   @Test
   public void testNamespacedDefine2a() {
     overrides.put("a.B", new Node(Token.TRUE));
-    test("var a = {}; /** @define {boolean} */ a.B = false;",
-         "var a = {}; /** @define {boolean} */ a.B = true;");
+    test(
+        "var a = {}; /** @define {boolean} */ a.B = false;",
+        "var a = {}; /** @define {boolean} */ a.B = true;");
   }
 
   @Test
@@ -532,8 +595,9 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   @Test
   public void testNamespacedDefine4() {
     overrides.put("a.B", new Node(Token.TRUE));
-    test("var a = {}; /** @define {boolean} */ a.B = false;",
-         "var a = {}; /** @define {boolean} */ a.B = true;");
+    test(
+        "var a = {}; /** @define {boolean} */ a.B = false;",
+        "var a = {}; /** @define {boolean} */ a.B = true;");
   }
 
   @Test
@@ -549,6 +613,69 @@ public final class ProcessDefinesTest extends CompilerTestCase {
     test(
         "/** @define {boolean} */ const B = goog.define('a.B', false);",
         "/** @define {boolean} */ const B = true;");
+  }
+
+  @Test
+  public void testGoogDefineAllowedFormats_notOverridden() {
+    String jsdoc = "/** @define {number} */\n";
+    test(jsdoc + "var name = goog.define('name', 1);", jsdoc + "var name = 1");
+    test(jsdoc + "var name = goog.define('otherName', 1);", jsdoc + "var name = 1");
+    test(jsdoc + "const name = goog.define('name', 1);", jsdoc + "const name = 1");
+    test(
+        "const ns = {};\n" + jsdoc + "ns.name = goog.define('ns.name', 1);",
+        "const ns = {};\n" + jsdoc + "ns.name = 1;");
+  }
+
+  @Test
+  public void testGoogDefine_invalidCallFormats() {
+    mode = ProcessDefines.Mode.CHECK;
+
+    String jsdoc = "/** @define {number} */\n";
+    testError("const name = goog.define('name', 1);", ProcessDefines.MISSING_DEFINE_ANNOTATION);
+    testError(
+        "const name = {};\n" + jsdoc + "name.two = goog.define('name.2', 1);",
+        ProcessDefines.INVALID_DEFINE_NAME_ERROR);
+    testError(jsdoc + "const x = goog.define();", ClosurePrimitiveErrors.NULL_ARGUMENT_ERROR);
+    testError(
+        jsdoc + "const value = goog.define('value');", ClosurePrimitiveErrors.NULL_ARGUMENT_ERROR);
+    testError(
+        jsdoc + "const five = goog.define(5);", ClosurePrimitiveErrors.INVALID_ARGUMENT_ERROR);
+    testError(
+        jsdoc + "const five = goog.define('FOO', 5, 6);",
+        ClosurePrimitiveErrors.TOO_MANY_ARGUMENTS_ERROR);
+
+    testError(
+        jsdoc + "const templateName = goog.define(`templateName`, 1);",
+        ClosurePrimitiveErrors.INVALID_ARGUMENT_ERROR);
+    testError(
+        jsdoc + "const templateName = goog.define(`${template}Name`, 1);",
+        ClosurePrimitiveErrors.INVALID_ARGUMENT_ERROR);
+  }
+
+  @Test
+  public void testGoogDefine_invalidCallLocation() {
+    mode = ProcessDefines.Mode.CHECK;
+
+    test(srcs("goog.define('name', 1);"), error(ProcessDefines.DEFINE_CALL_WITHOUT_ASSIGNMENT));
+    test(
+        srcs("/** @define {number} */ goog.define('name', 1);"),
+        error(ProcessDefines.DEFINE_CALL_WITHOUT_ASSIGNMENT),
+        error(ProcessDefines.INVALID_DEFINE_LOCATION));
+    testError(
+        "var x = x || goog.define('goog.DEBUG', true);",
+        ProcessDefines.DEFINE_CALL_WITHOUT_ASSIGNMENT);
+    testError(
+        "function f() { const debug = goog.define('goog.DEBUG', true); }",
+        ClosurePrimitiveErrors.INVALID_CLOSURE_CALL_SCOPE_ERROR);
+  }
+
+  @Test
+  public void testGoogDefine_enabledByRecognizeClosureDefines() {
+    mode = ProcessDefines.Mode.CHECK;
+    test(srcs("goog.define('name', 1);"), error(ProcessDefines.DEFINE_CALL_WITHOUT_ASSIGNMENT));
+
+    this.recognizeClosureDefines = false;
+    testSame("goog.define('name', 1);");
   }
 
   @Test
@@ -582,7 +709,7 @@ public final class ProcessDefinesTest extends CompilerTestCase {
 
   @Test
   public void testConstProducesUnknownDefineWarning() {
-    checksOnly = true;
+    mode = ProcessDefines.Mode.OPTIMIZE;
     overrides.put("a.B", new Node(Token.TRUE));
     test("const a = {};", "const a = {};", warning(ProcessDefines.UNKNOWN_DEFINE_WARNING));
   }
@@ -590,9 +717,10 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   @Test
   public void testSimpleConstReassign() {
     testError(
-        lines(
-            "/** @define {boolean} */ const DEF = false;", //
-            "DEF = true;"),
+        """
+        /** @define {boolean} */ const DEF = false;
+        DEF = true;
+        """,
         ProcessDefines.NON_CONST_DEFINE);
   }
 
@@ -600,12 +728,13 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testRedeclaration_twoGoogDefine_differentLocalNames() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */",
-                "const A = goog.define('a.B', false);",
-                "",
-                "/** @define {boolean} */",
-                "const B = goog.define('a.B', false);")),
+            """
+            /** @define {boolean} */
+            const A = goog.define('a.B', false);
+
+            /** @define {boolean} */
+            const B = goog.define('a.B', false);
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
 
@@ -613,28 +742,31 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testRedeclaration_oneGoogDefine_varWithGoogDefineName() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */", //
-                "const A = goog.define('B', false);",
-                "",
-                "const B = false;")),
+            """
+            /** @define {boolean} */
+            const A = goog.define('B', false);
+
+            const B = false;
+            """),
         expected(
-            lines(
-                "/** @define {boolean} */", //
-                "const A = false;",
-                "",
-                "const B = false;")));
+            """
+            /** @define {boolean} */
+            const A = false;
+
+            const B = false;
+            """));
   }
 
   @Test
   public void testRedeclaration_oneGoogDefine_varWithSameLocalName() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */",
-                "var A = goog.define('B', false);",
-                "",
-                "var A = false;")),
+            """
+            /** @define {boolean} */
+            var A = goog.define('B', false);
+
+            var A = false;
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
 
@@ -642,12 +774,13 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testRedeclaration_oneGoogDefine_oneAtDefine() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */",
-                "const A = goog.define('B', false);",
-                "",
-                "/** @define {boolean} */",
-                "const B = false;")),
+            """
+            /** @define {boolean} */
+            const A = goog.define('B', false);
+
+            /** @define {boolean} */
+            const B = false;
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
   }
 
@@ -655,12 +788,328 @@ public final class ProcessDefinesTest extends CompilerTestCase {
   public void testRedeclaration_oneAtDefine_varWithSameName() {
     test(
         srcs(
-            lines(
-                "/** @define {boolean} */", //
-                "var A = false;",
-                "",
-                "var A = false;")),
+            """
+            /** @define {boolean} */
+            var A = false;
+
+            var A = false;
+            """),
         error(ProcessDefines.NON_CONST_DEFINE));
+  }
+
+  @Test
+  public void testClosureDefineValues_replacements() {
+    mode = ProcessDefines.Mode.CHECK_AND_OPTIMIZE;
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': 'closureDefault'};
+        /** @define {string} */ const FOO = 'original';
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': 'closureDefault'};
+        /** @define {string} */ const FOO = 'closureDefault';
+        """);
+
+    test(
+        """
+        var CLOSURE_DEFINES = CLOSURE_DEFINES || {};
+        CLOSURE_DEFINES['FOO'] = 'closureDefault';
+        /** @define {string} */ const FOO = 'original';
+        """,
+        """
+        var CLOSURE_DEFINES = CLOSURE_DEFINES || {};
+        CLOSURE_DEFINES['FOO'] = 'closureDefault';
+        /** @define {string} */ const FOO = 'closureDefault';
+        """);
+
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': true};
+        /** @define {boolean} */ const FOO = false;
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': true};
+        /** @define {boolean} */ const FOO = true;
+        """);
+
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': false};
+        /** @define {boolean} */ const FOO = false;
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': false};
+        /** @define {boolean} */ const FOO = false;
+        """);
+
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': 1};
+        /** @define {number} */ const FOO = 2;
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': 1};
+        /** @define {number} */ const FOO = 1;
+        """);
+
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': 0xABCD};
+        /** @define {number} */ const FOO = 2;
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': 0xABCD};
+        /** @define {number} */ const FOO = 0xABCD;
+        """);
+  }
+
+  @Test
+  public void testClosureDefineValues_duplicateKey() {
+    mode = ProcessDefines.Mode.CHECK_AND_OPTIMIZE;
+    test(
+        srcs(
+            """
+            var CLOSURE_DEFINES = CLOSURE_DEFINES || {};
+            CLOSURE_DEFINES['FOO'] = 'firstVersionIgnored';
+            CLOSURE_DEFINES['FOO'] = 'closureDefault';
+            /** @define {string} */ const FOO = 'original';
+            """),
+        error(ProcessDefines.CLOSURE_DEFINES_MULTIPLE));
+
+    test(
+        srcs(
+            """
+            var CLOSURE_DEFINES = {'FOO': 'firstVersionIgnored'};
+            CLOSURE_DEFINES['FOO'] = 'closureDefault';
+            /** @define {string} */ const FOO = 'original';
+            """),
+        error(ProcessDefines.CLOSURE_DEFINES_MULTIPLE));
+  }
+
+  @Test
+  public void testClosureDefineValues_namespacedReplacement() {
+    test(
+        """
+        var CLOSURE_DEFINES = {'a.b': 'closureDefault'};
+        const a = {};
+        /** @define {string} */ a.b = 'original';
+        """,
+        """
+        var CLOSURE_DEFINES = {'a.b': 'closureDefault'};
+        const a = {};
+        /** @define {string} */ a.b = 'closureDefault';
+        """);
+  }
+
+  @Test
+  public void testClosureDefineValues_replacementWithGoogDefine() {
+    mode = ProcessDefines.Mode.CHECK_AND_OPTIMIZE;
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': 'closureDefault'};
+        /** @define {string} */ const f = goog.define('FOO', 'original');
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': 'closureDefault'};
+        /** @define {string} */ const f = 'closureDefault';
+        """);
+  }
+
+  @Test
+  public void testClosureDefineValues_replacementWithOverriddenDefine() {
+    // Command-line flag takes precedence over CLOSURE_DEFINES.
+    mode = ProcessDefines.Mode.CHECK_AND_OPTIMIZE;
+    overrides.put("FOO", IR.string("override"));
+    test(
+        """
+        var CLOSURE_DEFINES = {'FOO': 'closureDefault'};
+        /** @define {string} */ const f = goog.define('FOO', 'original');
+        """,
+        """
+        var CLOSURE_DEFINES = {'FOO': 'closureDefault'};
+        /** @define {string} */ const f = 'override';
+        """);
+  }
+
+  @Test
+  public void testClosureDefineValues_checkOnlyDoesntModifyAst() {
+    mode = ProcessDefines.Mode.CHECK;
+    testSame(
+        """
+        var CLOSURE_DEFINES = {'FOO': 'string'};
+        /** @define {string} */ const f = goog.define('FOO', 'tmp');
+        """);
+  }
+
+  @Test
+  public void testClosureDefines_unknownDefineErrors() {
+    mode = ProcessDefines.Mode.OPTIMIZE;
+    test(srcs("var CLOSURE_DEFINES = {'FOO': 0};"), warning(ProcessDefines.UNKNOWN_DEFINE_WARNING));
+    test(srcs("CLOSURE_DEFINES['FOO'] = 0;"), warning(ProcessDefines.UNKNOWN_DEFINE_WARNING));
+  }
+
+  @Test
+  public void testClosureDefines_mustBeGlobal() {
+    mode = ProcessDefines.Mode.CHECK;
+    test(
+        srcs(
+            """
+            (function() { var CLOSURE_DEFINES = {'FOO': 0}; })();
+            /** @define {number} */ const FOO = 1;
+            """),
+        error(ProcessDefines.NON_GLOBAL_CLOSURE_DEFINES_ERROR));
+
+    test(
+        srcs(
+            """
+            if (cond) {
+              var CLOSURE_DEFINES = {'FOO': 0};
+            }
+            /** @define {number} */ const FOO = 1;
+            """),
+        error(ProcessDefines.NON_GLOBAL_CLOSURE_DEFINES_ERROR));
+
+    test(
+        srcs(
+            """
+            if (cond) {
+              CLOSURE_DEFINES['FOO'] = 0;
+            }
+            /** @define {number} */ const FOO = 1;
+            """),
+        error(ProcessDefines.NON_GLOBAL_CLOSURE_DEFINES_ERROR));
+  }
+
+  @Test
+  public void testClosureDefines_valuesErrors() {
+    mode = ProcessDefines.Mode.CHECK;
+    testError("var CLOSURE_DEFINES = {'FOO': a};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError("var CLOSURE_DEFINES = {'FOO': 0+1};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError(
+        "var CLOSURE_DEFINES = {'FOO': 'value' + 'value'};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError("var CLOSURE_DEFINES = {'FOO': !true};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError("var CLOSURE_DEFINES = {'FOO': -true};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+
+    testError("var CLOSURE_DEFINES = {SHORTHAND};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError(
+        "var CLOSURE_DEFINES = {'TEMPLATE': `template`};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError(
+        "var CLOSURE_DEFINES = {'TEMPLATE': `${template}Sub`};",
+        ProcessDefines.CLOSURE_DEFINES_ERROR);
+
+    testError("CLOSURE_DEFINES[notStringLiteral] = 42;", ProcessDefines.CLOSURE_DEFINES_ERROR);
+    testError("CLOSURE_DEFINES['FOO'] = a;", ProcessDefines.CLOSURE_DEFINES_ERROR);
+  }
+
+  @Test
+  public void testClosureDefinesErrors_enabledByRecognizeClosureDefines() {
+    mode = ProcessDefines.Mode.CHECK;
+
+    testError("var CLOSURE_DEFINES = {'FOO': a};", ProcessDefines.CLOSURE_DEFINES_ERROR);
+
+    this.recognizeClosureDefines = false;
+    testSame("var CLOSURE_DEFINES = {'FOO': a};");
+  }
+
+  @Test
+  public void testGenerateGlobalAliases() {
+    enableJ2clPasses = true;
+
+    test(
+        """
+        var a = {};
+        /** @define {number} */ a.b = goog.define('a.b', 1);
+        """,
+        """
+        var a = {};
+        /** @define {number} */ a.b = 1;
+        var jscomp$defines$a$b = a.b;
+        """);
+    test(
+        """
+        var a = {};
+        /** @define {number} */ a.b = goog.define('c.d', 1);
+        """,
+        """
+        var a = {};
+        /** @define {number} */ a.b = 1;
+        var jscomp$defines$c$d = a.b;
+        """);
+    test(
+        "/** @define {number} */ var a = goog.define('c.d', 1);",
+        """
+        /** @define {number} */ var a = 1;
+        var jscomp$defines$c$d = a;
+        """);
+    test(
+        """
+        /** @define {number} */ var a = goog.define('a', 1);
+        /** @define {number} */ var b = goog.define('b', a);
+        """,
+        """
+        /** @define {number} */ var a = 1;
+        var jscomp$defines$a = a;
+        /** @define {number} */ var b = a;
+        var jscomp$defines$b = b;
+        """);
+  }
+
+  @Test
+  public void testEs2017OrGreaterFailsWhenCompilingZone() {
+    outputFeatureSet = FeatureSet.ES2017;
+
+    testError(
+        srcs(
+            SourceFile.fromCode(
+                "third_party/javascript/angular2/rc/packages/zone.js/lib/zone.closure.js",
+                """
+                /** @define {boolean} */
+                const ENABLE_ZONES = goog.define('javascript.angular2.ENABLE_ZONES', true)
+                """)),
+        ProcessDefines.ZONE_NOT_SUPPORTED_WITH_NATIVE_ASYNC_AWAIT);
+  }
+
+  @Test
+  public void testEs2017OrGreaterAllowedWhenCompilingZoneWithItDisabled() {
+    outputFeatureSet = FeatureSet.ES2017;
+
+    test(
+        srcs(
+            SourceFile.fromCode(
+                "defines.js", "var CLOSURE_DEFINES = {'javascript.angular2.ENABLE_ZONES': false};"),
+            SourceFile.fromCode(
+                "third_party/javascript/angular2/rc/packages/zone.js/lib/zone.closure.js",
+                """
+                /** @define {boolean} */
+                const ENABLE_ZONES = goog.define('javascript.angular2.ENABLE_ZONES', true)
+                """)));
+  }
+
+  @Test
+  public void testEs2017OrGreaterFailsWhenCompilingZoneWithItExplicitlyEnabled() {
+    outputFeatureSet = FeatureSet.ES2017;
+
+    testError(
+        srcs(
+            SourceFile.fromCode(
+                "defines.js", "var CLOSURE_DEFINES = {'javascript.angular2.ENABLE_ZONES': true};"),
+            SourceFile.fromCode(
+                "third_party/javascript/angular2/rc/packages/zone.js/lib/zone.closure.js",
+                """
+                /** @define {boolean} */
+                const ENABLE_ZONES = goog.define('javascript.angular2.ENABLE_ZONES', true)
+                """)),
+        ProcessDefines.ZONE_NOT_SUPPORTED_WITH_NATIVE_ASYNC_AWAIT);
+  }
+
+  @Test
+  public void testZoneAllowedWhenCompilingLessThanEs2017() {
+    outputFeatureSet = FeatureSet.ES2016;
+
+    test(
+        srcs(
+            SourceFile.fromCode(
+                "third_party/javascript/angular2/rc/packages/zone.js/lib/zone.closure.js", "")));
   }
 
   private class ProcessDefinesWithInjectedNamespace implements CompilerPass {
@@ -672,12 +1121,14 @@ public final class ProcessDefinesTest extends CompilerTestCase {
 
     @Override
     public void process(Node externs, Node js) {
-      new ProcessClosurePrimitives(compiler, null).process(externs, js);
       namespace = new GlobalNamespace(compiler, externs, js);
       new ProcessDefines.Builder(compiler)
           .putReplacements(overrides)
-          .checksOnly(checksOnly)
+          .setMode(mode)
           .injectNamespace(() -> namespace)
+          .setRecognizeClosureDefines(recognizeClosureDefines)
+          .setEnableZonesDefineName(compiler.getOptions().getEnableZonesDefineName())
+          .setZoneInputPattern(compiler.getOptions().getZoneInputPattern())
           .build()
           .process(externs, js);
     }

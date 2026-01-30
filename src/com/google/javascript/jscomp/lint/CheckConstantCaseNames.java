@@ -18,8 +18,8 @@ package com.google.javascript.jscomp.lint;
 
 import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.CodingConvention;
+import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
-import com.google.javascript.jscomp.HotSwapCompilerPass;
 import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.NodeUtil;
@@ -39,7 +39,7 @@ import java.util.LinkedHashSet;
  * In order to not confuse users, this pass does not warn that they should be @const. (A more
  * correct lint check could warn that non-module-locals should not be constant case.)
  */
-public class CheckConstantCaseNames implements NodeTraversal.Callback, HotSwapCompilerPass {
+public class CheckConstantCaseNames implements NodeTraversal.Callback, CompilerPass {
 
   public static final DiagnosticType MISSING_CONST_PROPERTY =
       DiagnosticType.disabled(
@@ -71,11 +71,6 @@ public class CheckConstantCaseNames implements NodeTraversal.Callback, HotSwapCo
   }
 
   @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
-  }
-
-  @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
     // Only need to warn for module-level names, so don't visit other files.
     if (n.isScript()) {
@@ -91,8 +86,7 @@ public class CheckConstantCaseNames implements NodeTraversal.Callback, HotSwapCo
       return;
     }
     switch (n.getToken()) {
-      case VAR:
-      case LET:
+      case VAR, LET -> {
         // Skip CONST as it automatically meets the criteria and only look for module-level vars.
         if (!t.inModuleScope()) {
           return;
@@ -101,14 +95,15 @@ public class CheckConstantCaseNames implements NodeTraversal.Callback, HotSwapCo
         if (info != null && info.hasConstAnnotation()) {
           break;
         }
-        for (Node name : NodeUtil.findLhsNodesInNode(n)) {
-          if (convention.isConstant(name.getString())) {
-            this.invalidNamesPerModule.put(name.getString(), name);
-          }
-        }
-        break;
-
-      case NAME:
+        NodeUtil.visitLhsNodesInNode(
+            n,
+            (name) -> {
+              if (convention.isConstant(name.getString())) {
+                this.invalidNamesPerModule.put(name.getString(), name);
+              }
+            });
+      }
+      case NAME -> {
         if (!this.invalidNamesPerModule.containsKey(n.getString())) {
           return;
         }
@@ -120,10 +115,8 @@ public class CheckConstantCaseNames implements NodeTraversal.Callback, HotSwapCo
         if (v.getScopeRoot().isModuleBody()) {
           this.reassignedNames.add(n.getString());
         }
-        break;
-
-      default:
-        break;
+      }
+      default -> {}
     }
   }
 

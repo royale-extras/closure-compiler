@@ -22,9 +22,7 @@ import static com.google.javascript.jscomp.TypeMatchingStrategy.LOOSE;
 import static com.google.javascript.jscomp.TypeMatchingStrategy.STRICT_NULLABILITY;
 import static com.google.javascript.jscomp.TypeMatchingStrategy.SUBTYPES;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.TypeMatchingStrategy.MatchResult;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
@@ -35,13 +33,15 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class TypeMatchingStrategyTest {
 
-  private static final String EXTERNS = Joiner.on("\n").join(
-      "/** @constructor */",
-      "var OtherType = function() {};",
-      "/** @constructor */",
-      "var SuperType = function() {};",
-      "/** @constructor @extends {SuperType} */",
-      "var SubType = function() {};");
+  private static final String EXTERNS =
+      """
+      /** @constructor */
+      var OtherType = function() {};
+      /** @constructor */
+      var SuperType = function() {};
+      /** @constructor @extends {SuperType} */
+      var SubType = function() {};
+      """;
 
   @Test
   public void testMatch_default() {
@@ -136,8 +136,8 @@ public final class TypeMatchingStrategyTest {
     Compiler compiler = new Compiler();
     compiler.disableThreads();
     CompilerOptions options = new CompilerOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT3);
     options.setCheckTypes(true);
+    options.setChecksOnly(true);
 
     compiler.compile(
         ImmutableList.of(SourceFile.fromCode("externs", EXTERNS)),

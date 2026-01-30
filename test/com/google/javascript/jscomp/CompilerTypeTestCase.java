@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertWithMessage;
@@ -27,7 +26,6 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.SYMBOL_TYPE;
 import static com.google.javascript.rhino.testing.TypeSubject.assertType;
 import static com.google.javascript.rhino.testing.TypeSubject.types;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
@@ -46,49 +44,36 @@ import org.junit.Before;
 
 /** This class is mostly used by passes testing {@link TypeCheck}. */
 abstract class CompilerTypeTestCase {
-  protected static final Joiner LINE_JOINER = Joiner.on('\n');
-
   static final String CLOSURE_DEFS =
-      LINE_JOINER.join(
-          "/** @const */ var goog = {};",
-          "goog.inherits = function(x, y) {};",
-          "/** @type {!Function} */ goog.abstractMethod = function() {};",
-          "goog.isArray = function(x) {};",
-          "goog.isDef = function(x) {};",
-          "goog.isFunction = function(x) {};",
-          "goog.isNull = function(x) {};",
-          "goog.isString = function(x) {};",
-          "goog.isObject = function(x) {};",
-          "goog.isDefAndNotNull = function(x) {};",
-          "/** @const */ goog.array = {};",
-          // simplified ArrayLike definition
-          "/**",
-          " * @typedef {Array|{length: number}}",
-          " */",
-          "goog.array.ArrayLike;",
-          "/**",
-          " * @param {Array<T>|{length:number}} arr",
-          " * @param {function(this:S, T, number, goog.array.ArrayLike):boolean} f",
-          " * @param {S=} obj",
-          " * @return {!Array<T>}",
-          " * @template T,S",
-          " */",
-          // return empty array to satisfy return type
-          "goog.array.filter = function(arr, f, obj){ return []; };",
-          "goog.asserts = {};",
-          "/** @return {*} */ goog.asserts.assert = function(x) { return x; };",
-          "goog.provide = function(ns) {};",
-          "goog.module = function(ns) {};",
-          "/** @return {?} */",
-          "goog.module.get = function(ns) {};",
-          "/** @return {?} */",
-          "goog.require = function(ns) {};",
-          "goog.loadModule = function(mod) {};");
+      """
+      goog.inherits = function(x, y) {};
+      /** @type {!Function} */ goog.abstractMethod = function() {};
+      goog.isFunction = function(x) {};
+      goog.isObject = function(x) {};
+      /** @const */ goog.array = {};
+      // simplified ArrayLike definition
+      /**
+       * @typedef {Array|{length: number}}
+       */
+      goog.array.ArrayLike;
+      /**
+       * @param {Array<T>|{length:number}} arr
+       * @param {function(this:S, T, number, goog.array.ArrayLike):boolean} f
+       * @param {S=} obj
+       * @return {!Array<T>}
+       * @template T,S
+       */
+      // return empty array to satisfy return type
+      goog.array.filter = function(arr, f, obj){ return []; };
+      goog.asserts = {};
+      /** @return {*} */ goog.asserts.assert = function(obj, msg = undefined) { return obj; };
+      goog.loadModule = function(mod) {};
+      """;
 
   /**
    * A default set of externs for testing.
    *
-   * TODO(bradfordcsmith): Replace this with externs built by TestExternsBuilder.
+   * <p>TODO(bradfordcsmith): Replace this with externs built by TestExternsBuilder.
    */
   static final String DEFAULT_EXTERNS = CompilerTestCase.DEFAULT_EXTERNS;
 
@@ -96,21 +81,21 @@ abstract class CompilerTypeTestCase {
   protected JSTypeRegistry registry;
   protected TestErrorReporter errorReporter;
 
-  protected CompilerOptions getDefaultOptions() {
+  static final CompilerOptions defaultOptions() {
     CompilerOptions options = new CompilerOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_2019);
-    options.setCodingConvention(getCodingConvention());
-
-    options.setWarningLevel(
-        DiagnosticGroups.MISSING_PROPERTIES, CheckLevel.WARNING);
-    options.setWarningLevel(
-        DiagnosticGroups.MISPLACED_TYPE_ANNOTATION, CheckLevel.WARNING);
-    options.setWarningLevel(
-        DiagnosticGroups.INVALID_CASTS, CheckLevel.WARNING);
+    options.setCodingConvention(new GoogleCodingConvention());
+    options.setLanguage(LanguageMode.UNSUPPORTED);
+    options.setWarningLevel(DiagnosticGroups.MISSING_PROPERTIES, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.MISPLACED_TYPE_ANNOTATION, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.INVALID_CASTS, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.JSDOC_MISSING_TYPE, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.BOUNDED_GENERICS, CheckLevel.WARNING);
     return options;
+  }
+
+  protected CompilerOptions getDefaultOptions() {
+    return defaultOptions();
   }
 
   protected CodingConvention getCodingConvention() {
@@ -140,18 +125,10 @@ abstract class CompilerTypeTestCase {
     errorReporter.verifyHasEncounteredAllWarningsAndErrors();
   }
 
-  protected static String lines(String line) {
-    return line;
-  }
-
-  protected static String lines(String... lines) {
-    return LINE_JOINER.join(lines);
-  }
-
   protected void initializeNewCompiler(CompilerOptions options) {
     compiler = new Compiler();
     compiler.initOptions(options);
-    compiler.setFeatureSet(compiler.getFeatureSet().without(Feature.MODULES));
+    compiler.markFeatureNotAllowed(Feature.MODULES);
     registry = compiler.getTypeRegistry();
   }
 
@@ -210,6 +187,10 @@ abstract class CompilerTypeTestCase {
 
   protected ObjectType getNativeArrayType() {
     return getNativeObjectType(JSTypeNative.ARRAY_TYPE);
+  }
+
+  protected ObjectType getNativeReadonlyArrayType() {
+    return getNativeObjectType(JSTypeNative.READONLY_ARRAY_TYPE);
   }
 
   protected ObjectType getNativeStringObjectType() {

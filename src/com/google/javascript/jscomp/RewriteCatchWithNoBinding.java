@@ -15,7 +15,6 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
@@ -41,42 +40,36 @@ import com.google.javascript.rhino.Node;
  * }
  * }</pre>
  */
-final class RewriteCatchWithNoBinding implements HotSwapCompilerPass {
-  private static final FeatureSet TRANSPILED_FEATURES =
-      FeatureSet.BARE_MINIMUM.with(Feature.OPTIONAL_CATCH_BINDING);
-  private static final String BINDING_NAME = "$jscomp$unused$catch";
+final class RewriteCatchWithNoBinding extends AbstractPeepholeTranspilation {
+  private static final String BINDING_NAME = "$jscomp$unused$catch$";
 
   private final AbstractCompiler compiler;
   private final AstFactory astFactory;
+  private final UniqueIdSupplier uniqueIdSupplier;
 
   RewriteCatchWithNoBinding(AbstractCompiler compiler) {
     this.compiler = compiler;
     this.astFactory = compiler.createAstFactory();
+    this.uniqueIdSupplier = compiler.getUniqueIdSupplier();
   }
 
-  private class AddBindings extends AbstractPostOrderCallback {
-    @Override
-    public void visit(NodeTraversal t, Node n, Node parent) {
-      if (!n.isCatch() || !n.getFirstChild().isEmpty()) {
-        return;
-      }
+  @Override
+  FeatureSet getTranspiledAwayFeatures() {
+    return FeatureSet.BARE_MINIMUM.with(Feature.OPTIONAL_CATCH_BINDING);
+  }
 
-      Node name = astFactory.createNameWithUnknownType(BINDING_NAME);
-      n.getFirstChild().replaceWith(name.srcrefTree(n.getFirstChild()));
-      t.reportCodeChange();
+  @Override
+  @SuppressWarnings("CanIgnoreReturnValueSuggester")
+  Node transpileSubtree(Node n) {
+    if (!n.isCatch() || !n.getFirstChild().isEmpty()) {
+      return n;
     }
-  }
 
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(
-        compiler, scriptRoot, TRANSPILED_FEATURES, new AddBindings());
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, TRANSPILED_FEATURES);
-  }
-
-  @Override
-  public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, root, TRANSPILED_FEATURES, new AddBindings());
-    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, TRANSPILED_FEATURES);
+    Node name =
+        astFactory.createNameWithUnknownType(
+            BINDING_NAME + uniqueIdSupplier.getUniqueId(compiler.getInput(NodeUtil.getInputId(n))));
+    n.getFirstChild().replaceWith(name.srcrefTree(n.getFirstChild()));
+    compiler.reportChangeToEnclosingScope(name);
+    return n;
   }
 }

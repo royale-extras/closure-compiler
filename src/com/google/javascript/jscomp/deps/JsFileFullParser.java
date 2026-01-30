@@ -16,6 +16,8 @@
 
 package com.google.javascript.jscomp.deps;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -47,7 +49,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
-import javax.annotation.Nullable;
 
 /**
  * A parser that extracts dependency information from a .js file, including goog.require,
@@ -57,16 +58,28 @@ import javax.annotation.Nullable;
 public class JsFileFullParser {
   /** The dependency information contained in a .js source file. */
   public static final class FileInfo {
+    /** The module system declared by the file, e.g. goog.provide/goog.module. */
+    public enum ModuleType {
+      UNKNOWN,
+      GOOG_PROVIDE,
+      GOOG_MODULE,
+      ES_MODULE,
+    }
+
     public boolean goog = false;
     public boolean isConfig = false;
     public boolean isExterns = false;
     public boolean provideGoog = false;
     public boolean testonly = false;
+    public ModuleType moduleType = ModuleType.UNKNOWN;
+    public boolean isLegacyNamespace = false;
 
-    public final Set<String> hasSoyDelcalls = new TreeSet<>();
-    public final Set<String> hasSoyDeltemplates = new TreeSet<>();
+    public final Set<String> delcalls = new TreeSet<>();
+    public final Set<String> deltemplates = new TreeSet<>();
     // Use a LinkedHashSet as import order matters!
     public final Set<String> importedModules = new LinkedHashSet<>();
+    public final Set<String> dynamicRequires = new LinkedHashSet<>();
+    public final Set<String> readToggles = new LinkedHashSet<>();
     public final List<String> modName = new ArrayList<>();
     public final List<String> mods = new ArrayList<>();
 
@@ -75,6 +88,7 @@ public class JsFileFullParser {
     public final Multiset<String> provides = TreeMultiset.create();
     public final Multiset<String> requires = TreeMultiset.create();
     public final Multiset<String> typeRequires = TreeMultiset.create();
+    public final Multiset<String> maybeRequires = TreeMultiset.create();
     public final Multiset<String> requiresCss = TreeMultiset.create();
     public final Multiset<String> visibility = TreeMultiset.create();
 
@@ -88,8 +102,8 @@ public class JsFileFullParser {
     /** Annotation name, e.g. "@fileoverview" or "@externs". */
     final String name;
     /**
-     * Annotation value: either the bare identifier immediately after the
-     * annotation, or else string in braces.
+     * Annotation value: either the bare identifier immediately after the annotation, or else string
+     * in braces.
      */
     final String value;
 
@@ -125,9 +139,17 @@ public class JsFileFullParser {
     private static final int ANNOTATION_VALUE_GROUP = 2;
   }
 
-  /** Parses a JavaScript file for dependencies and annotations. */
-  public static FileInfo parse(String code, String filename, @Nullable Reporter reporter) {
-    ErrorReporter errorReporter = new DelegatingReporter(reporter);
+  private JsFileFullParser() {
+    // no instantiation
+  }
+
+  /**
+   * Parses a JavaScript file for dependencies and annotations
+   *
+   * @return empty info if a syntax error was encountered
+   */
+  public static FileInfo parse(String code, String filename, Reporter reporter) {
+    DelegatingReporter errorReporter = new DelegatingReporter(reporter);
     Compiler compiler =
         new Compiler(
             new BasicErrorManager() {
@@ -135,16 +157,16 @@ public class JsFileFullParser {
               public void println(CheckLevel level, JSError error) {
                 if (level == CheckLevel.ERROR) {
                   errorReporter.error(
-                      error.getDescription(),
-                      error.getSourceName(),
+                      error.description(),
+                      error.sourceName(),
                       error.getLineNumber(),
-                      error.getCharno());
+                      error.charno());
                 } else if (level == CheckLevel.WARNING) {
                   errorReporter.warning(
-                      error.getDescription(),
-                      error.getSourceName(),
+                      error.description(),
+                      error.sourceName(),
                       error.getLineNumber(),
-                      error.getCharno());
+                      error.charno());
                 }
               }
 
@@ -152,22 +174,27 @@ public class JsFileFullParser {
               protected void printSummary() {}
             });
     SourceFile source = SourceFile.fromCode(filename, code);
-    compiler.init(
-        ImmutableList.<SourceFile>of(),
-        ImmutableList.<SourceFile>of(source),
-        new CompilerOptions());
+
+    CompilerOptions options = new CompilerOptions();
+    options.setChecksOnly(true);
+
+    compiler.init(ImmutableList.of(), ImmutableList.of(source), options);
 
     Config config =
         ParserRunner.createConfig(
             // TODO(sdh): ES8 STRICT, with a non-strict fallback - then give warnings.
-            Config.LanguageMode.ECMASCRIPT8,
+            Config.LanguageMode.ES_NEXT,
             Config.JsDocParsing.INCLUDE_DESCRIPTIONS_NO_WHITESPACE,
-            Config.RunMode.KEEP_GOING,
-            /* extraAnnotationNames */ ImmutableSet.<String>of(),
-            /* parseInlineSourceMaps */ true,
+            Config.RunMode.STOP_AFTER_ERROR,
+            /* extraAnnotationNames= */ ImmutableSet.<String>of(),
+            /* parseInlineSourceMaps= */ true,
             Config.StrictMode.SLOPPY);
     FileInfo info = new FileInfo();
     ParserRunner.ParseResult parsed = ParserRunner.parse(source, code, config, errorReporter);
+    if (errorReporter.seenError) {
+      return info;
+    }
+
     parsed.ast.setInputId(new InputId(filename));
     String version = parsed.features.version();
     if (!version.equals("es3")) {
@@ -184,15 +211,36 @@ public class JsFileFullParser {
             compiler, /* processCommonJsModules= */ false, ResolutionMode.BROWSER);
     gatherModuleMetadata.process(new Node(Token.ROOT), parsed.ast);
     compiler.generateReport();
+    if (compiler.getModuleMetadataMap().getModulesByPath().size() != 1) {
+      return info; // Avoid potential crashes due to assumptions of the code below being violated.
+    }
     ModuleMetadata module =
-        Iterables.getOnlyElement(
-            compiler.getModuleMetadataMap().getModulesByPath().values());
+        Iterables.getOnlyElement(compiler.getModuleMetadataMap().getModulesByPath().values());
     if (module.isEs6Module()) {
       info.loadFlags.put("module", "es6");
     } else if (module.isGoogModule()) {
       info.loadFlags.put("module", "goog");
     }
+    switch (module.moduleType()) {
+      case GOOG_PROVIDE -> info.moduleType = FileInfo.ModuleType.GOOG_PROVIDE;
+      case GOOG_MODULE -> info.moduleType = FileInfo.ModuleType.GOOG_MODULE;
+      case LEGACY_GOOG_MODULE -> {
+        info.moduleType = FileInfo.ModuleType.GOOG_MODULE;
+        info.isLegacyNamespace = true;
+      }
+      case ES6_MODULE -> info.moduleType = FileInfo.ModuleType.ES_MODULE;
+      case COMMON_JS, SCRIPT ->
+          // Treat these as unknown for now; we can extend the enum if we care about these.
+          info.moduleType = FileInfo.ModuleType.UNKNOWN;
+    }
     info.goog = module.usesClosure();
+    recordModuleMetadata(info, module);
+    return info;
+  }
+
+  private static void recordModuleMetadata(FileInfo info, ModuleMetadata module) {
+    info.importedModules.addAll(module.es6ImportSpecifiers().elementSet());
+
     // If something doesn't have an external dependency on Closure, then it does not have any
     // externally required files or symbols to provide. This is needed for bundles that contain
     // base.js as well as other files. These bundles should look like they do not require or provide
@@ -200,11 +248,16 @@ public class JsFileFullParser {
     if (module.usesClosure()) {
       info.provides.addAll(module.googNamespaces());
       info.requires.addAll(module.stronglyRequiredGoogNamespaces());
+      info.maybeRequires.addAll(module.maybeRequiredGoogNamespaces());
+      info.dynamicRequires.addAll(module.dynamicallyRequiredGoogNamespaces().elementSet());
+      info.readToggles.addAll(module.readToggles().elementSet());
       info.typeRequires.addAll(module.weaklyRequiredGoogNamespaces());
       info.testonly = module.isTestOnly();
     }
-    info.importedModules.addAll(module.es6ImportSpecifiers().elementSet());
-    return info;
+    // Traverse any nested modules (goog.loadModule calls).
+    for (ModuleMetadata nested : module.nestedModules()) {
+      recordModuleMetadata(info, nested);
+    }
   }
 
   /** Mutates {@code info} with information from the given {@code comment}. */
@@ -212,63 +265,56 @@ public class JsFileFullParser {
     boolean fileOverview = comment.value.contains("@fileoverview");
     for (CommentAnnotation annotation : CommentAnnotation.parse(comment.value)) {
       switch (annotation.name) {
-        case "@fileoverview":
-        case "@author":
-        case "@see":
-        case "@link":
-          break;
-        case "@mods":
+        case "@fileoverview", "@author", "@see", "@link" -> {}
+        case "@mods" -> {
           if (!annotation.value.isEmpty()) {
             info.mods.add(annotation.value);
           }
-          break;
-        case "@visibility":
+        }
+        case "@visibility" -> {
           if (!annotation.value.isEmpty()) {
             info.visibility.add(annotation.value);
           }
-          break;
-        case "@modName":
+        }
+        case "@modName" -> {
           if (!annotation.value.isEmpty()) {
             info.modName.add(annotation.value);
           }
-          break;
-        case "@config":
-          info.isConfig = true;
-          break;
-        case "@provideGoog":
-          info.provideGoog = true;
-          break;
-        case "@requirecss":
+        }
+        case "@config" -> info.isConfig = true;
+        case "@provideGoog" -> info.provideGoog = true;
+        case "@requirecss" -> {
           if (!annotation.value.isEmpty()) {
             info.requiresCss.add(annotation.value);
           }
-          break;
-        case "@hassoydeltemplate":
+        }
+        case "@deltemplate", "@hassoydeltemplate" -> {
+          // TODO(b/210468818): Remove legacy @hassoydeltemplate annotation once Soy gencode has
+          // been updated to use the new one.
           if (!annotation.value.isEmpty()) {
-            info.hasSoyDeltemplates.add(annotation.value);
+            info.deltemplates.add(annotation.value);
           }
-          break;
-        case "@hassoydelcall":
+        }
+        case "@delcall", "@hassoydelcall" -> {
+          // TODO(b/210468818): Remove legacy @hassoydelcall annotation once Soy gencode has
+          // been updated to use the new one.
           if (!annotation.value.isEmpty()) {
-            info.hasSoyDelcalls.add(annotation.value);
+            info.delcalls.add(annotation.value);
           }
-          break;
-        case "@externs":
-          info.isExterns = true;
-          break;
-        case "@enhanceable":
-        case "@pintomodule":
-          info.customAnnotations.put(annotation.name.substring(1), annotation.value);
-          break;
-        case "@enhance":
+        }
+        case "@externs" -> info.isExterns = true;
+        case "@enhanceable", "@pintomodule", "@mayhaveextraedge" ->
+            info.customAnnotations.put(annotation.name.substring(1), annotation.value);
+        case "@enhance" -> {
           if (!annotation.value.isEmpty()) {
             info.customAnnotations.put(annotation.name.substring(1), annotation.value);
           }
-          break;
-        default:
+        }
+        default -> {
           if (fileOverview) {
             info.customAnnotations.put(annotation.name.substring(1), annotation.value);
           }
+        }
       }
     }
   }
@@ -280,9 +326,10 @@ public class JsFileFullParser {
 
   private static final class DelegatingReporter implements ErrorReporter {
     final Reporter delegate;
+    private boolean seenError = false;
 
     DelegatingReporter(Reporter delegate) {
-      this.delegate = delegate != null ? delegate : NULL_REPORTER;
+      this.delegate = checkNotNull(delegate);
     }
 
     @Override
@@ -292,13 +339,8 @@ public class JsFileFullParser {
 
     @Override
     public void error(String message, String sourceName, int line, int lineOffset) {
+      this.seenError = true;
       delegate.report(true, message, sourceName, line, lineOffset);
     }
   }
-
-  private static final Reporter NULL_REPORTER = new Reporter() {
-    @Override
-    public void report(
-        boolean fatal, String message, String sourceName, int line, int lineOffset) {}
-  };
 }

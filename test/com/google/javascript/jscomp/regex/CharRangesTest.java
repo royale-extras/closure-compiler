@@ -29,17 +29,17 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class CharRangesTest {
 
-  static final long SEED = Long.parseLong(System.getProperty(
-      "junit.random.seed", "" + System.currentTimeMillis()));
+  static final long SEED =
+      Long.parseLong(System.getProperty("junit.random.seed", "" + System.currentTimeMillis()));
 
   @Test
   public void testAgainstRegularImplementation() {
     Random rnd = new Random(SEED);
 
-    for (int run = 10; --run >= 0;) {
+    for (int run = 10; --run >= 0; ) {
       // Fill with bits in the range [0x1000, 0x3000).
       BitSet bs = new BitSet();
-      for (int i = 0x1000; --i >= 0;) {
+      for (int i = 0x1000; --i >= 0; ) {
         bs.set(0x1000 + rnd.nextInt(0x3000));
       }
 
@@ -53,7 +53,7 @@ public final class CharRangesTest {
       // Check all bits including past the min/max bit
       for (int i = 0; i < 0x5000; ++i) {
         if (bs.get(i) != sbs.contains(i)) {
-          assertWithMessage("sbs=" + sbs + ", bs=" + bs + ", difference at bit " + i).fail();
+          assertWithMessage("sbs=%s, bs=%s, difference at bit %s", sbs, bs, i).fail();
         }
       }
     }
@@ -78,7 +78,7 @@ public final class CharRangesTest {
 
     assertThat(isbs2).isEqualTo(isbs);
     assertThat(isbs).isNotEqualTo(esbs);
-    assertThat(isbs).isNotEqualTo(null);
+    assertThat(isbs).isNotNull();
     assertThat(isbs).isNotEqualTo(new Object());
 
     assertThat(isbs2.hashCode()).isEqualTo(isbs.hashCode());
@@ -127,7 +127,7 @@ public final class CharRangesTest {
     new EqualsTester().addEqualityGroup(sbs1, sbs2).testEquals();
 
     for (int i = -10; i < 20; ++i) {
-      assertWithMessage("" + i).that(sbs2.contains(i)).isEqualTo(sbs1.contains(i));
+      assertWithMessage("%s", i).that(sbs2.contains(i)).isEqualTo(sbs1.contains(i));
     }
   }
 
@@ -139,10 +139,13 @@ public final class CharRangesTest {
     // a      AAAAAAAAA      A A A A   A AAA   AAA A A
     // b    BBB  BBB  BBB BBB        B B    BBB
     // a-b     DD   DD       D D D D     DDD   DDD D D
-    CharRanges a = CharRanges.withRanges(0x03, 0x0C, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
-        0x1C, 0x1D, 0x1E, 0x21, 0x24, 0x27, 0x28, 0x29, 0x2A, 0x2B);
-    CharRanges b = CharRanges.withRanges(0x01, 0x04, 0x06, 0x09, 0x0B, 0x0E, 0x0F, 0x12, 0x1A, 0x1B,
-        0x1C, 0x1D, 0x21, 0x24);
+    CharRanges a =
+        CharRanges.withRanges(
+            0x03, 0x0C, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1C, 0x1D, 0x1E, 0x21,
+            0x24, 0x27, 0x28, 0x29, 0x2A, 0x2B);
+    CharRanges b =
+        CharRanges.withRanges(
+            0x01, 0x04, 0x06, 0x09, 0x0B, 0x0E, 0x0F, 0x12, 0x1A, 0x1B, 0x1C, 0x1D, 0x21, 0x24);
     CharRanges empty = CharRanges.withMembers();
 
     assertThat(empty.union(empty)).isEqualTo(empty);
@@ -189,10 +192,13 @@ public final class CharRangesTest {
     //    AAAAAAAAA      A A A A   A AAA   AAA A A
     //  BBB  BBB  BBB BBB        B B    BBB
     //  UUUUUUUUUUUUU UUUU U U U U U UUUUUUUUU U U
-    CharRanges a = CharRanges.withRanges(0x03, 0x0C, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
-        0x1C, 0x1D, 0x1E, 0x21, 0x24, 0x27, 0x28, 0x29, 0x2A, 0x2B);
-    CharRanges b = CharRanges.withRanges(0x01, 0x04, 0x06, 0x09, 0x0B, 0x0E, 0x0F, 0x12, 0x1A, 0x1B,
-        0x1C, 0x1D, 0x21, 0x24);
+    CharRanges a =
+        CharRanges.withRanges(
+            0x03, 0x0C, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1C, 0x1D, 0x1E, 0x21,
+            0x24, 0x27, 0x28, 0x29, 0x2A, 0x2B);
+    CharRanges b =
+        CharRanges.withRanges(
+            0x01, 0x04, 0x06, 0x09, 0x0B, 0x0E, 0x0F, 0x12, 0x1A, 0x1B, 0x1C, 0x1D, 0x21, 0x24);
     CharRanges empty = CharRanges.withMembers();
 
     assertThat(empty.union(empty)).isEqualTo(empty);

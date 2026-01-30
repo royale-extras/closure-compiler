@@ -16,29 +16,16 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link CheckUnreachableCode}.
- *
- */
+/** Tests for {@link CheckUnreachableCode}. */
 @RunWith(JUnit4.class)
 public final class CheckUnreachableCodeTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new CombinedCompilerPass(compiler,
-        new CheckUnreachableCode(compiler));
-  }
-
-  @Override
-  @Before
-  public void setUp() throws Exception {
-    super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2018);
+    return new CombinedCompilerPass(compiler, new CheckUnreachableCode(compiler));
   }
 
   @Test
@@ -63,39 +50,29 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
     testSame("function f() { if (x) { return } }");
     testSame("function f() { if (x) { return } return }");
     testSame("function f() { if (x) { if (y) { return } } else { return }}");
-    testSame("function f()" +
-        "{ if (x) { if (y) { return } return } else { return }}");
+    testSame("function f() { if (x) { if (y) { return } return } else { return }}");
   }
 
   @Test
   public void testInCorrectIfReturns() {
-    assertUnreachable(
-        "function f() { if (x) { return } else { return } return }");
+    assertUnreachable("function f() { if (x) { return } else { return } return }");
   }
 
   @Test
   public void testCorrectSwitchReturn() {
     testSame("function f() { switch(x) { default: return; case 1: x++; }}");
-    testSame("function f() {" +
-        "switch(x) { default: return; case 1: x++; } return }");
-    testSame("function f() {" +
-        "switch(x) { default: return; case 1: return; }}");
-    testSame("function f() {" +
-        "switch(x) { case 1: return; } return }");
-    testSame("function f() {" +
-        "switch(x) { case 1: case 2: return; } return }");
-    testSame("function f() {" +
-        "switch(x) { case 1: return; case 2: return; } return }");
-    testSame("function f() {" +
-        "switch(x) { case 1 : return; case 2: return; } return }");
+    testSame("function f() { switch(x) { default: return; case 1: x++; } return }");
+    testSame("function f() { switch(x) { default: return; case 1: return; }}");
+    testSame("function f() { switch(x) { case 1: return; } return }");
+    testSame("function f() { switch(x) { case 1: case 2: return; } return }");
+    testSame("function f() { switch(x) { case 1: return; case 2: return; } return }");
+    testSame("function f() { switch(x) { case 1 : return; case 2: return; } return }");
   }
 
   @Test
   public void testInCorrectSwitchReturn() {
-    assertUnreachable("function f() {" +
-        "switch(x) { default: return; case 1: return; } return }");
-    assertUnreachable("function f() {" +
-        "switch(x) { default: return; return; case 1: return; } }");
+    assertUnreachable("function f() { switch(x) { default: return; case 1: return; } return }");
+    assertUnreachable("function f() { switch(x) { default: return; return; case 1: return; } }");
   }
 
   @Test
@@ -166,8 +143,7 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
 
   @Test
   public void testInstanceOfThrowsException() {
-    testSame("function f() {try { if (value instanceof type) return true; } " +
-             "catch (e) { }}");
+    testSame("function f() {try { if (value instanceof type) return true; } " + "catch (e) { }}");
   }
 
   @Test
@@ -190,57 +166,88 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
   }
 
   @Test
+  public void testUnreachableStaticBlocks() {
+    assertUnreachable("class C{ static { function f(){ return; let x; } } }");
+    assertUnreachable("class C{ static{ if(false) { var x; } } }");
+    assertUnreachable("class C{ static{ while(false){ let x; } } }");
+  }
+
+  @Test
+  public void testReachableStaticBlocks() {
+    testSame("class C{ static { let x; } }");
+    testSame("class C{ static { function a(){} } }");
+    testSame("class C{ static {} a(){} }");
+    testSame("class C{ static {} static {} }");
+    testSame("class C{ static{} static x; static{} static y;}");
+    testSame("class C{ static [l('l1')] = l('r1'); static{ l('s2');} static[l('l3')] = l('r3');}");
+  }
+
+  @Test
   public void testSuppression() {
     assertUnreachable("if(false) { }");
 
     testSame(
-        "/** @fileoverview\n" +
-        " * @suppress {uselessCode}\n" +
-        " */\n" +
-        "if(false) { }");
+        """
+        /** @fileoverview
+         * @suppress {uselessCode}
+         */
+        if(false) { }
+        """);
 
     testSame(
-        "/** @fileoverview\n" +
-        " * @suppress {uselessCode}\n" +
-        " */\n" +
-        "function f() { if(false) { } }");
+        """
+        /** @fileoverview
+         * @suppress {uselessCode}
+         */
+        function f() { if(false) { } }
+        """);
 
     testSame(
-        "/**\n" +
-        " * @suppress {uselessCode}\n" +
-        " */\n" +
-        "function f() { if(false) { } }");
+        """
+        /**
+         * @suppress {uselessCode}
+         */
+        function f() { if(false) { } }
+        """);
 
     assertUnreachable(
-        "/**\n" +
-        " * @suppress {uselessCode}\n" +
-        " */\n" +
-        "function f() { if(false) { } }\n" +
-        "function g() { if(false) { } }\n");
+        """
+        /**
+         * @suppress {uselessCode}
+         */
+        function f() { if(false) { } }
+        function g() { if(false) { } }
+        """);
 
     testSame(
-        "/**\n" +
-        " * @suppress {uselessCode}\n" +
-        " */\n" +
-        "function f() {\n" +
-        "  function g() { if(false) { } }\n" +
-        "  if(false) { } }\n");
+        """
+        /**
+         * @suppress {uselessCode}
+         */
+        function f() {
+          function g() { if(false) { } }
+          if(false) { } }
+        """);
 
     assertUnreachable(
-        "function f() {\n" +
-        "  /**\n" +
-        "   * @suppress {uselessCode}\n" +
-        "   */\n" +
-        "  function g() { if(false) { } }\n" +
-        "  if(false) { } }\n");
+        """
+        function f() {
+          /**
+           * @suppress {uselessCode}
+           */
+          function g() { if(false) { } }
+          if(false) { } }
+        """);
 
     testSame(
-        "function f() {\n" +
-        "  /**\n" +
-        "   * @suppress {uselessCode}\n" +
-        "   */\n" +
-        "  function g() { if(false) { } }\n" +
-        "}\n");
+        """
+        function f() {
+          /**
+           * @suppress {uselessCode}
+           */
+          function g() { if(false) { } }
+        }
+        """);
   }
 
   @Test
@@ -299,33 +306,39 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
 
   @Test
   public void testReturnsInShorthandFunctionOfObjLit() {
-    testSame(lines(
-        "var obj = {",
-        "  f() { ",
-        "    switch(x) { ",
-        "      default: return; ",
-        "      case 1: x++; ",
-        "    }",
-        "  }",
-        "}"));
-    assertUnreachable(lines(
-        "var obj = {f() {",
-        "  switch(x) { ",
-        "    default: return; ",
-        "    case 1: return; ",
-        "  }",
-        "  return; ",
-        "}}"));
+    testSame(
+        """
+        var obj = {
+          f() {
+            switch(x) {
+              default: return;
+              case 1: x++;
+            }
+          }
+        }
+        """);
+    assertUnreachable(
+        """
+        var obj = {f() {
+          switch(x) {
+            default: return;
+            case 1: return;
+          }
+          return;
+        }}
+        """);
     testSame("var obj = {f() { if(x) {return;} else {return; }}}");
-    assertUnreachable(lines(
-        "var obj = {f() { ",
-        "  if(x) {",
-        "    return;",
-        "  } else {",
-        "    return;",
-        "  }",
-        "  return; ",
-        "}}"));
+    assertUnreachable(
+        """
+        var obj = {f() {
+          if(x) {
+            return;
+          } else {
+            return;
+          }
+          return;
+        }}
+        """);
   }
 
   @Test
@@ -343,6 +356,7 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
     testSame("var C; C = class{func(){}}");
     testSame("let C; C = class{func(){}}");
     assertUnreachable("var C = class{func(){if (true){return;} x = 1;}}");
+    assertUnreachable("class C {x = function(){if(true) {return;} x=1;}}");
   }
 
   @Test
@@ -360,9 +374,10 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
   @Test
   public void testSubclass() {
     testSame(
-        lines(
-            "class D {foo() {if (true) {return;}}}",
-            "class C extends D {foo() {super.foo();}}"));
+        """
+        class D {foo() {if (true) {return;}}}
+        class C extends D {foo() {super.foo();}}
+        """);
   }
 
   @Test
@@ -381,52 +396,57 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
   @Test
   public void testGenerators() {
     testSame(
-        lines(
-            "function* f() {",
-            "  var i = 0;",
-            "  while(true)",
-            "    yield i++;",
-            "}"));
+        """
+        function* f() {
+          var i = 0;
+          while(true)
+            yield i++;
+        }
+        """);
 
     assertUnreachable(
-        lines(
-            "function* f() {",
-            "  var i = 0;",
-            "  while(true) {",
-            "    yield i++;",
-            "  }",
-            "  i = 1;",
-            "}"));
+        """
+        function* f() {
+          var i = 0;
+          while(true) {
+            yield i++;
+          }
+          i = 1;
+        }
+        """);
 
     testSame(
-        lines(
-            "function* f() {",
-            "  var i = 0;",
-            "  while(true) {",
-            "    yield i;",
-            "    i++;",
-            "  }",
-            "}"));
+        """
+        function* f() {
+          var i = 0;
+          while(true) {
+            yield i;
+            i++;
+          }
+        }
+        """);
 
     testSame(
-        lines(
-            "function *f() {",
-            "  try {",
-            "    yield;",
-            "  } catch (e) {",
-            "    alert(e);",
-            "  }",
-            "}"));
+        """
+        function *f() {
+          try {
+            yield;
+          } catch (e) {
+            alert(e);
+          }
+        }
+        """);
 
     testSame(
-        lines(
-            "function *f() {",
-            "  try {",
-            "    yield 1;",
-            "  } catch (e) {",
-            "    alert(e);",
-            "  }",
-            "}"));
+        """
+        function *f() {
+          try {
+            yield 1;
+          } catch (e) {
+            alert(e);
+          }
+        }
+        """);
   }
 
   @Test
@@ -441,10 +461,11 @@ public final class CheckUnreachableCodeTest extends CompilerTestCase {
   public void testForAwait() {
     testSame("async function f(iter) { for await (const item of iter) { item; } }");
     assertUnreachable(
-        lines(
-            "async function f(iter) {",
-            "  for await (const item of iter) { if (false) { 3; } }",
-            "}"));
+        """
+        async function f(iter) {
+          for await (const item of iter) { if (false) { 3; } }
+        }
+        """);
   }
 
   @Test

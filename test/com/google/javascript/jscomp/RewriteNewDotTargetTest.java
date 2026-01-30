@@ -15,8 +15,9 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.Es6ToEs3Util.CANNOT_CONVERT_YET;
+import static com.google.javascript.jscomp.TranspilationUtil.CANNOT_CONVERT_YET;
 
+import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,19 +31,23 @@ public class RewriteNewDotTargetTest extends CompilerTestCase {
 
   @Before
   public void enableTypeCheckBeforePass() {
+    enableNormalize();
     enableTypeCheck();
     enableTypeInfoValidation();
+    replaceTypesWithColors();
+    enableMultistageCompilation();
   }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new RewriteNewDotTarget(compiler);
+    return PeepholeTranspilationsPass.create(
+        compiler, ImmutableList.of(new RewriteNewDotTarget(compiler)));
   }
 
   @Override
   protected CompilerOptions getOptions() {
     CompilerOptions options = super.getOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_NEXT_IN);
+    options.setLanguageIn(LanguageMode.UNSTABLE);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5_STRICT);
     return options;
   }
@@ -50,11 +55,10 @@ public class RewriteNewDotTargetTest extends CompilerTestCase {
   @Test
   public void testNewTargetInNonConstructorMethod() {
     testError(
-        lines(
-            "", //
-            "/** @constructor */",
-            "function Foo() { new.target; }", // not an ES6 class constructor
-            ""),
+        """
+        /** @constructor */
+        function Foo() { new.target; } // not an ES6 class constructor
+        """,
         CANNOT_CONVERT_YET);
 
     testError(
@@ -62,86 +66,87 @@ public class RewriteNewDotTargetTest extends CompilerTestCase {
         CANNOT_CONVERT_YET);
 
     testError(
-        lines(
-            "", //
-            "class Foo {",
-            "  method() {", // not a constructor
-            "    new.target;",
-            "  }",
-            "}",
-            ""),
+        """
+        class Foo {
+          method() { // not a constructor
+            new.target;
+          }
+        }
+        """,
         CANNOT_CONVERT_YET);
   }
 
   @Test
   public void testNewTargetInEs6Constructor() {
     test(
-        lines(
-            "", //
-            "class Foo {",
-            "  constructor() {",
-            "    new.target;",
-            "    () => new.target;", // works in arrow functions, too
-            "  }",
-            "}",
-            ""),
-        lines(
-            "", //
-            "class Foo {",
-            "  constructor() {",
-            "    this.constructor;",
-            "    () => this.constructor;", // works in arrow functions, too
-            "  }",
-            "}",
-            ""));
+        """
+        class Foo {
+          constructor() {
+            new.target;
+            () => new.target; // works in arrow functions, too
+          }
+        }
+        """,
+        """
+        class Foo {
+          constructor() {
+            this.constructor;
+            () => { return this.constructor; }; // works in arrow functions, too
+          }
+        }
+        """);
   }
 
   @Test
   public void testNewTargetInEs6Constructor_superCtorReturnsObject() {
     // TODO(b/157140030): This is an unexpected behaviour change.
     test(
-        lines(
-            "/** @constructor */",
-            "function Base() {",
-            "  return {};",
-            "}",
-            "",
-            "class Child extends Base {",
-            "  constructor() {",
-            "    super();",
-            "    new.target;", // Child
-            "  }",
-            "}"),
-        lines(
-            "/** @constructor */",
-            "function Base() {",
-            "  return {};",
-            "}",
-            "",
-            "class Child extends Base {",
-            "  constructor() {",
-            "    super();",
-            "    this.constructor;", // Object
-            "  }",
-            "}"));
+        """
+        /** @constructor */
+        function Base() {
+          return {};
+        }
+
+        class Child extends Base {
+          constructor() {
+            super();
+            new.target; // Child
+          }
+        }
+        """,
+        """
+        /** @constructor */
+        function Base() {
+          return {};
+        }
+
+        class Child extends Base {
+          constructor() {
+            super();
+            this.constructor; // Object
+          }
+        }
+        """);
   }
 
   @Test
   public void testNewTargetInEs6Constructor_beforeSuper() {
     test(
-        lines(
-            "class Foo extends Object {",
-            "  constructor() {",
-            "    new.target;",
-            "    super();",
-            "  }",
-            "}"),
-        lines(
-            "class Foo extends Object {",
-            "  constructor() {",
-            "    this.constructor;", // `this` before `super`
-            "    super();",
-            "  }",
-            "}"));
+        """
+        class Foo extends Object {
+          constructor() {
+            new.target;
+            super();
+          }
+        }
+        """,
+        """
+        class Foo extends Object {
+          constructor() {
+            this.constructor; // `this` before `super`
+            super();
+          }
+        }
+        """);
   }
 }

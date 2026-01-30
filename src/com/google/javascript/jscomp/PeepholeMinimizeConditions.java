@@ -23,10 +23,11 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.base.Predicate;
 import com.google.javascript.jscomp.MinimizedCondition.MeasuredNode;
 import com.google.javascript.jscomp.MinimizedCondition.MinimizationStyle;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.TernaryValue;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A peephole optimization that minimizes conditional expressions
@@ -44,66 +45,60 @@ class PeepholeMinimizeConditions
   private final boolean late;
 
   /**
-   * @param late When late is false, this mean we are currently running before
-   * most of the other optimizations. In this case we would avoid optimizations
-   * that would make the code harder to analyze (such as using string splitting,
-   * merging statements with commas, etc). When this is true, we would
-   * do anything to minimize for size.
+   * @param late When late is false, this mean we are currently running before most of the other
+   *     optimizations. In this case we would avoid optimizations that would make the code harder to
+   *     analyze (such as using string splitting, merging statements with commas, etc). When late is
+   *     true, we would do anything to minimize for size.
    */
   PeepholeMinimizeConditions(boolean late) {
     this.late = late;
   }
 
-  /**
-   * Tries to apply our various peephole minimizations on the passed in node.
-   */
+  /** Tries to apply our various peephole minimizations on the passed in node. */
   @Override
-  @SuppressWarnings("fallthrough")
   public Node optimizeSubtree(Node node) {
     switch (node.getToken()) {
-      case THROW:
-      case RETURN: {
+      case THROW, RETURN -> {
         Node result = tryRemoveRedundantExit(node);
         if (result != node) {
           return result;
         }
         return tryReplaceExitWithBreak(node);
+        // TODO(johnlenz): Maybe remove redundant BREAK and CONTINUE. Overlaps
+        // with MinimizeExitPoints.
       }
-
-      // TODO(johnlenz): Maybe remove redundant BREAK and CONTINUE. Overlaps
-      // with MinimizeExitPoints.
-
-      case NOT:
+      case NOT -> {
         tryMinimizeCondition(node.getFirstChild());
         return tryMinimizeNot(node);
-
-      case IF:
+      }
+      case IF -> {
         performConditionSubstitutions(node.getFirstChild());
         return tryMinimizeIf(node);
-
-      case EXPR_RESULT:
+      }
+      case EXPR_RESULT -> {
         performConditionSubstitutions(node.getFirstChild());
         return tryMinimizeExprResult(node);
-
-      case HOOK:
+      }
+      case HOOK -> {
         performConditionSubstitutions(node.getFirstChild());
         return tryMinimizeHook(node);
-
-      case WHILE:
-      case DO:
+      }
+      case WHILE, DO -> {
         tryMinimizeCondition(NodeUtil.getConditionExpression(node));
         return node;
-
-      case FOR:
+      }
+      case FOR -> {
         tryJoinForCondition(node);
         tryMinimizeCondition(NodeUtil.getConditionExpression(node));
         return node;
-
-      case BLOCK:
+      }
+      case BLOCK -> {
         return tryReplaceIf(node);
-
-      default:
-        return node; //Nothing changed
+      }
+      default -> {
+        return node;
+        // Nothing changed
+      }
     }
   }
 
@@ -122,8 +117,7 @@ class PeepholeMinimizeConditions
 
         // Preserve the IF ELSE expression is there is one.
         if (maybeIf.hasXChildren(3)) {
-          block.replaceChild(maybeIf,
-              maybeIf.getLastChild().detach());
+          maybeIf.replaceWith(maybeIf.getLastChild().detach());
         } else {
           NodeUtil.redeclareVarsInsideBranch(thenBlock);
           block.removeFirstChild();
@@ -136,11 +130,11 @@ class PeepholeMinimizeConditions
         // OK, join the IF expression with the FOR expression
         Node forCondition = NodeUtil.getConditionExpression(n);
         if (forCondition.isEmpty()) {
-          n.replaceChild(forCondition, fixedIfCondition);
+          forCondition.replaceWith(fixedIfCondition);
           reportChangeToEnclosingScope(fixedIfCondition);
         } else {
           Node replacement = new Node(Token.AND);
-          n.replaceChild(forCondition, replacement);
+          forCondition.replaceWith(replacement);
           replacement.addChildToBack(forCondition);
           replacement.addChildToBack(fixedIfCondition);
           reportChangeToEnclosingScope(replacement);
@@ -170,7 +164,7 @@ class PeepholeMinimizeConditions
           Node nextCond = nextNode.getFirstChild();
           Node nextThen = nextCond.getNext();
           Node nextElse = nextThen.getNext();
-          if (thenBranch.isEquivalentToTyped(nextThen)) {
+          if (areNodesEqualForInlining(thenBranch, nextThen)) {
             // Transform
             //   if (x) return 1; if (y) return 1;
             // to
@@ -178,11 +172,10 @@ class PeepholeMinimizeConditions
             child.detach();
             child.detachChildren();
             Node newCond = new Node(Token.OR, cond);
-            nextNode.replaceChild(nextCond, newCond);
+            nextCond.replaceWith(newCond);
             newCond.addChildToBack(nextCond);
             reportChangeToEnclosingScope(newCond);
-          } else if (nextElse != null
-              && thenBranch.isEquivalentToTyped(nextElse)) {
+          } else if (nextElse != null && areNodesEqualForInlining(thenBranch, nextElse)) {
             // Transform
             //   if (x) return 1; if (y) foo() else return 1;
             // to
@@ -191,7 +184,7 @@ class PeepholeMinimizeConditions
             child.detachChildren();
             Node newCond = new Node(Token.AND,
                 IR.not(cond).srcref(cond));
-            nextNode.replaceChild(nextCond, newCond);
+            nextCond.replaceWith(newCond);
             newCond.addChildToBack(nextCond);
             reportChangeToEnclosingScope(newCond);
           }
@@ -214,14 +207,14 @@ class PeepholeMinimizeConditions
           Node returnNode = IR.returnNode(
                                 IR.hook(cond, thenExpr, elseExpr)
                                     .srcref(child));
-          n.replaceChild(child, returnNode);
-          n.removeChild(nextNode);
+          child.replaceWith(returnNode);
+          nextNode.detach();
           reportChangeToEnclosingScope(n);
           // everything else in the block is dead code.
           break;
         } else if (elseBranch != null && statementMustExitParent(thenBranch)) {
-          child.removeChild(elseBranch);
-          n.addChildAfter(elseBranch, child);
+          elseBranch.detach();
+          elseBranch.insertAfter(child);
           reportChangeToEnclosingScope(n);
         }
       }
@@ -312,16 +305,14 @@ class PeepholeMinimizeConditions
   }
 
   /**
-   * Remove duplicate exits.  If the node following the exit node expression
-   * has the same effect as exit node, the node can be removed.
-   * For example:
-   *   "if (a) {return f()} return f();" ==> "if (a) {} return f();"
-   *   "if (a) {throw 'ow'} throw 'ow';" ==> "if (a) {} throw 'ow';"
+   * Remove duplicate exits. If the node following the exit node expression has the same effect as
+   * exit node, the node can be removed. For example: "if (a) {return f()} return f();" ==> "if (a)
+   * {} return f();" "if (a) {throw 'ow'} throw 'ow';" ==> "if (a) {} throw 'ow';"
    *
    * @param n An follow control exit expression (a THROW or RETURN node)
    * @return The replacement for n, or the original if no change was made.
    */
-  private Node tryRemoveRedundantExit(Node n) {
+  private @Nullable Node tryRemoveRedundantExit(Node n) {
     Node exitExpr = n.getFirstChild();
 
     Node follow = ControlFlowAnalysis.computeFollowNode(n);
@@ -418,25 +409,18 @@ class PeepholeMinimizeConditions
     // negative operator of the current one : == -> != for instance.
     Token complementOperator;
     switch (notChild.getToken()) {
-      case EQ:
-        complementOperator = Token.NE;
-        break;
-      case NE:
-        complementOperator = Token.EQ;
-        break;
-      case SHEQ:
-        complementOperator = Token.SHNE;
-        break;
-      case SHNE:
-        complementOperator = Token.SHEQ;
-        break;
+      case EQ -> complementOperator = Token.NE;
+      case NE -> complementOperator = Token.EQ;
+      case SHEQ -> complementOperator = Token.SHNE;
+      case SHNE -> complementOperator = Token.SHEQ;
       // GT, GE, LT, LE are not handled in this because !(x<NaN) != x>=NaN.
-      default:
+      default -> {
         return n;
+      }
     }
     Node newOperator = n.removeFirstChild();
     newOperator.setToken(complementOperator);
-    parent.replaceChild(n, newOperator);
+    n.replaceWith(newOperator);
     reportChangeToEnclosingScope(parent);
     return newOperator;
   }
@@ -477,7 +461,7 @@ class PeepholeMinimizeConditions
       // Swap the HOOK
       Node thenBranch = n.getSecondChild();
       replaceNode(originalCond, mNode.withoutNot());
-      n.removeChild(thenBranch);
+      thenBranch.detach();
       n.addChildToBack(thenBranch);
       reportChangeToEnclosingScope(n);
     } else {
@@ -536,7 +520,7 @@ class PeepholeMinimizeConditions
               replacementCond,
               expr.removeFirstChild()).srcref(n);
           Node newExpr = NodeUtil.newExpr(or);
-          parent.replaceChild(n, newExpr);
+          n.replaceWith(newExpr);
           reportChangeToEnclosingScope(parent);
 
           return newExpr;
@@ -558,7 +542,7 @@ class PeepholeMinimizeConditions
         Node replacementCond = replaceNode(originalCond, shortCond).detach();
         Node and = IR.and(replacementCond, expr.removeFirstChild()).srcref(n);
         Node newExpr = NodeUtil.newExpr(and);
-        parent.replaceChild(n, newExpr);
+        n.replaceWith(newExpr);
         reportChangeToEnclosingScope(parent);
 
         return newExpr;
@@ -605,7 +589,7 @@ class PeepholeMinimizeConditions
     // An additional set of curly braces isn't worth it.
     if (shortCond.isNot() && !consumesDanglingElse(elseBranch)) {
       replaceNode(originalCond, shortCond.withoutNot());
-      n.removeChild(thenBranch);
+      thenBranch.detach();
       n.addChildToBack(thenBranch);
       reportChangeToEnclosingScope(n);
       return n;
@@ -626,7 +610,7 @@ class PeepholeMinimizeConditions
       Node returnNode = IR.returnNode(
                             IR.hook(replacementCond, thenExpr, elseExpr)
                                 .srcref(n));
-      parent.replaceChild(n, returnNode);
+      n.replaceWith(returnNode);
       reportChangeToEnclosingScope(returnNode);
       return returnNode;
     }
@@ -654,13 +638,13 @@ class PeepholeMinimizeConditions
             Node assignName = thenOp.removeFirstChild();
             Node thenExpr = thenOp.removeFirstChild();
             Node elseExpr = elseOp.getLastChild();
-            elseOp.removeChild(elseExpr);
+            elseExpr.detach();
 
             Node hookNode = IR.hook(replacementCond, thenExpr, elseExpr)
                 .srcref(n);
             Node assign = new Node(thenOp.getToken(), assignName, hookNode).srcref(thenOp);
             Node expr = NodeUtil.newExpr(assign);
-            parent.replaceChild(n, expr);
+            n.replaceWith(expr);
             reportChangeToEnclosingScope(parent);
 
             return expr;
@@ -673,7 +657,7 @@ class PeepholeMinimizeConditions
       elseOp.detach();
       Node expr = IR.exprResult(
           IR.hook(replacementCond, thenOp, elseOp).srcref(n));
-      parent.replaceChild(n, expr);
+      n.replaceWith(expr);
       reportChangeToEnclosingScope(parent);
       return expr;
     }
@@ -701,7 +685,7 @@ class PeepholeMinimizeConditions
         Node hookNode = IR.hook(replacementCond, thenExpr, elseExpr).srcref(n);
         var.detach();
         name1.addChildToBack(hookNode);
-        parent.replaceChild(n, var);
+        n.replaceWith(var);
         reportChangeToEnclosingScope(parent);
         return var;
       }
@@ -726,7 +710,7 @@ class PeepholeMinimizeConditions
         Node hookNode = IR.hook(replacementCond, thenExpr, elseExpr).srcref(n);
         var.detach();
         name2.addChildToBack(hookNode);
-        parent.replaceChild(n, var);
+        n.replaceWith(var);
         reportChangeToEnclosingScope(parent);
 
         return var;
@@ -789,7 +773,7 @@ class PeepholeMinimizeConditions
       }
       lastTrue.detach();
       lastFalse.detach();
-      parent.addChildAfter(lastTrue, n);
+      lastTrue.insertAfter(n);
       reportChangeToEnclosingScope(parent);
     }
   }
@@ -809,15 +793,22 @@ class PeepholeMinimizeConditions
           // http://blickly.github.io/closure-compiler-issues/#291
           // We try to detect this case, and not fold EXPR_RESULTs
           // into other expressions.
-          if (maybeExpr.getFirstChild().isCall()) {
+          // e.g.:
+          // if (e.onchange) {
+          //    e.onchange({
+          //        _extendedByPrototype: Prototype.emptyFunction,
+          //        target: e
+          //    });
+          //  }
+          if (maybeExpr.getFirstChild().isCall() || maybeExpr.getFirstChild().isOptChainCall()) {
             Node calledFn = maybeExpr.getFirstFirstChild();
 
             // We only have to worry about methods with an implicit 'this'
             // param, or this doesn't happen.
-            if (calledFn.isGetElem()) {
+            if (calledFn.isGetElem() || calledFn.isOptChainGetElem()) {
               return false;
-            } else if (calledFn.isGetProp()
-                       && calledFn.getLastChild().getString().startsWith("on")) {
+            } else if ((calledFn.isGetProp() || calledFn.isOptChainGetProp())
+                && calledFn.getString().startsWith("on")) {
               return false;
             }
           }
@@ -922,28 +913,29 @@ class PeepholeMinimizeConditions
   private static boolean consumesDanglingElse(Node n) {
     while (true) {
       switch (n.getToken()) {
-        case IF:
+        case IF -> {
           if (n.getChildCount() < 3) {
             return true;
           }
           // This IF node has no else clause.
           n = n.getLastChild();
           continue;
-        case BLOCK:
+        }
+        case BLOCK -> {
           if (!n.hasOneChild()) {
             return false;
           }
           // This BLOCK has no curly braces.
           n = n.getLastChild();
           continue;
-        case WITH:
-        case WHILE:
-        case FOR:
-        case FOR_IN:
+        }
+        case WITH, WHILE, FOR, FOR_IN -> {
           n = n.getLastChild();
           continue;
-        default:
+        }
+        default -> {
           return false;
+        }
       }
     }
   }
@@ -960,16 +952,8 @@ class PeepholeMinimizeConditions
    */
   private static boolean isPropertyAssignmentInExpression(Node n) {
     Predicate<Node> isPropertyAssignmentInExpressionPredicate =
-        new Predicate<Node>() {
-      @Override
-      public boolean apply(Node input) {
-        return (input.isGetProp()
-            && input.getParent().isAssign());
-      }
-    };
-
-    return NodeUtil.has(n, isPropertyAssignmentInExpressionPredicate,
-        NodeUtil.MATCH_NOT_FUNCTION);
+        (Node input) -> (input.isGetProp() && input.getParent().isAssign());
+    return NodeUtil.has(n, isPropertyAssignmentInExpressionPredicate, NodeUtil.MATCH_NOT_FUNCTION);
   }
 
   /**
@@ -1012,142 +996,138 @@ class PeepholeMinimizeConditions
     Node parent = n.getParent();
 
     switch (n.getToken()) {
-      case OR:
-      case AND:
-        {
-          Node left = n.getFirstChild();
-          Node right = n.getLastChild();
+      case OR, AND -> {
+        Node left = n.getFirstChild();
+        Node right = n.getLastChild();
 
-          // Because the expression is in a boolean context minimize
-          // the children, this can't be done in the general case.
-          left = performConditionSubstitutions(left);
-          right = performConditionSubstitutions(right);
+        // Because the expression is in a boolean context minimize
+        // the children, this can't be done in the general case.
+        left = performConditionSubstitutions(left);
+        right = performConditionSubstitutions(right);
 
-          // Remove useless conditionals
-          // Handle the following cases:
-          //   x || false --> x
-          //   x && true --> x
-          // This works regardless of whether x has side effects.
-          //
-          // If x does not have side effects:
-          //   x || true  --> true
-          //   x && false  --> false
-          //
-          // If x may have side effects:
-          //   x || true  --> x,true
-          //   x && false  --> x,false
-          //
-          // In the last two cases, code size may increase slightly (adding
-          // some parens because the comma operator has a low precedence) but
-          // the new AST is easier for other passes to handle.
-          TernaryValue rightVal = getSideEffectFreeBooleanValue(right);
-          if (getSideEffectFreeBooleanValue(right) != TernaryValue.UNKNOWN) {
-            Token type = n.getToken();
-            Node replacement = null;
-            boolean rval = rightVal.toBoolean(true);
-
-            // (x || FALSE) => x
-            // (x && TRUE) => x
-            if ((type == Token.OR && !rval) || (type == Token.AND && rval)) {
-              replacement = left;
-            } else if (!mayHaveSideEffects(left)) {
-              replacement = right;
-            } else {
-              // expr_with_sideeffects || true  =>  expr_with_sideeffects, true
-              // expr_with_sideeffects && false  =>  expr_with_sideeffects, false
-              n.detachChildren();
-              replacement = IR.comma(left, right);
-            }
-
-            if (replacement != null) {
-              n.detachChildren();
-              parent.replaceChild(n, replacement);
-              reportChangeToEnclosingScope(parent);
-              return replacement;
-            }
-          }
-          return n;
-        }
-
-      case HOOK:
-        {
-          Node condition = n.getFirstChild();
-          Node trueNode = n.getSecondChild();
-          Node falseNode = n.getLastChild();
-
-          // Because the expression is in a boolean context minimize
-          // the result children, this can't be done in the general case.
-          // The condition is handled in the general case in #optimizeSubtree
-          trueNode = performConditionSubstitutions(trueNode);
-          falseNode = performConditionSubstitutions(falseNode);
-
-          // Handle five cases:
-          //   x ? true : false --> x
-          //   x ? false : true --> !x
-          //   x ? true : y     --> x || y
-          //   x ? y : false    --> x && y
-
-          //   Only when x is NAME, hence x does not have side effects
-          //   x ? x : y        --> x || y
+        // Remove useless conditionals
+        // Handle the following cases:
+        //   x || false --> x
+        //   x && true --> x
+        // This works regardless of whether x has side effects.
+        //
+        // If x does not have side effects:
+        //   x || true  --> true
+        //   x && false  --> false
+        //
+        // If x may have side effects:
+        //   x || true  --> x,true
+        //   x && false  --> x,false
+        //
+        // In the last two cases, code size may increase slightly (adding
+        // some parens because the comma operator has a low precedence) but
+        // the new AST is easier for other passes to handle.
+        Tri rightVal = getSideEffectFreeBooleanValue(right);
+        if (getSideEffectFreeBooleanValue(right) != Tri.UNKNOWN) {
+          Token type = n.getToken();
           Node replacement = null;
-          TernaryValue trueNodeVal = getSideEffectFreeBooleanValue(trueNode);
-          TernaryValue falseNodeVal = getSideEffectFreeBooleanValue(falseNode);
-          if (trueNodeVal == TernaryValue.TRUE && falseNodeVal == TernaryValue.FALSE) {
-            // Remove useless conditionals, keep the condition
-            condition.detach();
-            replacement = condition;
-          } else if (trueNodeVal == TernaryValue.FALSE && falseNodeVal == TernaryValue.TRUE) {
-            // Remove useless conditionals, keep the condition
-            condition.detach();
-            replacement = IR.not(condition);
-          } else if (trueNodeVal == TernaryValue.TRUE) {
-            // Remove useless true case.
+          boolean rval = rightVal.toBoolean(true);
+
+          // (x || FALSE) => x
+          // (x && TRUE) => x
+          if ((type == Token.OR && !rval) || (type == Token.AND && rval)) {
+            replacement = left;
+          } else if (!mayHaveSideEffects(left)) {
+            replacement = right;
+          } else {
+            // expr_with_sideeffects || true  =>  expr_with_sideeffects, true
+            // expr_with_sideeffects && false  =>  expr_with_sideeffects, false
             n.detachChildren();
-            replacement = IR.or(condition, falseNode);
-          } else if (falseNodeVal == TernaryValue.FALSE) {
-            // Remove useless false case
-            n.detachChildren();
-            replacement = IR.and(condition, trueNode);
-          } else if (!mayHaveSideEffects(condition)
-              && !mayHaveSideEffects(trueNode)
-              && condition.isEquivalentTo(trueNode)) {
-            // Remove redundant condition
-            n.detachChildren();
-            replacement = IR.or(trueNode, falseNode);
+            replacement = IR.comma(left, right);
           }
 
           if (replacement != null) {
-            parent.replaceChild(n, replacement);
-            reportChangeToEnclosingScope(replacement);
-            n = replacement;
+            n.detachChildren();
+            n.replaceWith(replacement);
+            reportChangeToEnclosingScope(parent);
+            return replacement;
           }
+        }
+        return n;
+      }
+      case HOOK -> {
+        Node condition = n.getFirstChild();
+        Node trueNode = n.getSecondChild();
+        Node falseNode = n.getLastChild();
 
-          return n;
+        // Because the expression is in a boolean context minimize
+        // the result children, this can't be done in the general case.
+        // The condition is handled in the general case in #optimizeSubtree
+        trueNode = performConditionSubstitutions(trueNode);
+        falseNode = performConditionSubstitutions(falseNode);
+
+        // Handle five cases:
+        //   x ? true : false --> x
+        //   x ? false : true --> !x
+        //   x ? true : y     --> x || y
+        //   x ? y : false    --> x && y
+
+        //   Only when x is NAME, hence x does not have side effects
+        //   x ? x : y        --> x || y
+        Node replacement = null;
+        Tri trueNodeVal = getSideEffectFreeBooleanValue(trueNode);
+        Tri falseNodeVal = getSideEffectFreeBooleanValue(falseNode);
+        if (trueNodeVal == Tri.TRUE && falseNodeVal == Tri.FALSE) {
+          // Remove useless conditionals, keep the condition
+          condition.detach();
+          replacement = condition;
+        } else if (trueNodeVal == Tri.FALSE && falseNodeVal == Tri.TRUE) {
+          // Remove useless conditionals, keep the condition
+          condition.detach();
+          replacement = IR.not(condition);
+        } else if (trueNodeVal == Tri.TRUE) {
+          // Remove useless true case.
+          n.detachChildren();
+          replacement = IR.or(condition, falseNode);
+        } else if (falseNodeVal == Tri.FALSE) {
+          // Remove useless false case
+          n.detachChildren();
+          replacement = IR.and(condition, trueNode);
+        } else if (!mayHaveSideEffects(condition)
+            && !mayHaveSideEffects(trueNode)
+            && condition.isEquivalentTo(trueNode)) {
+          // Remove redundant condition
+          n.detachChildren();
+          replacement = IR.or(trueNode, falseNode);
         }
 
-      default:
+        if (replacement != null) {
+          n.replaceWith(replacement);
+          reportChangeToEnclosingScope(replacement);
+          n = replacement;
+        }
+
+        return n;
+      }
+      default -> {
         // while(true) --> while(1)
-        TernaryValue nVal = getSideEffectFreeBooleanValue(n);
-        if (nVal != TernaryValue.UNKNOWN) {
+        Tri nVal = getSideEffectFreeBooleanValue(n);
+        if (nVal != Tri.UNKNOWN) {
           boolean result = nVal.toBoolean(true);
           int equivalentResult = result ? 1 : 0;
-          return maybeReplaceChildWithNumber(n, parent, equivalentResult);
+          return maybeReplaceChildWithNumber(n, equivalentResult);
         }
         // We can't do anything else currently.
         return n;
+      }
     }
   }
 
   /**
-   * Replaces a node with a number node if the new number node is not equivalent
-   * to the current node.
+   * Replaces a node with a number node if the new number node is not equivalent to the current
+   * node.
    *
-   * Returns the replacement for n if it was replaced, otherwise returns n.
+   * <p>Returns the replacement for n if it was replaced, otherwise returns n.
    */
-  private Node maybeReplaceChildWithNumber(Node n, Node parent, int num) {
+  private Node maybeReplaceChildWithNumber(Node n, int num) {
     Node newNode = IR.number(num);
     if (!newNode.isEquivalentTo(n)) {
-      parent.replaceChild(n, newNode);
+      n.replaceWith(newNode);
       reportChangeToEnclosingScope(newNode);
       markFunctionsDeleted(n);
 

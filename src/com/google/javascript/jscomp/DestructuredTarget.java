@@ -20,11 +20,12 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Represents a single target inside a destructuring pattern, whether another pattern or a lhs
@@ -34,18 +35,18 @@ import javax.annotation.Nullable;
  * that a caller can get information about a target, use that information to do additional type
  * inference, and finally call {@code inferType} if desired.
  */
-final class DestructuredTarget {
+public final class DestructuredTarget {
   private final JSTypeRegistry registry;
   /**
    * Holds the STRING_KEY or COMPUTED_PROPERTY for a target in an object pattern. Null for targets
    * in array patterns.
    */
-  @Nullable private final Node objectPatternKey;
+  private final @Nullable Node objectPatternKey;
   /**
    * The target being assigned to. Can be a destructuring pattern or name, if from a declaration, or
    * an arbitrary lhs expression in an assign.
    */
-  @Nullable private final Node node;
+  private final @Nullable Node node;
   /**
    * A supplier to get the type of the pattern containing this target. e.g. for `a` in `const {a} =
    * {a: 3}`, the supplier provides the record type `{a: number}`
@@ -55,7 +56,7 @@ final class DestructuredTarget {
   private final Supplier<JSType> patternTypeSupplier;
 
   /** The default value of this target, or null if none. e.g. for `[a = 3] = rhs`, this is `3`. */
-  @Nullable private final Node defaultValue;
+  private final @Nullable Node defaultValue;
 
   /** Whether this is a rest key */
   private final boolean isRest;
@@ -81,31 +82,28 @@ final class DestructuredTarget {
   }
 
   /** Returns a COMPUTED_PROP node or null */
-  @Nullable
-  Node getComputedProperty() {
+  public @Nullable Node getComputedProperty() {
     return hasComputedProperty() ? objectPatternKey : null;
   }
 
-  boolean hasComputedProperty() {
+  public boolean hasComputedProperty() {
     return objectPatternKey != null && objectPatternKey.isComputedProp();
   }
 
-  boolean hasStringKey() {
+  public boolean hasStringKey() {
     return objectPatternKey != null && objectPatternKey.isStringKey();
   }
 
   /** Returns a STRING_KEY node or null */
-  @Nullable
-  Node getStringKey() {
+  public @Nullable Node getStringKey() {
     return hasStringKey() ? objectPatternKey : null;
   }
 
-  @Nullable
-  Node getDefaultValue() {
+  public @Nullable Node getDefaultValue() {
     return defaultValue;
   }
 
-  boolean hasDefaultValue() {
+  public boolean hasDefaultValue() {
     return defaultValue != null;
   }
 
@@ -118,8 +116,8 @@ final class DestructuredTarget {
     private final Supplier<JSType> patternTypeSupplier;
     private final Node pattern;
     private Node node;
-    @Nullable private Node defaultValue = null;
-    @Nullable private Node objectPatternKey = null;
+    private @Nullable Node defaultValue = null;
+    private @Nullable Node objectPatternKey = null;
     private boolean isRest = false;
 
     Builder(JSTypeRegistry registry, Node pattern, Supplier<JSType> patternTypeSupplier) {
@@ -128,21 +126,25 @@ final class DestructuredTarget {
       this.pattern = pattern;
     }
 
+    @CanIgnoreReturnValue
     Builder setNode(Node node) {
       this.node = node;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setDefaultValue(Node defaultValue) {
       this.defaultValue = defaultValue;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setObjectPatternKey(Node objectPatternKey) {
       this.objectPatternKey = objectPatternKey;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setIsRest(boolean isRest) {
       this.isRest = isRest;
       return this;
@@ -172,20 +174,20 @@ final class DestructuredTarget {
 
     Builder builder =
         new Builder(registry, destructuringChild.getParent(), destructuringPatternType);
+    Node value;
     switch (destructuringChild.getToken()) {
-      case STRING_KEY:
+      case STRING_KEY -> {
         // const {objectLiteralKey: x} = ...
         builder.setObjectPatternKey(destructuringChild);
-        Node value = destructuringChild.getFirstChild();
+        value = destructuringChild.getFirstChild();
         if (value.isDefaultValue()) {
           builder.setNode(value.getFirstChild());
           builder.setDefaultValue(value.getSecondChild());
         } else {
           builder.setNode(value);
         }
-        break;
-
-      case COMPUTED_PROP:
+      }
+      case COMPUTED_PROP -> {
         // const {['objectLiteralKey']: x} = ...
         builder.setObjectPatternKey(destructuringChild);
         value = destructuringChild.getSecondChild();
@@ -195,42 +197,29 @@ final class DestructuredTarget {
         } else {
           builder.setNode(value);
         }
-        break;
-
-      case OBJECT_PATTERN: // const [{x}] = ...
-      case ARRAY_PATTERN: // const [[x]] = ...
-      case NAME: // const [x] = ...
-      case GETELEM: // [obj[3]] = ...
-      case GETPROP: // [this.x] = ...
-        builder.setNode(destructuringChild);
-        break;
-
-      case DEFAULT_VALUE: // const [x = 3] = ...
+      }
+      case OBJECT_PATTERN, // const [{x}] = ...
+          ARRAY_PATTERN, // const [[x]] = ...
+          NAME, // const [x] = ...
+          GETELEM, // [obj[3]] = ...
+          GETPROP -> // [this.x] = ...
+          builder.setNode(destructuringChild);
+      case DEFAULT_VALUE -> {
+        // const [x = 3] = ...
         builder.setNode(destructuringChild.getFirstChild());
         builder.setDefaultValue(destructuringChild.getSecondChild());
-        break;
-
-      case ITER_REST:
-      case OBJECT_REST:
+      }
+      case ITER_REST, OBJECT_REST -> {
         // const [...x] = ...
         // const {...x} = ...
         builder.setNode(destructuringChild.getFirstChild());
         builder.setIsRest(true);
-        break;
-
-      default:
-        throw new IllegalArgumentException(
-            "Unexpected child of destructuring pattern " + destructuringChild);
+      }
+      default ->
+          throw new IllegalArgumentException(
+              "Unexpected child of destructuring pattern " + destructuringChild);
     }
     return builder.build();
-  }
-
-  Supplier<JSType> getInferredTypeSupplier() {
-    return () -> inferType();
-  }
-
-  Supplier<JSType> getInferredTypeSupplierWithoutDefaultValue() {
-    return () -> inferTypeWithoutUsingDefaultValue();
   }
 
   /**
@@ -238,7 +227,7 @@ final class DestructuredTarget {
    *
    * <p>EMPTY nodes occur in array patterns with elisions, e.g. `[, , a] = []`
    */
-  static ImmutableList<DestructuredTarget> createAllNonEmptyTargetsInPattern(
+  public static ImmutableList<DestructuredTarget> createAllNonEmptyTargetsInPattern(
       JSTypeRegistry registry, JSType patternType, Node pattern) {
     return createAllNonEmptyTargetsInPattern(registry, () -> patternType, pattern);
   }
@@ -248,11 +237,11 @@ final class DestructuredTarget {
    *
    * <p>EMPTY nodes occur in array patterns with elisions, e.g. `[, , a] = []`
    */
-  static ImmutableList<DestructuredTarget> createAllNonEmptyTargetsInPattern(
+  public static ImmutableList<DestructuredTarget> createAllNonEmptyTargetsInPattern(
       JSTypeRegistry registry, Supplier<JSType> patternType, Node pattern) {
     checkArgument(pattern.isDestructuringPattern(), pattern);
     ImmutableList.Builder<DestructuredTarget> builder = ImmutableList.builder();
-    for (Node child : pattern.children()) {
+    for (Node child = pattern.getFirstChild(); child != null; child = child.getNext()) {
       if (child.isEmpty()) {
         continue;
       }
@@ -306,21 +295,20 @@ final class DestructuredTarget {
       return registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
     }
     switch (objectPatternKey.getToken()) {
-      case STRING_KEY:
+      case STRING_KEY -> {
         JSType propertyType = patternType.findPropertyType(objectPatternKey.getString());
         return propertyType != null
             ? propertyType
             : registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
-
-      case COMPUTED_PROP:
+      }
+      case COMPUTED_PROP -> {
         return patternType != null
             ? patternType
                 .getTemplateTypeMap()
                 .getResolvedTemplateType(registry.getObjectElementKey())
             : registry.getNativeType(JSTypeNative.UNKNOWN_TYPE);
-
-      default:
-        throw new IllegalStateException("Unexpected key " + objectPatternKey);
+      }
+      default -> throw new IllegalStateException("Unexpected key " + objectPatternKey);
     }
   }
 
@@ -329,7 +317,9 @@ final class DestructuredTarget {
 
     // e.g. get `number` from `!Iterable<number>`
     JSType templateTypeOfIterable =
-        patternType.getTemplateTypeMap().getResolvedTemplateType(registry.getIterableTemplate());
+        patternType
+            .getTemplateTypeMap()
+            .getResolvedTemplateType(registry.getIterableValueTemplate());
 
     if (isRest) {
       // return `!Array<number>`

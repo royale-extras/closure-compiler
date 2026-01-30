@@ -41,16 +41,19 @@ package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.base.JSCompObjects.identical;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.ForOverride;
+import com.google.errorprone.annotations.InlineMe;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.JSDocInfo;
+import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Outcome;
 import com.google.javascript.rhino.jstype.EqualityChecker.EqMethod;
-import java.io.Serializable;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Represents JavaScript value types.
@@ -68,23 +71,19 @@ import javax.annotation.Nullable;
  * <p>
  *
  */
-public abstract class JSType implements Serializable {
+public abstract class JSType {
   private static final long serialVersionUID = 1L;
 
-  @SuppressWarnings("ReferenceEquality")
-  public static final boolean areIdentical(JSType a, JSType b) {
-    return a == b;
-  }
-
-  private JSType resolveResult = null;
+  private @Nullable JSType resolveResult = null;
   protected TemplateTypeMap templateTypeMap;
   private boolean loosenTypecheckingDueToForwardReferencedSupertype;
 
   private boolean hashCodeInProgress = false;
 
   private boolean inTemplatedCheckVisit = false;
-  private static final CanCastToVisitor CAN_CAST_TO_VISITOR =
-      new CanCastToVisitor();
+  // Use "Boolean" as a 3-state value where not set is `null`.
+  private @Nullable Boolean templateCheckResult = null;
+  private static final CanCastToVisitor CAN_CAST_TO_VISITOR = new CanCastToVisitor();
 
   final JSTypeRegistry registry;
 
@@ -92,7 +91,7 @@ public abstract class JSType implements Serializable {
     this(registry, null);
   }
 
-  JSType(JSTypeRegistry registry, TemplateTypeMap templateTypeMap) {
+  JSType(JSTypeRegistry registry, @Nullable TemplateTypeMap templateTypeMap) {
     this.registry = registry;
 
     this.templateTypeMap =
@@ -153,26 +152,52 @@ public abstract class JSType implements Serializable {
 
   /**
    * Checks whether the property is present on the object.
+   *
    * @param pname The property name.
    */
-  public HasPropertyKind getPropertyKind(String pname) {
+  public HasPropertyKind getPropertyKind(Property.Key pname) {
     return getPropertyKind(pname, true);
   }
 
   /**
    * Checks whether the property is present on the object.
+   *
    * @param pname The property name.
    * @param autobox Whether to check for the presents on an autoboxed type
    */
-  public HasPropertyKind getPropertyKind(String pname, boolean autobox) {
+  public HasPropertyKind getPropertyKind(Property.Key pname, boolean autobox) {
     return HasPropertyKind.ABSENT;
   }
 
   /**
    * Checks whether the property is present on the object.
+   *
+   * @param pname The property name.
+   * @param autobox Whether to check for the presents on an autoboxed type
+   */
+  public final HasPropertyKind getPropertyKind(String pname, boolean autobox) {
+    return getPropertyKind(new Property.StringKey(pname), autobox);
+  }
+
+  /**
+   * Checks whether the property is present on the object.
+   *
+   * @param pname The property name.
+   */
+  public final HasPropertyKind getPropertyKind(String pname) {
+    return getPropertyKind(new Property.StringKey(pname));
+  }
+
+  /**
+   * Checks whether the property is present on the object.
+   *
    * @param pname The property name.
    */
   public final boolean hasProperty(String pname) {
+    return hasProperty(new Property.StringKey(pname));
+  }
+
+  public final boolean hasProperty(Property.Key pname) {
     return !getPropertyKind(pname, false).equals(HasPropertyKind.ABSENT);
   }
 
@@ -184,15 +209,6 @@ public abstract class JSType implements Serializable {
     return false;
   }
 
-  public final boolean isUnresolved() {
-    return isNoResolvedType();
-  }
-
-  public final boolean isUnresolvedOrResolvedUnknown() {
-    // TODO(b/146173738): delete this method
-    return isNoResolvedType() || (isNamedType() && isUnknownType());
-  }
-
   public boolean isNoObjectType() {
     return false;
   }
@@ -201,7 +217,7 @@ public abstract class JSType implements Serializable {
     return isNoType()
         || isNoObjectType()
         || isNoResolvedType()
-        || areIdentical(this, registry.getNativeFunctionType(JSTypeNative.LEAST_FUNCTION_TYPE));
+        || identical(this, registry.getNativeFunctionType(JSTypeNative.LEAST_FUNCTION_TYPE));
   }
 
   public boolean isNumberObjectType() {
@@ -246,6 +262,10 @@ public abstract class JSType implements Serializable {
     return false;
   }
 
+  public boolean isKnownSymbolValueType() {
+    return false;
+  }
+
   /**
    * Tests whether the type is a string (value or Object).
    * @return <code>this &lt;: (String, string)</code>
@@ -269,12 +289,27 @@ public abstract class JSType implements Serializable {
         || isSubtypeOf(getNativeType(JSTypeNative.SYMBOL_OBJECT_TYPE));
   }
 
+  public final boolean isBigIntOrNumber() {
+    // NOTE: This method will return false for unions that mix the primitive and object types, e.g.
+    // (bigint|BigInt). This is technically wrong, but is being done on purpose because 1) it
+    // maintains consistency with previously existing methods such as isNumber() above, 2) The
+    // object versions of numeric types are very rare in practice and shouldn't be used in general,
+    // and 3) a value that could be either the primitive or the object type seems likely to be the
+    // result of a coding error.
+    return isSubtypeOf(getNativeType(JSTypeNative.BIGINT_NUMBER))
+        || isSubtypeOf(getNativeType(JSTypeNative.BIGINT_NUMBER_OBJECT));
+  }
+
   /** Checks whether the type is a bigint and *only* a bigint (value or Object). */
   public final boolean isOnlyBigInt() {
     return isBigIntValueType() || isBigIntObjectType();
   }
 
   public boolean isArrayType() {
+    return false;
+  }
+
+  public boolean isReadonlyArrayType() {
     return false;
   }
 
@@ -374,14 +409,10 @@ public abstract class JSType implements Serializable {
   }
 
   public final boolean isLiteralObject() {
-    if (this instanceof PrototypeObjectType) {
-      return ((PrototypeObjectType) this).isAnonymous();
+    if (this instanceof PrototypeObjectType prototypeObjectType) {
+      return prototypeObjectType.isAnonymous();
     }
     return false;
-  }
-
-  public JSType getGreatestSubtypeWithProperty(String propName) {
-    return this.registry.getGreatestSubtypeWithProperty(this, propName);
   }
 
   /**
@@ -395,7 +426,7 @@ public abstract class JSType implements Serializable {
 
   /** Returns true if this is a global this type. */
   public final boolean isGlobalThisType() {
-    return areIdentical(this, registry.getNativeType(JSTypeNative.GLOBAL_THIS));
+    return identical(this, registry.getNativeType(JSTypeNative.GLOBAL_THIS));
   }
 
   /** Returns true if toMaybeFunctionType returns a non-null FunctionType. */
@@ -432,15 +463,19 @@ public abstract class JSType implements Serializable {
 
   /** Null-safe version of toMaybeFunctionType(). */
   @SuppressWarnings("AmbiguousMethodReference")
-  public static FunctionType toMaybeFunctionType(JSType type) {
+  public static @Nullable FunctionType toMaybeFunctionType(JSType type) {
     return type == null ? null : type.toMaybeFunctionType();
+  }
+
+  public @Nullable KnownSymbolType toMaybeKnownSymbolType() {
+    return null;
   }
 
   public final boolean isEnumElementType() {
     return toMaybeEnumElementType() != null;
   }
 
-  public final JSType getEnumeratedTypeOfEnumElement() {
+  public final @Nullable JSType getEnumeratedTypeOfEnumElement() {
     EnumElementType e = toMaybeEnumElementType();
     return e == null ? null : e.getPrimitiveType();
   }
@@ -497,10 +532,7 @@ public abstract class JSType implements Serializable {
     return toMaybeTemplatizedType() != null;
   }
 
-  /**
-   * Downcasts this to a TemplatizedType, or returns null if this is not
-   * a function.
-   */
+  /** Downcasts this to a TemplatizedType, or returns null if this is not a templatized type. */
   public TemplatizedType toMaybeTemplatizedType() {
     return null;
   }
@@ -509,24 +541,31 @@ public abstract class JSType implements Serializable {
     return toMaybeTemplateType() != null;
   }
 
-  /**
-   * Downcasts this to a TemplateType, or returns null if this is not
-   * a function.
-   */
+  /** Downcasts this to a TemplateType, or returns null if this is not a template type. */
   public TemplateType toMaybeTemplateType() {
     return null;
   }
 
   public boolean hasAnyTemplateTypes() {
-    if (!this.inTemplatedCheckVisit) {
-      this.inTemplatedCheckVisit = true;
-      boolean result = hasAnyTemplateTypesInternal();
-      this.inTemplatedCheckVisit = false;
-      return result;
-    } else {
+    // If the result has been cached use that.
+    if (this.templateCheckResult != null) {
+      return templateCheckResult;
+    }
+
+    if (this.inTemplatedCheckVisit) {
       // prevent infinite recursion, this is "not yet".
       return false;
     }
+
+    this.inTemplatedCheckVisit = true;
+    boolean result = hasAnyTemplateTypesInternal();
+    this.inTemplatedCheckVisit = false;
+
+    // Cache the result if the type has been resolved.
+    if (this.isResolved()) {
+      templateCheckResult = result;
+    }
+    return result;
   }
 
   boolean hasAnyTemplateTypesInternal() {
@@ -613,7 +652,7 @@ public abstract class JSType implements Serializable {
    * Whether this type is the original constructor of a nominal type.
    * Does not include structural constructors.
    */
-  public final boolean isNominalConstructor() {
+  public final boolean isNominalConstructorOrInterface() {
     if (isConstructor() || isInterface()) {
       FunctionType fn = toMaybeFunctionType();
       if (fn == null) {
@@ -688,8 +727,11 @@ public abstract class JSType implements Serializable {
 
   @Override
   public final boolean equals(@Nullable Object other) {
-    return (other instanceof JSType)
-        && new EqualityChecker().setEqMethod(EqMethod.IDENTITY).check(this, (JSType) other);
+    if (this == other) {
+      return true;
+    }
+    return (other instanceof JSType jSType)
+        && new EqualityChecker().setEqMethod(EqMethod.IDENTITY).check(this, jSType);
   }
 
   /**
@@ -703,6 +745,17 @@ public abstract class JSType implements Serializable {
     return !new EqualityChecker()
         .setEqMethod(EqMethod.DATA_FLOW)
         .check(this, that);
+  }
+
+  /**
+   * Whether the {@code first} type is meaningfully same as {@code second} type for the purposes of
+   * data flow analysis.
+   */
+  public static final boolean areSimilar(@Nullable JSType first, @Nullable JSType second) {
+    if (first == null || second == null) {
+      return first == second;
+    }
+    return !first.differsFrom(second);
   }
 
   /**
@@ -784,8 +837,7 @@ public abstract class JSType implements Serializable {
    * @return The property's type. {@code null} if the current type cannot have properties, or if the
    *     type is not found.
    */
-  @Nullable
-  public final JSType findPropertyType(String propertyName) {
+  public final @Nullable JSType findPropertyType(Property.Key propertyName) {
     @Nullable JSType propertyType = findPropertyTypeWithoutConsideringTemplateTypes(propertyName);
     if (propertyType == null) {
       return null;
@@ -803,6 +855,18 @@ public abstract class JSType implements Serializable {
   }
 
   /**
+   * Coerces this type to an Object type, then gets the type of the property whose name is given.
+   *
+   * <p>Unlike {@link ObjectType#getPropertyType}, returns null if the property is not found.
+   *
+   * @return The property's type. {@code null} if the current type cannot have properties, or if the
+   *     type is not found.
+   */
+  public final @Nullable JSType findPropertyType(String propertyName) {
+    return findPropertyType(new Property.StringKey(propertyName));
+  }
+
+  /**
    * Looks up a property on this type, but without properly replacing any templates in the result.
    *
    * <p>Subclasses can override this if they need more complicated logic for property lookup than
@@ -812,8 +876,8 @@ public abstract class JSType implements Serializable {
    * need to lookup a property on a random JSType
    */
   @ForOverride
-  @Nullable
-  protected JSType findPropertyTypeWithoutConsideringTemplateTypes(String propertyName) {
+  protected @Nullable JSType findPropertyTypeWithoutConsideringTemplateTypes(
+      Property.Key propertyName) {
     ObjectType autoboxObjType = ObjectType.cast(autoboxesTo());
     if (autoboxObjType != null) {
       return autoboxObjType.findPropertyType(propertyName);
@@ -855,24 +919,13 @@ public abstract class JSType implements Serializable {
     return autoboxesTo() != null;
   }
 
-  // TODO(johnlenz): this method is only used for testing, consider removing this.
   /**
-   * Turn an object type to its corresponding scalar type.
-   *
-   * @return the unboxed type or {@code null} if this type does not unbox.
+   * Casts this to an ObjectType, or returns null if this is not an ObjectType. If this is a scalar
+   * type, it will *not* be converted to an object type. If you want to simulate JS autoboxing or
+   * dereferencing, you should use autoboxesTo() or dereference().
    */
-  public JSType unboxesTo() {
-    return null;
-  }
-
-  /**
-   * Casts this to an ObjectType, or returns null if this is not an ObjectType.
-   * If this is a scalar type, it will *not* be converted to an object type.
-   * If you want to simulate JS autoboxing or dereferencing, you should use
-   * autoboxesTo() or dereference().
-   */
-  public ObjectType toObjectType() {
-    return this instanceof ObjectType ? (ObjectType) this : null;
+  public @Nullable ObjectType toObjectType() {
+    return this instanceof ObjectType objectType ? objectType : null;
   }
 
   /**
@@ -890,11 +943,10 @@ public abstract class JSType implements Serializable {
   /**
    * Dereferences a type for property access.
    *
-   * Filters null/undefined, autoboxes the resulting type, and returns it
-   * iff it's an object. If not an object, returns null.
+   * <p>Filters null/undefined, autoboxes the resulting type, and returns it iff it's an object. If
+   * not an object, returns null.
    */
-  @Nullable
-  public final ObjectType dereference() {
+  public final @Nullable ObjectType dereference() {
     return autobox().toObjectType();
   }
 
@@ -905,42 +957,46 @@ public abstract class JSType implements Serializable {
    * Algorithm (11.9.3, page 55&ndash;56) of the ECMA-262 specification.<p>
    */
   public final boolean canTestForEqualityWith(JSType that) {
-    return testForEquality(that).equals(TernaryValue.UNKNOWN);
+    return testForEquality(that).equals(Tri.UNKNOWN);
   }
 
   /**
    * Compares {@code this} and {@code that}.
-   * @return <ul>
-   * <li>{@link TernaryValue#TRUE} if the comparison of values of
-   *   {@code this} type and {@code that} always succeed (such as
-   *   {@code undefined} compared to {@code null})</li>
-   * <li>{@link TernaryValue#FALSE} if the comparison of values of
-   *   {@code this} type and {@code that} always fails (such as
-   *   {@code undefined} compared to {@code number})</li>
-   * <li>{@link TernaryValue#UNKNOWN} if the comparison can succeed or
-   *   fail depending on the concrete values</li>
-   * </ul>
+   *
+   * @return
+   *     <ul>
+   *       <li>{@link Tri#TRUE} if the comparison of values of {@code this} type and {@code that}
+   *           always succeed (such as {@code undefined} compared to {@code null})
+   *       <li>{@link Tri#FALSE} if the comparison of values of {@code this} type and {@code that}
+   *           always fails (such as {@code undefined} compared to {@code number})
+   *       <li>{@link Tri#UNKNOWN} if the comparison can succeed or fail depending on the concrete
+   *           values
+   *     </ul>
    */
-  public TernaryValue testForEquality(JSType that) {
+  public Tri testForEquality(JSType that) {
     return testForEqualityHelper(this, that);
   }
 
-  final TernaryValue testForEqualityHelper(JSType aType, JSType bType) {
+  final @Nullable Tri testForEqualityHelper(JSType aType, JSType bType) {
     if (bType.isAllType() || bType.isUnknownType() ||
         bType.isNoResolvedType() ||
         aType.isAllType() || aType.isUnknownType() ||
         aType.isNoResolvedType()) {
-      return TernaryValue.UNKNOWN;
+      return Tri.UNKNOWN;
     }
 
     boolean aIsEmpty = aType.isEmptyType();
     boolean bIsEmpty = bType.isEmptyType();
     if (aIsEmpty || bIsEmpty) {
       if (aIsEmpty && bIsEmpty) {
-        return TernaryValue.TRUE;
+        return Tri.TRUE;
       } else {
-        return TernaryValue.UNKNOWN;
+        return Tri.UNKNOWN;
       }
+    }
+
+    if (bType.isUnionType()) {
+      return bType.testForEquality(aType);
     }
 
     if (aType.isFunctionType() || bType.isFunctionType()) {
@@ -948,7 +1004,7 @@ public abstract class JSType implements Serializable {
 
       // TODO(johnlenz): tighten function type comparisons in general.
       if (otherType.isSymbol()) {
-        return TernaryValue.FALSE;
+        return Tri.FALSE;
       }
 
       // In theory, functions are comparable to anything except
@@ -960,13 +1016,13 @@ public abstract class JSType implements Serializable {
       JSType greatestSubtype =
           otherType.getGreatestSubtype(getNativeType(JSTypeNative.OBJECT_TYPE));
       if (greatestSubtype.isNoType() || greatestSubtype.isNoObjectType()) {
-        return TernaryValue.FALSE;
+        return Tri.FALSE;
       } else {
-        return TernaryValue.UNKNOWN;
+        return Tri.UNKNOWN;
       }
     }
 
-    if (bType.isEnumElementType() || bType.isUnionType()) {
+    if (bType.isEnumElementType()) {
       return bType.testForEquality(aType);
     }
 
@@ -974,15 +1030,15 @@ public abstract class JSType implements Serializable {
     if (aType.isSymbol()) {
       return bType.canCastTo(getNativeType(JSTypeNative.SYMBOL_TYPE))
               || bType.canCastTo(getNativeType(JSTypeNative.SYMBOL_OBJECT_TYPE))
-          ? TernaryValue.UNKNOWN
-          : TernaryValue.FALSE;
+          ? Tri.UNKNOWN
+          : Tri.FALSE;
     }
 
     if (bType.isSymbol()) {
       return aType.canCastTo(getNativeType(JSTypeNative.SYMBOL_TYPE))
               || aType.canCastTo(getNativeType(JSTypeNative.SYMBOL_OBJECT_TYPE))
-          ? TernaryValue.UNKNOWN
-          : TernaryValue.FALSE;
+          ? Tri.UNKNOWN
+          : Tri.FALSE;
     }
 
     return null;
@@ -996,6 +1052,9 @@ public abstract class JSType implements Serializable {
    * ECMA-262 specification.<p>
    */
   public final boolean canTestForShallowEqualityWith(JSType that) {
+    if (isNoResolvedType() || that.isNoResolvedType()) {
+      return true;
+    }
     if (isEmptyType() || that.isEmptyType()) {
       return isSubtypeOf(that) || that.isSubtypeOf(this);
     }
@@ -1007,7 +1066,7 @@ public abstract class JSType implements Serializable {
         // Let's just say it's always ok to compare two functions.
         // Once the TODO in FunctionType is fixed, we should be able to
         // remove this.
-        areIdentical(inf, registry.getNativeType(JSTypeNative.LEAST_FUNCTION_TYPE));
+        identical(inf, registry.getNativeType(JSTypeNative.LEAST_FUNCTION_TYPE));
   }
 
   /**
@@ -1055,11 +1114,10 @@ public abstract class JSType implements Serializable {
    */
   @SuppressWarnings("AmbiguousMethodReference")
   public JSType getLeastSupertype(JSType that) {
-    if (areIdentical(this, that)) {
+    if (identical(this, that)) {
       return this;
     }
 
-    that = filterNoResolvedType(that);
     if (that.isUnionType()) {
       // Union types have their own implementation of getLeastSupertype.
       return that.toMaybeUnionType().getLeastSupertype(this);
@@ -1074,9 +1132,7 @@ public abstract class JSType implements Serializable {
   @SuppressWarnings("AmbiguousMethodReference")
   static JSType getLeastSupertype(JSType thisType, JSType thatType) {
     boolean areEquivalent = thisType.equals(thatType);
-    return areEquivalent ? thisType :
-        filterNoResolvedType(
-            thisType.registry.createUnionType(thisType, thatType));
+    return areEquivalent ? thisType : thisType.registry.createUnionType(thisType, thatType);
   }
 
   /**
@@ -1139,9 +1195,9 @@ public abstract class JSType implements Serializable {
       return thatType.toMaybeTemplatizedType().getGreatestSubtypeHelper(
           thisType);
     } else if (thisType.isSubtypeOf(thatType)) {
-      return filterNoResolvedType(thisType);
+      return thisType;
     } else if (thatType.isSubtypeOf(thisType)) {
-      return filterNoResolvedType(thatType);
+      return thatType;
     } else if (thisType.isRecordType()) {
       return thisType.toMaybeRecordType().getGreatestSubtypeHelper(thatType);
     } else if (thatType.isRecordType()) {
@@ -1167,47 +1223,6 @@ public abstract class JSType implements Serializable {
   }
 
   /**
-   * When computing infima, we may get a situation like
-   * inf(Type1, Type2)
-   * where both types are unresolved, so they're technically
-   * subtypes of one another.
-   *
-   * If this happens, filter them down to NoResolvedType.
-   */
-  static JSType filterNoResolvedType(JSType type) {
-    if (type.isNoResolvedType()) {
-      // inf(UnresolvedType1, UnresolvedType2) needs to resolve
-      // to the base unresolved type, so that the relation is symmetric.
-      return type.getNativeType(JSTypeNative.NO_RESOLVED_TYPE);
-    } else if (type.isUnionType()) {
-      UnionType unionType = type.toMaybeUnionType();
-      boolean needsFiltering = false;
-      ImmutableList<JSType> alternatesList = unionType.getAlternates();
-      for (int i = 0; i < alternatesList.size(); i++) {
-        JSType alt = alternatesList.get(i);
-        if (alt.isNoResolvedType()) {
-          needsFiltering = true;
-          break;
-        }
-      }
-
-      if (needsFiltering) {
-        UnionType.Builder builder =
-            UnionType.builder(type.registry)
-                .addAlternate(type.getNativeType(JSTypeNative.NO_RESOLVED_TYPE));
-        for (int i = 0; i < alternatesList.size(); i++) {
-          JSType alt = alternatesList.get(i);
-          if (!alt.isNoResolvedType()) {
-            builder.addAlternate(alt);
-          }
-        }
-        return builder.build();
-      }
-    }
-    return type;
-  }
-
-  /**
    * Computes the restricted type of this type knowing that the
    * {@code ToBoolean} predicate has a specific value. For more information
    * about the {@code ToBoolean} predicate, see
@@ -1223,7 +1238,7 @@ public abstract class JSType implements Serializable {
    */
   public JSType getRestrictedTypeGivenOutcome(
       Outcome outcome) {
-    if (outcome.isTruthy() && areIdentical(this, getNativeType(JSTypeNative.UNKNOWN_TYPE))) {
+    if (outcome.isTruthy() && identical(this, getNativeType(JSTypeNative.UNKNOWN_TYPE))) {
       return getNativeType(JSTypeNative.CHECKED_UNKNOWN_TYPE);
     }
 
@@ -1231,8 +1246,8 @@ public abstract class JSType implements Serializable {
     // so the result for any other non-union type must be NO_TYPE.
     // Note that the UnionType class is responsible for handling the union case.
     if (outcome.isNullish().toBoolean(false)) {
-      if (areIdentical(this, getNativeType(JSTypeNative.VOID_TYPE))
-          || areIdentical(this, getNativeType(JSTypeNative.NULL_TYPE))) {
+      if (identical(this, getNativeType(JSTypeNative.VOID_TYPE))
+          || identical(this, getNativeType(JSTypeNative.NULL_TYPE))) {
         return this;
       } else {
         return getNativeType(JSTypeNative.NO_TYPE);
@@ -1286,17 +1301,10 @@ public abstract class JSType implements Serializable {
     }
 
     // other types
-    switch (testForEquality(that)) {
-      case FALSE:
-        return new TypePair(null, null);
-
-      case TRUE:
-      case UNKNOWN:
-        return new TypePair(this, that);
-    }
-
-    // switch case is exhaustive
-    throw new IllegalStateException();
+    return switch (testForEquality(that)) {
+      case FALSE -> new TypePair(null, null);
+      case TRUE, UNKNOWN -> new TypePair(this, that);
+    };
   }
 
   /**
@@ -1358,7 +1366,7 @@ public abstract class JSType implements Serializable {
     // Other types.
     // There are only two types whose shallow inequality is deterministically
     // true -- null and undefined. We can just enumerate them.
-    if (areIdentical(this, that) && this.isNullTypeOrVoidType()) {
+    if (identical(this, that) && this.isNullTypeOrVoidType()) {
       return new TypePair(null, null);
     }
     // Since unions have already been removed, if this and that don't have the same
@@ -1371,7 +1379,7 @@ public abstract class JSType implements Serializable {
     return this.isNullType() || this.isVoidType();
   }
 
-  public Iterable<JSType> getUnionMembers() {
+  public @Nullable Iterable<JSType> getUnionMembers() {
     return isUnionType() ? this.toMaybeUnionType().getAlternates() : null;
   }
 
@@ -1410,7 +1418,7 @@ public abstract class JSType implements Serializable {
   }
 
   /** In files translated from Java, we typecheck null and undefined loosely. */
-  public static enum SubtypingMode {
+  public enum SubtypingMode {
     NORMAL,
     IGNORE_NULL_UNDEFINED
   }
@@ -1448,7 +1456,10 @@ public abstract class JSType implements Serializable {
     return this.isSubtypeOf(supertype);
   }
 
-  /** @deprecated Prefer {@link #isSubtype(JSType)} instead. */
+  /**
+   * @deprecated Prefer {@link #isSubtype(JSType)} instead.
+   */
+  @InlineMe(replacement = "this.isSubtypeOf(supertype, mode)")
   @Deprecated
   public final boolean isSubtype(JSType supertype, SubtypingMode mode) {
     return this.isSubtypeOf(supertype, mode);
@@ -1462,7 +1473,6 @@ public abstract class JSType implements Serializable {
         .setSubtypingMode(SubtypingMode.NORMAL)
         .check();
   }
-
 
   public final boolean isSubtypeOf(JSType supertype, SubtypingMode mode) {
     return new SubtypeChecker(this.registry)
@@ -1501,7 +1511,7 @@ public abstract class JSType implements Serializable {
   public final JSType resolve(ErrorReporter reporter) {
     registry.getResolver().assertLegalToResolveTypes();
     if (!this.isResolved()) {
-      /**
+      /*
        * Prevent infinite recursion in cyclically defined types.
        *
        * <p>If resolve is called a twice on a type, before the first call completes, there is a
@@ -1524,8 +1534,8 @@ public abstract class JSType implements Serializable {
    * Bypasses the normal call to {@link #resolve(ErrorReporter)}. Useful if you are aware that no
    * resolution work needs to be done.
    */
-  void eagerlyResolveToSelf() {
-    checkState(!this.isResolved());
+  final void eagerlyResolveToSelf() {
+    checkState(!this.isResolved(), this);
     resolveResult = this;
     this.registry.getResolver().resolveIfClosed(this, this.getTypeClass());
   }
@@ -1552,10 +1562,10 @@ public abstract class JSType implements Serializable {
 
   /**
    * A null-safe resolve.
+   *
    * @see #resolve
    */
-  static final JSType safeResolve(
-      JSType type, ErrorReporter reporter) {
+  static final @Nullable JSType safeResolve(JSType type, ErrorReporter reporter) {
     return type == null ? null : type.resolve(reporter);
   }
 
@@ -1569,17 +1579,27 @@ public abstract class JSType implements Serializable {
     return validator.apply(this);
   }
 
-  /**
-   * a data structure that represents a pair of types
-   */
+  /** Represents a pair of types. */
   public static class TypePair {
     public final JSType typeA;
     public final JSType typeB;
 
-    public TypePair(JSType typeA, JSType typeB) {
+    public TypePair(@Nullable JSType typeA, @Nullable JSType typeB) {
       this.typeA = typeA;
       this.typeB = typeB;
     }
+  }
+
+  /** A type with source information. */
+  public interface WithSourceRef {
+
+    /** The node representing the declaration of this type. */
+    @Nullable
+    Node getSource();
+
+    /** The ID of the goog.module in which this type was declared. */
+    @Nullable
+    String getGoogModuleId();
   }
 
   /**
@@ -1605,10 +1625,9 @@ public abstract class JSType implements Serializable {
   /**
    * Modify this type so that it matches the specified type.
    *
-   * This is useful for reverse type-inference, where we want to
-   * infer that an object literal matches its constraint (much like
-   * how the java compiler does reverse-inference to figure out generics).
-   * @param constraint
+   * <p>This is useful for reverse type-inference, where we want to infer that an object literal
+   * matches its constraint (much like how the java compiler does reverse-inference to figure out
+   * generics).
    */
   public void matchConstraint(JSType constraint) {}
 
@@ -1617,20 +1636,16 @@ public abstract class JSType implements Serializable {
   }
 
   /**
-   * describe the status of checking that a function
-   * implicitly implements an interface.
+   * describe the status of checking that a function implicitly implements an interface.
    *
-   * it also be used to describe the status of checking
-   * that a record type structurally matches another
-   * record type
+   * <p>it also be used to describe the status of checking that a record type structurally matches
+   * another record type
    *
-   * A function implicitly implements an interface if
-   * the function does not use @implements to declare
-   * that it implements the interface, but its class
-   * structure complies with the protocol defined
-   * by the interface
+   * <p>A function implicitly implements an interface if the function does not use @implements to
+   * declare that it implements the interface, but its class structure complies with the protocol
+   * defined by the interface
    */
-  static enum MatchStatus {
+  enum MatchStatus {
     /**
      * indicate that a function implicitly
      * implements an interface (i.e., the function
@@ -1686,13 +1701,5 @@ public abstract class JSType implements Serializable {
      * use in cases where a single reference type is expected (e.g. 'extends' and 'implements').
      */
     IMPLICIT,
-  }
-
-  /**
-   * Returns a JSType representation of this type suitable for running optimizations.
-   * This may have certain features that are only useful at check-time omitted.
-   */
-  JSType simplifyForOptimizations() {
-    return this;
   }
 }

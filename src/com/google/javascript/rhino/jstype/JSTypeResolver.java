@@ -40,10 +40,9 @@
 package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.javascript.rhino.jstype.JSType.areIdentical;
+import static com.google.javascript.jscomp.base.JSCompObjects.identical;
 
 import com.google.errorprone.annotations.MustBeClosed;
-import java.io.Serializable;
 import java.util.ArrayDeque;
 
 /**
@@ -56,7 +55,7 @@ import java.util.ArrayDeque;
  * added to this resolver. Depending on the state of the resolver at the time of addition, the type
  * will either be eagerly resolved, or stored for later resolution.
  */
-public final class JSTypeResolver implements Serializable {
+public final class JSTypeResolver {
 
   /**
    * A signal to resolve all types known to and close the owning resolver.
@@ -101,8 +100,8 @@ public final class JSTypeResolver implements Serializable {
    */
   private final ArrayDeque<JSType> captureStack = new ArrayDeque<>();
 
-  /** The sequence of types to resolve then the resolver is closed. */
-  private final ArrayDeque<JSType> resolutionQueue = new ArrayDeque<>();
+  /** The sequence of types to resolve when the resolver is closed. */
+  private ArrayDeque<JSType> resolutionQueue = new ArrayDeque<>();
 
   private State state = State.CLOSED;
 
@@ -117,7 +116,7 @@ public final class JSTypeResolver implements Serializable {
    * capturing all new types.
    */
   void addUnresolved(JSType captured) {
-    /**
+    /*
      * This method exists to make it easier to debug the source of unresolved types in the future.
      *
      * <p>In theory we should be able to capture all types using `resolveIfClosed`, but this way we
@@ -129,14 +128,14 @@ public final class JSTypeResolver implements Serializable {
   }
 
   /**
-   * If {@link type} is finished construction, and the resolver is closed, resolve it.
+   * If {@code captured} is finished construction, and the resolver is closed, resolve it.
    *
    * <p>{@code caller} is used to cooperatively determine whether this call came from the final
    * constructor for {@code type}.
    *
    * <p>This should only be called at the end of {@link JSType} constructors which invoke super. It
-   * should be called from all such constructors, except those that directly resolve the instance,
-   * such as {@code AllType}.
+   * should be called from all such constructors. Some constructors (e.g. {@code AllType}) may
+   * choose to delegate that call through {@link JSType#eagerlyResolveToSelf}.
    */
   void resolveIfClosed(JSType captured, JSTypeClass caller) {
     if (!caller.isTypeOf(captured)) {
@@ -144,17 +143,11 @@ public final class JSTypeResolver implements Serializable {
     }
 
     JSType expected = this.captureStack.removeLast();
-    checkState(areIdentical(captured, expected), "Captured %s; Expected %s", captured, expected);
+    checkState(identical(captured, expected), "Captured %s; Expected %s", captured, expected);
 
     switch (this.state) {
-      case CLOSED:
-      case CLOSING:
-        this.doResolve(captured);
-        break;
-
-      case OPEN:
-        this.resolutionQueue.addLast(captured);
-        break;
+      case CLOSED, CLOSING -> this.doResolve(captured);
+      case OPEN -> this.resolutionQueue.addLast(captured);
     }
   }
 
@@ -183,6 +176,9 @@ public final class JSTypeResolver implements Serializable {
     while (!this.resolutionQueue.isEmpty()) {
       this.doResolve(this.resolutionQueue.removeFirst());
     }
+
+    // resolutionQueue scales with the size of the application, so it needs to be GC'd.
+    this.resolutionQueue = new ArrayDeque<>();
 
     this.state = State.CLOSED;
 

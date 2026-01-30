@@ -16,21 +16,19 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkState;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.Immutable;
 import com.google.javascript.rhino.ClosurePrimitive;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.NominalTypeBuilder;
+import com.google.javascript.rhino.QualifiedName;
 import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.jstype.FunctionType;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
-import com.google.javascript.rhino.jstype.ObjectType;
+import com.google.javascript.rhino.jstype.JSType;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Helper classes for dealing with coding conventions.
@@ -65,12 +63,6 @@ public final class CodingConventions {
     }
     // n is a call
     return n.getFirstChild().matchesQualifiedName(alwaysThrowsFunctionName);
-  }
-
-  static boolean isAliasingGlobalThis(CodingConvention convention, Node n) {
-    return n.isAssign()
-        && n.getFirstChild().matchesQualifiedName(convention.getGlobalObject())
-        && n.getLastChild().isThis();
   }
 
   /**
@@ -134,21 +126,6 @@ public final class CodingConventions {
     @Override
     public String getPackageName(StaticSourceFile source) {
       return nextConvention.getPackageName(source);
-    }
-
-     @Override
-    public boolean blockRenamingForProperty(String name) {
-      return  nextConvention.blockRenamingForProperty(name);
-    }
-
-    @Override
-    public boolean isPrivate(String name) {
-      return nextConvention.isPrivate(name);
-    }
-
-    @Override
-    public boolean hasPrivacyConvention() {
-      return nextConvention.hasPrivacyConvention();
     }
 
     @Override
@@ -219,72 +196,13 @@ public final class CodingConventions {
     }
 
     @Override
-    public boolean isInlinableFunction(Node n) {
-      return nextConvention.isInlinableFunction(n);
-    }
-
-    @Override
-    public DelegateRelationship getDelegateRelationship(Node callNode) {
-      return nextConvention.getDelegateRelationship(callNode);
-    }
-
-    @Override
-    public void applyDelegateRelationship(
-        NominalTypeBuilder delegateSuperclass,
-        NominalTypeBuilder delegateBase,
-        NominalTypeBuilder delegator,
-        ObjectType delegateProxy,
-        FunctionType findDelegate) {
-      nextConvention.applyDelegateRelationship(
-          delegateSuperclass, delegateBase, delegator, delegateProxy, findDelegate);
-    }
-
-    @Override
-    public String getDelegateSuperclassName() {
-      return nextConvention.getDelegateSuperclassName();
-    }
-
-    @Override
-    public void checkForCallingConventionDefinitions(
-        Node n, Map<String, String> delegateCallingConventions) {
-      nextConvention.checkForCallingConventionDefinitions(
-          n, delegateCallingConventions);
-    }
-
-    @Override
-    public void defineDelegateProxyPrototypeProperties(
-        JSTypeRegistry registry,
-        List<NominalTypeBuilder> delegateProxies,
-        Map<String, String> delegateCallingConventions) {
-      nextConvention.defineDelegateProxyPrototypeProperties(
-          registry, delegateProxies, delegateCallingConventions);
-    }
-
-    @Override
-    public String getGlobalObject() {
-      return nextConvention.getGlobalObject();
-    }
-
-    @Override
-    public boolean isAliasingGlobalThis(Node n) {
-      return nextConvention.isAliasingGlobalThis(n);
-    }
-
-    @Override
     public Collection<AssertionFunctionSpec> getAssertionFunctions() {
       return nextConvention.getAssertionFunctions();
     }
 
     @Override
-    public Bind describeFunctionBind(Node n) {
-      return describeFunctionBind(n, false, false);
-    }
-
-    @Override
-    public Bind describeFunctionBind(
-        Node n, boolean callerChecksTypes, boolean iCheckTypes) {
-      return nextConvention
-          .describeFunctionBind(n, callerChecksTypes, iCheckTypes);
+    public Bind describeFunctionBind(Node n, boolean checkTypes) {
+      return nextConvention.describeFunctionBind(n, checkTypes);
     }
 
     @Override
@@ -298,8 +216,8 @@ public final class CodingConventions {
     }
 
     @Override
-    public boolean isPropertyRenameFunction(String name) {
-      return nextConvention.isPropertyRenameFunction(name);
+    public boolean isPropertyRenameFunction(Node nameNode) {
+      return nextConvention.isPropertyRenameFunction(nameNode);
     }
 
     @Override
@@ -381,26 +299,12 @@ public final class CodingConventions {
       return CodingConvention.super.isExported(name);
     }
 
-    @Override
-    public boolean blockRenamingForProperty(String name) {
-      return false;
-    }
+    private static final QualifiedName JSCOMP_INHERITS = QualifiedName.of("$jscomp.inherits");
 
     @Override
-    public boolean isPrivate(String name) {
-      return false;
-    }
-
-    @Override
-    public boolean hasPrivacyConvention() {
-      return false;
-    }
-
-    @Override
-    public SubclassRelationship getClassesDefinedByCall(Node callNode) {
+    public @Nullable SubclassRelationship getClassesDefinedByCall(Node callNode) {
       Node callName = callNode.getFirstChild();
-      if ((callName.matchesQualifiedName("$jscomp.inherits")
-              || callName.matchesName("$jscomp$inherits"))
+      if ((JSCOMP_INHERITS.matches(callName) || callName.matchesName("$jscomp$inherits"))
           && callNode.hasXChildren(3)) {
         Node subclass = callName.getNext();
         Node superclass = subclass.getNext();
@@ -452,7 +356,7 @@ public final class CodingConventions {
 
     @Override
     public List<String> identifyTypeDeclarationCall(Node n) {
-      return null;
+      return ImmutableList.of();
     }
 
     @Override
@@ -478,63 +382,23 @@ public final class CodingConventions {
     }
 
     @Override
-    public boolean isInlinableFunction(Node n) {
-      checkState(n.isFunction(), n);
-      return true;
-    }
-
-    @Override
-    public DelegateRelationship getDelegateRelationship(Node callNode) {
-      return null;
-    }
-
-    @Override
-    public void applyDelegateRelationship(
-        NominalTypeBuilder delegateSuperclass,
-        NominalTypeBuilder delegateBase,
-        NominalTypeBuilder delegator,
-        ObjectType delegateProxy,
-        FunctionType findDelegate) {
-      // do nothing.
-    }
-
-    @Override
-    public String getDelegateSuperclassName() {
-      return null;
-    }
-
-    @Override
-    public void checkForCallingConventionDefinitions(Node n,
-        Map<String, String> delegateCallingConventions) {
-      // do nothing.
-    }
-
-    @Override
-    public void defineDelegateProxyPrototypeProperties(
-        JSTypeRegistry registry,
-        List<NominalTypeBuilder> delegateProxies,
-        Map<String, String> delegateCallingConventions) {
-      // do nothing.
-    }
-
-    @Override
-    public String getGlobalObject() {
-      return "window";
-    }
-
-    @Override
-    public boolean isAliasingGlobalThis(Node n) {
-      return CodingConventions.isAliasingGlobalThis(this, n);
-    }
-
-    @Override
     public boolean isPropertyTestFunction(Node call) {
-      return call.getFirstChild().matchesQualifiedName("Array.isArray");
+      // Avoid building the qualified name and check for
+      // "goog.isArray"
+      Node target = call.getFirstChild();
+      if (target.isGetProp()) {
+        Node src = target.getFirstChild();
+        String prop = target.getString();
+        if (src.isName() && src.getString().equals("Array") && prop.equals("isArray")) {
+          return true;
+        }
+      }
+      return false;
     }
 
     @Override
-    public boolean isPropertyRenameFunction(String name) {
-      return NodeUtil.JSC_PROPERTY_NAME_FN.equals(name) || "$jscomp.reflectProperty".equals(name);
+    public boolean isPropertyRenameFunction(Node nameNode) {
+      return nameNode.matchesName(NodeUtil.JSC_PROPERTY_NAME_FN);
     }
 
     @Override
@@ -558,21 +422,18 @@ public final class CodingConventions {
               .build());
     }
 
-    @Override
-    public Bind describeFunctionBind(Node n) {
-      return describeFunctionBind(n, false, false);
-    }
+    private static final QualifiedName FUNCTION_PROTOTYPE_BIND_CALL =
+        QualifiedName.of("Function.prototype.bind.call");
 
     @Override
-    public Bind describeFunctionBind(
-        Node n, boolean callerChecksTypes, boolean iCheckTypes) {
+    public @Nullable Bind describeFunctionBind(Node n, boolean checkTypes) {
       if (!n.isCall()) {
         return null;
       }
 
       Node callTarget = n.getFirstChild();
       if (callTarget.isQualifiedName()) {
-        if (callTarget.matchesQualifiedName("Function.prototype.bind.call")) {
+        if (FUNCTION_PROTOTYPE_BIND_CALL.matches(callTarget)) {
           // goog.bind(fn, self, args...);
           Node fn = callTarget.getNext();
           if (fn == null) {
@@ -584,18 +445,16 @@ public final class CodingConventions {
         }
       }
 
-      if (callTarget.isGetProp()
-          && callTarget.getLastChild().getString().equals("bind")) {
+      if (callTarget.isGetProp() && callTarget.getString().equals("bind")) {
         Node maybeFn = callTarget.getFirstChild();
-        com.google.javascript.rhino.jstype.JSType maybeFnType =
-            maybeFn.getJSType();
+        JSType maybeFnType = maybeFn.getJSType();
         FunctionType fnType = null;
-        if (iCheckTypes && maybeFnType != null) {
+        if (checkTypes && maybeFnType != null) {
           fnType = maybeFnType.restrictByNotNullOrUndefined()
               .toMaybeFunctionType();
         }
 
-        if (fnType != null || callerChecksTypes || maybeFn.isFunction()) {
+        if (fnType != null || maybeFn.isFunction()) {
           // (function(){}).bind(self, args...);
           Node thisValue = callTarget.getNext();
           Node parameters = safeNext(thisValue);
@@ -616,7 +475,7 @@ public final class CodingConventions {
       return ImmutableList.of();
     }
 
-    private static Node safeNext(Node n) {
+    private static @Nullable Node safeNext(Node n) {
       if (n != null) {
         return n.getNext();
       }

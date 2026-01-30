@@ -17,35 +17,27 @@
 package com.google.javascript.jscomp;
 
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.rhino.Node;
-
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
- * <p>A compiler pass combining multiple {@link Callback}
- * and {@link ScopedCallback} objects. This pass can be used to separate
- * logically different verifications without incurring any additional traversal
- * and CFG generation costs.</p>
+ * A compiler pass combining multiple {@link Callback} and {@link ScopedCallback} objects. This pass
+ * can be used to separate logically different verifications without incurring any additional
+ * traversal and CFG generation costs.
  *
- * <p>Due to this compiler pass' nature, none of the callbacks may mutate
- * the parse tree.</p>
+ * <p>Due to this compiler pass' nature, none of the callbacks may mutate the parse tree.
  *
- * <p>TODO(user):
- * This combined pass is currently limited in the type of callbacks it can
- * combine due to the difficulty of handling NodeTraversal's methods that
- * initiate more recursion (e.g., {@link NodeTraversal#traverse(Node)} and
- * {@link NodeTraversal#traverseInnerNode(Node, Node, Scope)}). The
- * {@link NodeTraversal} object passed to the individual callbacks should
- * be instrumented to emulate the correct behavior. For instance,
- * one could create a {@link NodeTraversal} whose
- * {@link NodeTraversal#traverseInnerNode(Node, Node, Scope)} ties
- * back into this compiler pass to give it context about what combined
- * passes are doing.</p>
+ * <p>TODO(user): This combined pass is currently limited in the type of callbacks it can
+ * combine due to the difficulty of handling NodeTraversal's methods that initiate more recursion
+ * (e.g., {@link NodeTraversal#traverse(Node)} and {@link NodeTraversal#traverseInnerNode(Node,
+ * Node, Scope)}). The {@link NodeTraversal} object passed to the individual callbacks should be
+ * instrumented to emulate the correct behavior. For instance, one could create a {@link
+ * NodeTraversal} whose {@link NodeTraversal#traverseInnerNode(Node, Node, Scope)} ties back into
+ * this compiler pass to give it context about what combined passes are doing.
  */
-final class CombinedCompilerPass implements HotSwapCompilerPass,
-    ScopedCallback {
+final class CombinedCompilerPass implements CompilerPass, ScopedCallback {
 
   /** The callbacks that this pass combines. */
   private final CallbackWrapper[] callbacks;
@@ -53,15 +45,14 @@ final class CombinedCompilerPass implements HotSwapCompilerPass,
 
   /**
    * Creates a combined compiler pass.
+   *
    * @param compiler the compiler
    */
-  CombinedCompilerPass(
-      AbstractCompiler compiler, Callback... callbacks) {
+  CombinedCompilerPass(AbstractCompiler compiler, NodeTraversal.Callback... callbacks) {
     this(compiler, ImmutableList.copyOf(callbacks));
   }
 
-  CombinedCompilerPass(
-      AbstractCompiler compiler, List<Callback> callbacks) {
+  CombinedCompilerPass(AbstractCompiler compiler, List<NodeTraversal.Callback> callbacks) {
     this.compiler = compiler;
     this.callbacks = new CallbackWrapper[callbacks.size()];
     for (int i = 0; i < callbacks.size(); i++) {
@@ -69,8 +60,8 @@ final class CombinedCompilerPass implements HotSwapCompilerPass,
     }
   }
 
-  static void traverse(AbstractCompiler compiler, Node root,
-      List<Callback> callbacks) {
+  static void traverse(
+      AbstractCompiler compiler, Node root, List<NodeTraversal.Callback> callbacks) {
     if (callbacks.size() == 1) {
       NodeTraversal.traverse(compiler, root, callbacks.get(0));
     } else {
@@ -89,26 +80,26 @@ final class CombinedCompilerPass implements HotSwapCompilerPass,
    */
   private static class CallbackWrapper {
     /** The callback being wrapped. Never null. */
-    private final Callback callback;
+    private final NodeTraversal.Callback callback;
     /**
-     * if (callback instanceof ScopedCallback), then scopedCallback points
-     * to an instance of ScopedCallback, otherwise scopedCallback points to null
+     * if (callback instanceof ScopedCallback), then scopedCallback points to an instance of
+     * ScopedCallback, otherwise scopedCallback points to null
      */
-    private final ScopedCallback scopedCallback;
+    private final @Nullable ScopedCallback scopedCallback;
 
     /**
-     * The node that {@link Callback#shouldTraverse(NodeTraversal, Node, Node)}
-     * returned false for. The wrapped callback doesn't receive messages until
-     * after this node is revisited in the post-order traversal.
+     * The node that {@link Callback#shouldTraverse(NodeTraversal, Node, Node)} returned false for.
+     * The wrapped callback doesn't receive messages until after this node is revisited in the
+     * post-order traversal.
      */
-    private Node waiting = null;
+    private @Nullable Node waiting = null;
 
-    private CallbackWrapper(Callback callback) {
+    private CallbackWrapper(NodeTraversal.Callback callback) {
       this.callback = callback;
-      if (callback instanceof ScopedCallback) {
-        scopedCallback = (ScopedCallback) callback;
+      if (callback instanceof ScopedCallback scopedCallback) {
+        this.scopedCallback = scopedCallback;
       } else {
-        scopedCallback = null;
+        this.scopedCallback = null;
       }
     }
 
@@ -148,13 +139,8 @@ final class CombinedCompilerPass implements HotSwapCompilerPass,
   }
 
   @Override
-  public final void process(Node externs, Node root) {
+  public final void process(@Nullable Node externs, Node root) {
     NodeTraversal.traverse(compiler, root, this);
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   @Override

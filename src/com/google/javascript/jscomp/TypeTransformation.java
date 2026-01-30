@@ -23,7 +23,6 @@ import com.google.common.base.Ascii;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.javascript.jscomp.parsing.TypeTransformationParser;
 import com.google.javascript.jscomp.parsing.TypeTransformationParser.Keywords;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
@@ -34,9 +33,10 @@ import com.google.javascript.rhino.jstype.JSTypeRegistry;
 import com.google.javascript.rhino.jstype.ObjectType;
 import com.google.javascript.rhino.jstype.StaticTypedScope;
 import com.google.javascript.rhino.jstype.StaticTypedSlot;
-import java.util.Collection;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A class for processing type transformation expressions
@@ -99,8 +99,8 @@ class TypeTransformation {
    * and the name variables in maprecord expressions
    */
   private static class NameResolver {
-    ImmutableMap<String, JSType> typeVars;
-    ImmutableMap<String, String> nameVars;
+    final ImmutableMap<String, JSType> typeVars;
+    final ImmutableMap<String, String> nameVars;
 
     NameResolver(ImmutableMap<String, JSType> typeVars, ImmutableMap<String, String> nameVars) {
       this.typeVars = typeVars;
@@ -108,7 +108,6 @@ class TypeTransformation {
     }
   }
 
-  @SuppressWarnings("unchecked")
   TypeTransformation(AbstractCompiler compiler, StaticTypedScope typeEnv) {
     this.compiler = compiler;
     this.registry = compiler.getTypeRegistry();
@@ -120,7 +119,7 @@ class TypeTransformation {
   }
 
   private boolean isTypeName(Node n) {
-    return n.isString();
+    return n.isStringLit();
   }
 
   private boolean isBooleanOperation(Node n) {
@@ -128,10 +127,10 @@ class TypeTransformation {
   }
 
   private Keywords nameToKeyword(String s) {
-    return TypeTransformationParser.Keywords.valueOf(Ascii.toUpperCase(s));
+    return Keywords.valueOf(Ascii.toUpperCase(s));
   }
 
-  private JSType getType(String typeName) {
+  private @Nullable JSType getType(String typeName) {
     JSType type = registry.getType(typeEnv, typeName);
     if (type != null) {
       return type;
@@ -184,10 +183,7 @@ class TypeTransformation {
 
   private <T> ImmutableMap<String, T> addNewEntry(
       ImmutableMap<String, T> map, String name, T type) {
-    return new ImmutableMap.Builder<String, T>()
-        .putAll(map)
-        .put(name, type)
-        .build();
+    return new ImmutableMap.Builder<String, T>().putAll(map).put(name, type).buildOrThrow();
   }
 
   private String getFunctionParameter(Node n, int i) {
@@ -243,17 +239,17 @@ class TypeTransformation {
     return eval(ttlAst, typeVars, ImmutableMap.of());
   }
 
-  /** Evaluates the type transformation expression and returns the resulting type.
+  /**
+   * Evaluates the type transformation expression and returns the resulting type.
    *
    * @param ttlAst The node representing the type transformation expression
    * @param typeVars The environment containing the information about the type variables
    * @param nameVars The environment containing the information about the name variables
    * @return JSType The resulting type after the transformation
    */
-  @SuppressWarnings("unchecked")
   @VisibleForTesting
-  JSType eval(Node ttlAst, ImmutableMap<String, JSType> typeVars,
-      ImmutableMap<String, String> nameVars) {
+  JSType eval(
+      Node ttlAst, ImmutableMap<String, JSType> typeVars, ImmutableMap<String, String> nameVars) {
     JSType result = evalInternal(ttlAst, new NameResolver(typeVars, nameVars));
     return result.isEmptyType() ? getUnknownType() : result;
   }
@@ -267,65 +263,44 @@ class TypeTransformation {
     }
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
-    switch (keyword.kind) {
-      case TYPE_CONSTRUCTOR:
-        return evalTypeExpression(ttlAst, nameResolver);
-      case OPERATION:
-        return evalOperationExpression(ttlAst, nameResolver);
-      default:
-        throw new IllegalStateException(
-            "Could not evaluate the type transformation expression");
-    }
+    return switch (keyword.kind) {
+      case TYPE_CONSTRUCTOR -> evalTypeExpression(ttlAst, nameResolver);
+      case OPERATION -> evalOperationExpression(ttlAst, nameResolver);
+      default ->
+          throw new IllegalStateException("Could not evaluate the type transformation expression");
+    };
   }
 
   private JSType evalOperationExpression(Node ttlAst, NameResolver nameResolver) {
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
-    switch (keyword) {
-      case COND:
-        return evalConditional(ttlAst, nameResolver);
-      case MAPUNION:
-        return evalMapunion(ttlAst, nameResolver);
-      case MAPRECORD:
-        return evalMaprecord(ttlAst, nameResolver);
-      case TYPEOFVAR:
-        return evalTypeOfVar(ttlAst);
-      case INSTANCEOF:
-        return evalInstanceOf(ttlAst, nameResolver);
-      case PRINTTYPE:
-        return evalPrintType(ttlAst, nameResolver);
-      case PROPTYPE:
-        return evalPropType(ttlAst, nameResolver);
-      default:
-        throw new IllegalStateException("Invalid type transformation operation");
-    }
+    return switch (keyword) {
+      case COND -> evalConditional(ttlAst, nameResolver);
+      case MAPUNION -> evalMapunion(ttlAst, nameResolver);
+      case MAPRECORD -> evalMaprecord(ttlAst, nameResolver);
+      case TYPEOFVAR -> evalTypeOfVar(ttlAst);
+      case INSTANCEOF -> evalInstanceOf(ttlAst, nameResolver);
+      case PRINTTYPE -> evalPrintType(ttlAst, nameResolver);
+      case PROPTYPE -> evalPropType(ttlAst, nameResolver);
+      default -> throw new IllegalStateException("Invalid type transformation operation");
+    };
   }
 
   private JSType evalTypeExpression(Node ttlAst, NameResolver nameResolver) {
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
-    switch (keyword) {
-      case TYPE:
-        return evalTemplatizedType(ttlAst, nameResolver);
-      case UNION:
-        return evalUnionType(ttlAst, nameResolver);
-      case NONE:
-        return getNoType();
-      case ALL:
-        return getAllType();
-      case UNKNOWN:
-         return getUnknownType();
-      case RAWTYPEOF:
-        return evalRawTypeOf(ttlAst, nameResolver);
-      case TEMPLATETYPEOF:
-        return evalTemplateTypeOf(ttlAst, nameResolver);
-      case RECORD:
-        return evalRecordType(ttlAst, nameResolver);
-      case TYPEEXPR:
-        return evalNativeTypeExpr(ttlAst);
-      default:
-        throw new IllegalStateException("Invalid type expression");
-    }
+    return switch (keyword) {
+      case TYPE -> evalTemplatizedType(ttlAst, nameResolver);
+      case UNION -> evalUnionType(ttlAst, nameResolver);
+      case NONE -> getNoType();
+      case ALL -> getAllType();
+      case UNKNOWN -> getUnknownType();
+      case RAWTYPEOF -> evalRawTypeOf(ttlAst, nameResolver);
+      case TEMPLATETYPEOF -> evalTemplateTypeOf(ttlAst, nameResolver);
+      case RECORD -> evalRecordType(ttlAst, nameResolver);
+      case TYPEEXPR -> evalNativeTypeExpr(ttlAst);
+      default -> throw new IllegalStateException("Invalid type expression");
+    };
   }
 
   private JSType evalTypeName(Node ttlAst) {
@@ -351,9 +326,7 @@ class TypeTransformation {
     // a templatized type. For instance, if the base type is Array then there
     // must be just one parameter.
     JSType[] templatizedTypes = new JSType[params.size() - 1];
-    for (int i = 0; i < templatizedTypes.length; i++) {
-      templatizedTypes[i] = evalInternal(params.get(i + 1), nameResolver);
-    }
+    Arrays.setAll(templatizedTypes, i -> evalInternal(params.get(i + 1), nameResolver));
     ObjectType baseType = firstParam.toMaybeObjectType();
     return registry.createTemplatizedType(baseType, templatizedTypes);
   }
@@ -418,23 +391,16 @@ class TypeTransformation {
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
     JSType type = params[0];
-    switch (keyword) {
-      case EQ:
-        return type.equals(params[1]);
-      case SUB:
-        return type.isSubtypeOf(params[1]);
-      case ISCTOR:
-        return type.isConstructor();
-      case ISTEMPLATIZED:
-        return type.isTemplatizedType();
-      case ISRECORD:
-        return type.isRecordType();
-      case ISUNKNOWN:
-        return type.isUnknownType();
-      default:
-        throw new IllegalStateException(
-            "Invalid type predicate in the type transformation");
-    }
+    return switch (keyword) {
+      case EQ -> type.equals(params[1]);
+      case SUB -> type.isSubtypeOf(params[1]);
+      case ISCTOR -> type.isConstructor();
+      case ISTEMPLATIZED -> type.isTemplatizedType();
+      case ISRECORD -> type.isRecordType();
+      case ISUNKNOWN -> type.isUnknownType();
+      default ->
+          throw new IllegalStateException("Invalid type predicate in the type transformation");
+    };
   }
 
   private boolean evalStringPredicate(Node ttlAst,
@@ -449,25 +415,21 @@ class TypeTransformation {
     }
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
-    switch (keyword) {
-      case STREQ:
-        return params[0].equals(params[1]);
-      default:
-        throw new IllegalStateException(
-            "Invalid string predicate in the type transformation");
-    }
+    return switch (keyword) {
+      case STREQ -> params[0].equals(params[1]);
+      default ->
+          throw new IllegalStateException("Invalid string predicate in the type transformation");
+    };
   }
 
   private boolean evalTypevarPredicate(Node ttlAst, NameResolver nameResolver) {
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
-    switch (keyword) {
-      case ISDEFINED:
-        return nameResolver.typeVars.containsKey(getCallArgument(ttlAst, 0).getString());
-      default:
-        throw new IllegalStateException(
-            "Invalid typevar predicate in the type transformation");
-    }
+    return switch (keyword) {
+      case ISDEFINED -> nameResolver.typeVars.containsKey(getCallArgument(ttlAst, 0).getString());
+      default ->
+          throw new IllegalStateException("Invalid typevar predicate in the type transformation");
+    };
   }
 
    private boolean evalBooleanOperation(Node ttlAst, NameResolver nameResolver) {
@@ -491,17 +453,13 @@ class TypeTransformation {
     }
     String name = getCallName(ttlAst);
     Keywords keyword = nameToKeyword(name);
-    switch (keyword.kind) {
-      case STRING_PREDICATE:
-        return evalStringPredicate(ttlAst, nameResolver);
-      case TYPE_PREDICATE:
-        return evalTypePredicate(ttlAst, nameResolver);
-      case TYPEVAR_PREDICATE:
-        return evalTypevarPredicate(ttlAst, nameResolver);
-      default:
-        throw new IllegalStateException(
-            "Invalid boolean predicate in the type transformation");
-    }
+    return switch (keyword.kind) {
+      case STRING_PREDICATE -> evalStringPredicate(ttlAst, nameResolver);
+      case TYPE_PREDICATE -> evalTypePredicate(ttlAst, nameResolver);
+      case TYPEVAR_PREDICATE -> evalTypevarPredicate(ttlAst, nameResolver);
+      default ->
+          throw new IllegalStateException("Invalid boolean predicate in the type transformation");
+    };
   }
 
   private JSType evalConditional(Node ttlAst, NameResolver nameResolver) {
@@ -538,7 +496,7 @@ class TypeTransformation {
 
     // Otherwise obtain the elements in the union type. Note that the block
     // above guarantees the casting to be safe
-    Collection<JSType> unionElms = ImmutableList.copyOf(unionType.getUnionMembers());
+    ImmutableList<JSType> unionElms = ImmutableList.copyOf(unionType.getUnionMembers());
     // Evaluate the map function body using each element in the union type
     int unionSize = unionElms.size();
     JSType[] newUnionElms = new JSType[unionSize];
@@ -583,7 +541,7 @@ class TypeTransformation {
 
   private JSType evalRecord(Node record, NameResolver nameResolver) {
     Map<String, JSType> props = new LinkedHashMap<>();
-    for (Node propNode : record.children()) {
+    for (Node propNode = record.getFirstChild(); propNode != null; propNode = propNode.getNext()) {
       // If it is a computed property then find the property name using the resolver
       if (propNode.isComputedProp()) {
         String compPropName = getComputedPropName(propNode);

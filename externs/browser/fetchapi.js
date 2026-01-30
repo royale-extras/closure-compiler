@@ -98,8 +98,16 @@ Headers.prototype.set = function(name, value) {};
 /** @return {!Iterator<string>} */
 Headers.prototype.values = function() {};
 
-/** @return {!Iterator<!Array<string>>} */
+/**
+ * @return {!Iterator<!Array<string>>}
+ * @override
+ */
 Headers.prototype[Symbol.iterator] = function() {};
+
+/**
+ * @return {!Array<string>}
+ */
+Headers.prototype.getSetCookie = function() {};
 
 
 /**
@@ -132,6 +140,9 @@ Body.prototype.arrayBuffer = function() {};
 /** @return {!Promise<!Blob>} */
 Body.prototype.blob = function() {};
 
+/** @return {!Promise<!Uint8Array>} */
+Body.prototype.bytes = function() {};
+
 /** @return {!Promise<!FormData>} */
 Body.prototype.formData = function() {};
 
@@ -143,7 +154,7 @@ Body.prototype.text = function() {};
 
 
 /**
- * @typedef {!Request|string}
+ * @typedef {!Request|!URL|string}
  * @see https://fetch.spec.whatwg.org/#requestinfo
  */
 var RequestInfo;
@@ -151,12 +162,12 @@ var RequestInfo;
 
 /**
  * @param {!RequestInfo} input
- * @param {!RequestInit=} opt_init
+ * @param {!RequestInit=} init
  * @constructor
  * @implements {Body}
  * @see https://fetch.spec.whatwg.org/#request
  */
-function Request(input, opt_init) {}
+function Request(input, init) {}
 
 /** @override */
 Request.prototype.bodyUsed;
@@ -166,6 +177,9 @@ Request.prototype.arrayBuffer = function() {};
 
 /** @override */
 Request.prototype.blob = function() {};
+
+/** @override */
+Request.prototype.bytes = function() {};
 
 /** @override */
 Request.prototype.formData = function() {};
@@ -329,7 +343,7 @@ function Response(opt_body, opt_init) {}
 Response.error = function() {};
 
 /**
- * @param {string} url
+ * @param {!URL|string} url
  * @param {number=} opt_status
  * @return {!Response}
  */
@@ -343,6 +357,9 @@ Response.prototype.arrayBuffer = function() {};
 
 /** @override */
 Response.prototype.blob = function() {};
+
+/** @override */
+Response.prototype.bytes = function() {};
 
 /** @override */
 Response.prototype.formData = function() {};
@@ -410,27 +427,27 @@ var ResponseType;
 
 /**
  * @param {!RequestInfo} input
- * @param {!RequestInit=} opt_init
+ * @param {!RequestInit=} init
  * @return {!Promise<!Response>}
  * @see https://fetch.spec.whatwg.org/#fetch-method
  */
-function fetch(input, opt_init) {}
+function fetch(input, init) {}
 
 /**
  * @param {!RequestInfo} input
- * @param {!RequestInit=} opt_init
+ * @param {!RequestInit=} init
  * @return {!Promise<!Response>}
  * @see https://fetch.spec.whatwg.org/#fetch-method
  */
-Window.prototype.fetch = function(input, opt_init) {};
+Window.prototype.fetch = function(input, init) {};
 
 /**
  * @param {!RequestInfo} input
- * @param {!RequestInit=} opt_init
+ * @param {!RequestInit=} init
  * @return {!Promise<!Response>}
  * @see https://fetch.spec.whatwg.org/#fetch-method
  */
-WorkerGlobalScope.prototype.fetch = function(input, opt_init) {};
+WorkerGlobalScope.prototype.fetch = function(input, init) {};
 
 /**
  * if WorkerOptions.type = 'module', it specifies how `scriptURL` is fetched.

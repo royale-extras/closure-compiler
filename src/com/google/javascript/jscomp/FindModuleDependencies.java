@@ -23,7 +23,9 @@ import com.google.javascript.jscomp.CompilerInput.ModuleType;
 import com.google.javascript.jscomp.deps.DependencyInfo.Require;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import com.google.javascript.rhino.Token;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Find and update any direct dependencies of an input. Used to walk the dependency graph and
@@ -35,17 +37,21 @@ import com.google.javascript.rhino.Token;
  *   <li>goog.require calls
  *   <li>ES6 import statements
  *   <li>CommonJS require statements
+ *   <li>goog.requireDynamic calls
  * </ul>
  *
  * <p>The order of dependency references is preserved so that a deterministic depth-first ordering
  * can be achieved.
  */
 public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
+  private static final QualifiedName GOOG_MODULE = QualifiedName.of("goog.module");
+  private static final QualifiedName GOOG_PROVIDE = QualifiedName.of("goog.provide");
+
   private final AbstractCompiler compiler;
   private final boolean supportsEs6Modules;
   private final boolean supportsCommonJsModules;
   private ModuleType moduleType = ModuleType.NONE;
-  private Scope dynamicImportScope = null;
+  private @Nullable Scope dynamicImportScope = null;
   private final ImmutableMap<String, String> inputPathByWebpackId;
 
   FindModuleDependencies(
@@ -73,14 +79,11 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
         return false;
       }
       // Shallow traversal, since we don't need to inspect within functions or expressions.
-      if (parent == null
-          || NodeUtil.isControlStructure(parent)
-          || NodeUtil.isStatementBlock(parent)) {
+      if (NodeUtil.isShallowStatementTree(parent)) {
         if (n.isExprResult()) {
           Node maybeGetProp = n.getFirstFirstChild();
           if (maybeGetProp != null
-              && (maybeGetProp.matchesQualifiedName("goog.provide")
-                  || maybeGetProp.matchesQualifiedName("goog.module"))) {
+              && (GOOG_PROVIDE.matches(maybeGetProp) || GOOG_MODULE.matches(maybeGetProp))) {
             found = true;
             return false;
           }
@@ -127,7 +130,7 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
     if (supportsCommonJsModules
         && n.isFunction()
         && ProcessCommonJSModules.isCommonJsDynamicImportCallback(
-            n, compiler.getOptions().moduleResolutionMode)) {
+            n, compiler.getOptions().getModuleResolutionMode())) {
       if (dynamicImportScope == null) {
         dynamicImportScope = t.getScope();
       }
@@ -138,19 +141,21 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
-    ModuleLoader.ResolutionMode resolutionMode = compiler.getOptions().moduleResolutionMode;
-    if (parent == null
-        || NodeUtil.isControlStructure(parent)
-        || NodeUtil.isStatementBlock(parent)) {
+    ModuleLoader.ResolutionMode resolutionMode = compiler.getOptions().getModuleResolutionMode();
+    if (NodeUtil.isShallowStatementTree(parent)) {
       if (n.isExprResult()) {
         Node maybeGetProp = n.getFirstFirstChild();
         if (maybeGetProp != null
-            && (maybeGetProp.matchesQualifiedName("goog.provide")
-                || maybeGetProp.matchesQualifiedName("goog.module"))) {
+            && (GOOG_PROVIDE.matches(maybeGetProp) || GOOG_MODULE.matches(maybeGetProp))) {
           moduleType = ModuleType.GOOG;
           return;
         }
       }
+    }
+
+    // goog.requireDynamic()
+    if (NodeUtil.isGoogRequireDynamicCall(n)) {
+      t.getInput().addRequireDynamicImports(n.getLastChild().getString());
     }
 
     if (supportsEs6Modules && n.isExport()) {
@@ -165,6 +170,17 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
     } else if (supportsEs6Modules && n.isImport()) {
       moduleType = ModuleType.ES6;
       addEs6ModuleImportToGraph(t, n);
+    } else if (supportsEs6Modules
+        && n.getToken() == Token.DYNAMIC_IMPORT
+        && n.getFirstChild().isString()) {
+      String path = n.getFirstChild().getString();
+      ModuleLoader.ModulePath modulePath =
+          t.getInput()
+              .getPath()
+              .resolveJsModule(path, n.getSourceFileName(), n.getLineno(), n.getCharno());
+      if (modulePath != null) {
+        t.getInput().addDynamicRequire(modulePath.toModuleName());
+      }
     } else if (supportsCommonJsModules) {
       if (moduleType != ModuleType.GOOG
           && ProcessCommonJSModules.isCommonJsExport(t, n, resolutionMode)) {
@@ -193,10 +209,9 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
 
     if (parent != null
         && (parent.isExprResult() || !t.inGlobalHoistScope())
-        && n.isCall()
-        && n.getFirstChild().matchesQualifiedName("goog.require")
+        && NodeUtil.isGoogRequireCall(n)
         && n.getSecondChild() != null
-        && n.getSecondChild().isString()) {
+        && n.getSecondChild().isStringLit()) {
       String namespace = n.getSecondChild().getString();
       if (namespace.startsWith("goog.")) {
         t.getInput().addOrderedRequire(Require.BASE);
@@ -215,9 +230,7 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
     }
   }
 
-  /**
-   * Adds an es6 module from an import node (import or export statement) to the graph.
-   */
+  /** Adds an es6 module from an import node (import or export statement) to the graph. */
   private void addEs6ModuleImportToGraph(NodeTraversal t, Node n) {
     String moduleName = getEs6ModuleNameFromImportNode(t, n);
     if (moduleName.startsWith("goog.")) {
@@ -226,9 +239,7 @@ public class FindModuleDependencies implements NodeTraversal.ScopedCallback {
     t.getInput().addOrderedRequire(Require.es6Import(moduleName, n.getLastChild().getString()));
   }
 
-  /**
-   * Get the module name from an import node (import or export statement).
-   */
+  /** Get the module name from an import node (import or export statement). */
   private String getEs6ModuleNameFromImportNode(NodeTraversal t, Node n) {
     String importName = n.getLastChild().getString();
     boolean isNamespaceImport = importName.startsWith("goog:");

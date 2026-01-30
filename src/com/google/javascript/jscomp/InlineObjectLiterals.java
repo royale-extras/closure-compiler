@@ -18,29 +18,26 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.Behavior;
+import com.google.javascript.jscomp.ReferenceCollector.Behavior;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.TokenStream;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
- * Using the infrastructure provided by {@link ReferenceCollectingCallback},
- * identify variables that are only ever assigned to object literals
- * and that are never used in entirety, and expand the objects into
+ * Using the infrastructure provided by {@link ReferenceCollector}, identify variables that are only
+ * ever assigned to object literals and that are never used in entirety, and expand the objects into
  * individual variables.
  *
- * Based on the InlineVariables pass
+ * <p>Based on the InlineVariables pass
  */
 class InlineObjectLiterals implements CompilerPass {
 
@@ -51,33 +48,30 @@ class InlineObjectLiterals implements CompilerPass {
 
   private final Supplier<String> safeNameIdSupplier;
 
-  InlineObjectLiterals(
-      AbstractCompiler compiler,
-      Supplier<String> safeNameIdSupplier) {
+  InlineObjectLiterals(AbstractCompiler compiler, Supplier<String> safeNameIdSupplier) {
     this.compiler = compiler;
     this.safeNameIdSupplier = safeNameIdSupplier;
   }
 
   @Override
   public void process(Node externs, Node root) {
-    ReferenceCollectingCallback callback =
-        new ReferenceCollectingCallback(
+    ReferenceCollector callback =
+        new ReferenceCollector(
             compiler, new InliningBehavior(), new SyntacticScopeCreator(compiler));
     callback.process(externs, root);
   }
 
   /**
-   * Builds up information about nodes in each scope. When exiting the
-   * scope, inspects all variables in that scope, and inlines any
-   * that we can.
+   * Builds up information about nodes in each scope. When exiting the scope, inspects all variables
+   * in that scope, and inlines any that we can.
    */
   private class InliningBehavior implements Behavior {
 
     /**
-     * A list of variables that should not be inlined, because their
-     * reference information is out of sync with the state of the AST.
+     * A list of variables that should not be inlined, because their reference information is out of
+     * sync with the state of the AST.
      */
-    private final Set<Var> staleVars = new HashSet<>();
+    private final Set<Var> staleVars = new LinkedHashSet<>();
 
     @Override
     public void afterExitScope(NodeTraversal t, ReferenceMap referenceMap) {
@@ -108,19 +102,20 @@ class InlineObjectLiterals implements CompilerPass {
      * the ReferenceCollection invalid.
      */
     private void recordStaleVarReferencesInTree(Node root, final Scope scope) {
-      NodeUtil.visitPreOrder(root, new NodeUtil.Visitor() {
-        @Override
-        public void visit(Node node) {
-          if (node.isName()) {
-            staleVars.add(scope.getVar(node.getString()));
-          }
-        }
-      }, NodeUtil.MATCH_NOT_FUNCTION);
+      NodeUtil.visitPreOrder(
+          root,
+          new NodeUtil.Visitor() {
+            @Override
+            public void visit(Node node) {
+              if (node.isName()) {
+                staleVars.add(scope.getVar(node.getString()));
+              }
+            }
+          },
+          NodeUtil.MATCH_NOT_FUNCTION);
     }
 
-    /**
-     * Whether the given variable is forbidden from being inlined.
-     */
+    /** Whether the given variable is forbidden from being inlined. */
     private boolean isVarInlineForbidden(Var var) {
       // A variable may not be inlined if:
       // 1) The variable is defined in the externs
@@ -134,16 +129,15 @@ class InlineObjectLiterals implements CompilerPass {
 
       return var.isGlobal()
           || var.isExtern()
-          || compiler.getCodingConvention().isExported(var.getName())
-          || compiler
-              .getCodingConvention()
-              .isPropertyRenameFunction(var.getNameNode().getQualifiedName())
+          || compiler.getCodingConvention().isExported(var.getName(), /* local= */ true)
+          || compiler.getCodingConvention().isPropertyRenameFunction(var.getNameNode())
           || staleVars.contains(var);
     }
 
     /**
-     * Counts the number of direct (full) references to an object.
-     * Specifically, we check for references of the following type:
+     * Counts the number of direct (full) references to an object. Specifically, we check for
+     * references of the following type:
+     *
      * <pre>
      *   x;
      *   x.fn();
@@ -151,7 +145,7 @@ class InlineObjectLiterals implements CompilerPass {
      */
     private boolean isInlinableObject(List<Reference> refs) {
       boolean ret = false;
-      Set<String> validProperties = new HashSet<>();
+      Set<String> validProperties = new LinkedHashSet<>();
       for (Reference ref : refs) {
         Node name = ref.getNode();
         Node parent = ref.getParent();
@@ -163,8 +157,7 @@ class InlineObjectLiterals implements CompilerPass {
         if (parent.isGetProp()) {
           checkState(parent.getFirstChild() == name);
           // A call target may be using the object as a 'this' value.
-          if (grandparent.isCall()
-              && grandparent.getFirstChild() == parent) {
+          if (grandparent.isCall() && grandparent.getFirstChild() == parent) {
             return false;
           }
 
@@ -182,7 +175,7 @@ class InlineObjectLiterals implements CompilerPass {
           // We short-circuit this problem by bailing out if we see a reference
           // to a property that isn't defined on the object literal. This
           // isn't a perfect algorithm, but it should catch most cases.
-          String propName = parent.getLastChild().getString();
+          String propName = parent.getString();
           if (!validProperties.contains(propName)) {
             if (NodeUtil.isNameDeclOrSimpleAssignLhs(parent, grandparent)) {
               validProperties.add(propName);
@@ -195,7 +188,7 @@ class InlineObjectLiterals implements CompilerPass {
 
         // Only rewrite VAR declarations or simple assignment statements
         if (!isVarOrAssignExprLhs(name)) {
-           return false;
+          return false;
         }
 
         // Don't try to handle rewriting VAR/CONST/LET declarations inside for loops.
@@ -225,26 +218,19 @@ class InlineObjectLiterals implements CompilerPass {
         // but x = {a: 1, b: x.a} is.
         //
         // Also, ES5 getters/setters aren't handled by this pass.
-        for (Node child = val.getFirstChild(); child != null;
-             child = child.getNext()) {
+        for (Node child = val.getFirstChild(); child != null; child = child.getNext()) {
           switch (child.getToken()) {
+            case GETTER_DEF, SETTER_DEF, COMPUTED_PROP, OBJECT_SPREAD -> {
               // ES5 get/set not supported.
-            case GETTER_DEF:
-            case SETTER_DEF:
               // Don't inline computed property names
-            case COMPUTED_PROP:
               // Spread can overwrite any preceding prop if there are matching keys.
               // TODO(b/126567617): Allow inlining props declared after the SPREAD.
-            case OBJECT_SPREAD:
               return false;
-
-            case MEMBER_FUNCTION_DEF:
-            case STRING_KEY:
-              break;
-
-            default:
-              throw new IllegalStateException(
-                  "Unexpected child of OBJECTLIT: " + child.toStringTree());
+            }
+            case MEMBER_FUNCTION_DEF, STRING_KEY -> {}
+            default ->
+                throw new IllegalStateException(
+                    "Unexpected child of OBJECTLIT: " + child.toStringTree());
           }
 
           validProperties.add(child.getString());
@@ -265,7 +251,6 @@ class InlineObjectLiterals implements CompilerPass {
           }
         }
 
-
         // We have found an acceptable object literal assignment. As
         // long as there are no other assignments that mess things up,
         // we can inline.
@@ -283,12 +268,10 @@ class InlineObjectLiterals implements CompilerPass {
     }
 
     /**
-     * Computes a list of ever-referenced keys in the object being
-     * inlined, and returns a mapping of key name -> generated
-     * variable name.
+     * Computes a list of ever-referenced keys in the object being inlined, and returns a mapping of
+     * key name -> generated variable name.
      */
-    private Map<String, String> computeVarList(
-        ReferenceCollection referenceInfo) {
+    private Map<String, String> computeVarList(ReferenceCollection referenceInfo) {
       Map<String, String> varmap = new LinkedHashMap<>();
 
       for (Reference ref : referenceInfo.references) {
@@ -296,8 +279,7 @@ class InlineObjectLiterals implements CompilerPass {
           Node val = ref.getAssignedValue();
           if (val != null) {
             checkState(val.isObjectLit(), val);
-            for (Node child = val.getFirstChild(); child != null;
-                 child = child.getNext()) {
+            for (Node child = val.getFirstChild(); child != null; child = child.getNext()) {
               String varname = child.getString();
               if (varmap.containsKey(varname)) {
                 continue;
@@ -317,7 +299,7 @@ class InlineObjectLiterals implements CompilerPass {
           checkState(getprop.isGetProp(), getprop);
 
           // The key being looked up in the original map.
-          String varname = getprop.getLastChild().getString();
+          String varname = getprop.getString();
           if (varmap.containsKey(varname)) {
             continue;
           }
@@ -331,50 +313,39 @@ class InlineObjectLiterals implements CompilerPass {
     }
 
     /**
-     * Populates a map of key names -> initial assigned values. The
-     * object literal these are being pulled from is invalidated as
-     * a result.
+     * Populates a map of key names -> initial assigned values. The object literal these are being
+     * pulled from is invalidated as a result.
      */
     private void fillInitialValues(Reference init, Map<String, Node> initvals) {
       Node object = init.getAssignedValue();
       checkState(object.isObjectLit(), object);
-      for (Node key = object.getFirstChild(); key != null;
-           key = key.getNext()) {
+      for (Node key = object.getFirstChild(); key != null; key = key.getNext()) {
         initvals.put(key.getString(), key.removeFirstChild());
       }
     }
 
     /**
-     * Replaces an assignment like x = {...} with t1=a,t2=b,t3=c,true.
-     * Note that the resulting expression will always evaluate to
-     * true, as would the x = {...} expression.
+     * Replaces an assignment like x = {...} with t1=a,t2=b,t3=c,true. Note that the resulting
+     * expression will always evaluate to true, as would the x = {...} expression.
      */
-    private void replaceAssignmentExpression(Var v, Reference ref,
-                                             Map<String, String> varmap) {
+    private void replaceAssignmentExpression(Var v, Reference ref, Map<String, String> varmap) {
       // Compute all of the assignments necessary
       List<Node> nodes = new ArrayList<>();
       Node val = ref.getAssignedValue();
       recordStaleVarReferencesInTree(val, v.getScope());
       checkState(val.isObjectLit(), val);
       Set<String> all = new LinkedHashSet<>(varmap.keySet());
-      for (Node key = val.getFirstChild(); key != null;
-           key = key.getNext()) {
+      for (Node key = val.getFirstChild(); key != null; key = key.getNext()) {
         String var = key.getString();
         Node value = key.removeFirstChild();
         // TODO(user): Copy type information.
-        nodes.add(
-            IR.assign(
-                IR.name(varmap.get(var)),
-                value));
+        nodes.add(IR.assign(IR.name(varmap.get(var)), value));
         all.remove(var);
       }
 
       // TODO(user): Better source information.
       for (String var : all) {
-        nodes.add(
-            IR.assign(
-                IR.name(varmap.get(var)),
-                NodeUtil.newUndefinedNode(null)));
+        nodes.add(IR.assign(IR.name(varmap.get(var)), NodeUtil.newUndefinedNode(null)));
       }
 
       Node replacement;
@@ -403,7 +374,7 @@ class InlineObjectLiterals implements CompilerPass {
       }
 
       Node replace = ref.getParent();
-      replacement.useSourceInfoIfMissingFromForTree(replace);
+      replacement.srcrefTreeIfMissing(replace);
 
       if (NodeUtil.isNameDeclaration(replace)) {
         replace.replaceWith(NodeUtil.newExpr(replacement));
@@ -412,17 +383,13 @@ class InlineObjectLiterals implements CompilerPass {
       }
     }
 
-    /**
-     * Splits up the object literal into individual variables, and
-     * updates all uses.
-     */
-    private void splitObject(Var v, Reference init,
-                             ReferenceCollection referenceInfo) {
+    /** Splits up the object literal into individual variables, and updates all uses. */
+    private void splitObject(Var v, Reference init, ReferenceCollection referenceInfo) {
       // First figure out the FULL set of possible keys, so that they
       // can all be properly set as necessary.
       Map<String, String> varmap = computeVarList(referenceInfo);
 
-      Map<String, Node> initvals = new HashMap<>();
+      Map<String, Node> initvals = new LinkedHashMap<>();
       // Figure out the top-level of the var assign node. If it's a plain
       // ASSIGN, then there's an EXPR_STATEMENT above it, if it's a
       // VAR then it should be directly replaced.
@@ -432,10 +399,23 @@ class InlineObjectLiterals implements CompilerPass {
       if (defined) {
         vnode = init.getParent();
         fillInitialValues(init, initvals);
+      } else if (v.getParentNode().isLet() || v.getParentNode().isConst()) {
+        // Find the beginning of the current scope.
+        Node scopeRoot = v.getScope().getRootNode();
+        // Assuming scopeRoot is a BLOCK, then we want to insert at the top of the block, before the
+        // first statement.
+        vnode = scopeRoot.getFirstChild();
+        // Some scope-creating nodes might not be BLOCK nodes
+        if (!NodeUtil.isStatement(vnode) && NodeUtil.isStatement(scopeRoot)) {
+          vnode = scopeRoot;
+        } else if (scopeRoot.isSwitchBody()) {
+          vnode = scopeRoot.getParent();
+        }
       } else {
         // Find the beginning of the function body / script.
         vnode = v.getScope().getClosestHoistScope().getRootNode().getFirstChild();
       }
+
       checkState(NodeUtil.isStatement(vnode), vnode);
 
       for (Map.Entry<String, String> entry : varmap.entrySet()) {
@@ -443,11 +423,11 @@ class InlineObjectLiterals implements CompilerPass {
         Node newVarNode = NodeUtil.newVarNode(entry.getValue(), val);
         if (val == null) {
           // is this right?
-          newVarNode.useSourceInfoIfMissingFromForTree(vnode);
+          newVarNode.srcrefTreeIfMissing(vnode);
         } else {
           recordStaleVarReferencesInTree(val, v.getScope());
         }
-        vnode.getParent().addChildBefore(newVarNode, vnode);
+        newVarNode.insertBefore(vnode);
         compiler.reportChangeToEnclosingScope(vnode);
       }
 
@@ -471,14 +451,14 @@ class InlineObjectLiterals implements CompilerPass {
         } else if (NodeUtil.isNameDeclaration(ref.getParent())) {
           // The old variable declaration. It didn't have a
           // value. Remove it entirely as it should now be unused.
-          ref.getGrandparent().removeChild(ref.getParent());
+          ref.getParent().detach();
         } else {
           // Make sure that the reference is a GETPROP as we expect it to be.
           Node getprop = ref.getParent();
           checkState(getprop.isGetProp(), getprop);
 
           // The key being looked up in the original map.
-          String var = getprop.getSecondChild().getString();
+          String var = getprop.getString();
 
           // If the variable hasn't already been declared, add an empty
           // declaration near all the other declarations.
@@ -486,8 +466,8 @@ class InlineObjectLiterals implements CompilerPass {
 
           // Replace the GETPROP node with a NAME.
           Node replacement = IR.name(varmap.get(var));
-          replacement.useSourceInfoIfMissingFrom(getprop);
-          ref.getGrandparent().replaceChild(ref.getParent(), replacement);
+          replacement.srcrefIfMissing(getprop);
+          ref.getParent().replaceWith(replacement);
         }
       }
     }

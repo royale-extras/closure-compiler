@@ -19,7 +19,6 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
 
 /**
  * Tries to fuse all the statements in a block into a one statement by using COMMAs or statements.
@@ -33,7 +32,7 @@ import com.google.javascript.rhino.Token;
  * program, and so it makes sense to prefer fusing statements with semicolons rather than commas.
  * This assumption has never been validated on a real program.
  */
-class StatementFusion extends AbstractPeepholeOptimization {
+final class StatementFusion extends AbstractPeepholeOptimization {
 
   @Override
   Node optimizeSubtree(Node n) {
@@ -43,7 +42,7 @@ class StatementFusion extends AbstractPeepholeOptimization {
 
     Node start = n.getFirstChild();
     Node end = n.getLastChild();
-    Node result = fuseIntoOneStatement(n, start, end);
+    Node result = fuseIntoOneStatement(start, end);
     fuseExpressionIntoControlFlowStatement(result, n.getLastChild());
 
     reportChangeToEnclosingScope(n);
@@ -73,28 +72,30 @@ class StatementFusion extends AbstractPeepholeOptimization {
 
   private boolean isFusableControlStatement(Node n) {
     switch (n.getToken()) {
-      case IF:
-      case THROW:
-      case SWITCH:
-      case EXPR_RESULT:
+      case IF, THROW, SWITCH, EXPR_RESULT -> {
         return true;
-      case RETURN:
+      }
+      case RETURN -> {
         // We don't want to add a new return value.
         return n.hasChildren();
-      case FOR:
+      }
+      case FOR -> {
         // Avoid cases where we have for(var x;_;_) { ....
         return !NodeUtil.isNameDeclaration(n.getFirstChild());
-      case FOR_IN:
+      }
+      case FOR_IN -> {
         // Avoid cases where we have for(var x = foo() in a) { ....
         return !mayHaveSideEffects(n.getFirstChild());
-      case LABEL:
+      }
+      case LABEL -> {
         return isFusableControlStatement(n.getLastChild());
-      case BLOCK:
+      }
+      case BLOCK -> {
         return (isASTNormalized() || NodeUtil.canMergeBlock(n))
             && !n.isSyntheticBlock()
             && isFusableControlStatement(n.getFirstChild());
-      default:
-        break;
+      }
+      default -> {}
     }
     return false;
   }
@@ -102,12 +103,11 @@ class StatementFusion extends AbstractPeepholeOptimization {
   /**
    * Given a block, fuse a list of statements with comma's.
    *
-   * @param parent The parent that contains the statements.
    * @param first The first statement to fuse (inclusive)
    * @param last The last statement to fuse (exclusive)
    * @return A single statement that contains all the fused statement as one.
    */
-  private static Node fuseIntoOneStatement(Node parent, Node first, Node last) {
+  private static Node fuseIntoOneStatement(Node first, Node last) {
     // Nothing to fuse if there is only one statement.
     if (first.getNext() == last) {
       return first;
@@ -118,10 +118,9 @@ class StatementFusion extends AbstractPeepholeOptimization {
 
     Node next = null;
     for (Node cur = first.getNext(); cur != last; cur = next) {
-      commaTree = fuseExpressionIntoExpression(
-          commaTree, cur.removeFirstChild());
+      commaTree = AstManipulations.fuseExpressions(commaTree, cur.removeFirstChild());
       next = cur.getNext();
-      parent.removeChild(cur);
+      cur.detach();
     }
 
     // Step two: The last EXPR_RESULT will now hold the comma tree with all
@@ -138,65 +137,29 @@ class StatementFusion extends AbstractPeepholeOptimization {
     // n - 1 statements (which can be used in an expression) and the last
     // statement. We perform specific fusion based on the last statement's type.
     switch (control.getToken()) {
-      case IF:
-      case RETURN:
-      case THROW:
-      case SWITCH:
-      case EXPR_RESULT:
-      case FOR:
+      case IF, RETURN, THROW, SWITCH, EXPR_RESULT, FOR -> {
         before.detach();
         fuseExpressionIntoFirstChild(before.removeFirstChild(), control);
-        return;
-      case FOR_IN:
+      }
+      case FOR_IN -> {
         before.detach();
         fuseExpressionIntoSecondChild(before.removeFirstChild(), control);
-        return;
-      case LABEL:
-        fuseExpressionIntoControlFlowStatement(before, control.getLastChild());
-        return;
-      case BLOCK:
-        fuseExpressionIntoControlFlowStatement(before, control.getFirstChild());
-        return;
-      default:
-        throw new IllegalStateException("Statement fusion missing.");
-    }
-  }
-
-  // exp1, exp1
-  static Node fuseExpressionIntoExpression(Node exp1, Node exp2) {
-    if (exp2.isEmpty()) {
-      return exp1;
-    }
-    Node comma = new Node(Token.COMMA, exp1);
-    comma.useSourceInfoIfMissingFrom(exp2);
-
-    // We can just join the new comma expression with another comma but
-    // lets keep all the comma's in a straight line. That way we can use
-    // tree comparison.
-    if (exp2.isComma()) {
-      Node leftMostChild = exp2;
-      while (leftMostChild.isComma()) {
-        leftMostChild = leftMostChild.getFirstChild();
       }
-      Node parent = leftMostChild.getParent();
-      comma.addChildToBack(leftMostChild.detach());
-      parent.addChildToFront(comma);
-      return exp2;
-    } else {
-      comma.addChildToBack(exp2);
-      return comma;
+      case LABEL -> fuseExpressionIntoControlFlowStatement(before, control.getLastChild());
+      case BLOCK -> fuseExpressionIntoControlFlowStatement(before, control.getFirstChild());
+      default -> throw new IllegalStateException("Statement fusion missing.");
     }
   }
 
-  protected static void fuseExpressionIntoFirstChild(Node exp, Node stmt) {
+  private static void fuseExpressionIntoFirstChild(Node exp, Node stmt) {
     Node val = stmt.removeFirstChild();
-    Node comma = fuseExpressionIntoExpression(exp, val);
+    Node comma = AstManipulations.fuseExpressions(exp, val);
     stmt.addChildToFront(comma);
   }
 
-  protected static void fuseExpressionIntoSecondChild(Node exp, Node stmt) {
+  private static void fuseExpressionIntoSecondChild(Node exp, Node stmt) {
     Node val = stmt.getSecondChild().detach();
-    Node comma = fuseExpressionIntoExpression(exp, val);
-    stmt.addChildAfter(comma, stmt.getFirstChild());
+    Node comma = AstManipulations.fuseExpressions(exp, val);
+    comma.insertAfter(stmt.getFirstChild());
   }
 }

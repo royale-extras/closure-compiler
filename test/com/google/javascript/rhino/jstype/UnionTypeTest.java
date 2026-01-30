@@ -41,6 +41,8 @@ package com.google.javascript.rhino.jstype;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.rhino.testing.TypeSubject.assertType;
 
+import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.testing.Asserts;
 import com.google.javascript.rhino.testing.BaseJSTypeTestCase;
 import com.google.javascript.rhino.testing.MapBasedScope;
@@ -57,12 +59,19 @@ public class UnionTypeTest extends BaseJSTypeTestCase {
   private ObjectType sub1;
   private ObjectType sub2;
   private ObjectType sub3;
+  private ObjectType baseNameConflict;
 
   @Before
   public void setUp() throws Exception {
 
     try (JSTypeResolver.Closer closer = this.registry.getResolver().openForDefinition()) {
       this.base =
+          FunctionType.builder(registry)
+              .forConstructor()
+              .withName("Base")
+              .build()
+              .getInstanceType();
+      this.baseNameConflict =
           FunctionType.builder(registry)
               .forConstructor()
               .withName("Base")
@@ -333,7 +342,7 @@ public class UnionTypeTest extends BaseJSTypeTestCase {
     assertThat(stringOrNumber.getLeastSupertype(stringOrBoolean).toString())
         .isEqualTo("(boolean|number|string)");
     assertThat(stringOrNumber.getGreatestSubtype(stringOrBoolean).toString()).isEqualTo("string");
-    assertThat(stringOrNumber.testForEquality(stringOrBoolean)).isEqualTo(TernaryValue.UNKNOWN);
+    assertThat(stringOrNumber.testForEquality(stringOrBoolean)).isEqualTo(Tri.UNKNOWN);
     assertThat(stringOrNumber.getTypesUnderEquality(stringOrBoolean).typeA.toString())
         .isEqualTo("(number|string)");
     assertThat(stringOrNumber.getTypesUnderShallowEquality(stringOrBoolean).typeA.toString())
@@ -351,8 +360,7 @@ public class UnionTypeTest extends BaseJSTypeTestCase {
         .isEqualTo("(boolean|number|string)");
     assertThat(stringOrNumberProxy.getGreatestSubtype(stringOrBooleanProxy).toString())
         .isEqualTo("string");
-    assertThat(stringOrNumberProxy.testForEquality(stringOrBooleanProxy))
-        .isEqualTo(TernaryValue.UNKNOWN);
+    assertThat(stringOrNumberProxy.testForEquality(stringOrBooleanProxy)).isEqualTo(Tri.UNKNOWN);
     assertThat(stringOrNumberProxy.getTypesUnderEquality(stringOrBooleanProxy).typeA.toString())
         .isEqualTo("(number|string)");
     assertThat(
@@ -406,7 +414,7 @@ public class UnionTypeTest extends BaseJSTypeTestCase {
   public void testCollapseProxyUnion() {
     // Make sure we don't unbox the proxy.
     ProxyObjectType type = new ProxyObjectType(registry, OBJECT_TYPE);
-    assertThat(type == type.collapseUnion()).isTrue();
+    assertThat(type.collapseUnion()).isSameInstanceAs(type);
   }
 
   @Test
@@ -438,5 +446,55 @@ public class UnionTypeTest extends BaseJSTypeTestCase {
 
     assertType(numberUnion).isEqualTo(NUMBER_TYPE);
     assertType(NUMBER_TYPE).isEqualTo(numberUnion);
+  }
+
+  @Test
+  public void testUnionOfResolvedAlternates_isNotRebuilt_duringResolution() {
+    // Given
+    assertType(NUMBER_TYPE).isResolved();
+    assertType(STRING_TYPE).isResolved();
+
+    // When
+    UnionType union;
+    ImmutableList<JSType> originalAlternates;
+    try (JSTypeResolver.Closer closer = registry.getResolver().openForDefinition()) {
+      union = (UnionType) registry.createUnionType(NUMBER_TYPE, STRING_TYPE);
+      assertType(union).isUnresolved();
+
+      originalAlternates = union.getAlternates();
+    }
+    assertType(union).isResolved();
+
+    // Then
+    assertThat(originalAlternates).isSameInstanceAs(union.getAlternates());
+  }
+
+  @Test
+  public void testUnionOfResolvedAlternates_isRebuilt_ifAlternatedAddedWhileUnresolved() {
+    // Given
+    assertType(NUMBER_TYPE).isResolved();
+    UnionType.Builder builder = UnionType.builder(registry).addAlternate(NUMBER_TYPE);
+
+    // When
+    try (JSTypeResolver.Closer closer = registry.getResolver().openForDefinition()) {
+      NamedType numberProxy =
+          NamedType.builder(registry, "NumberProxy")
+              .setResolutionKind(NamedType.ResolutionKind.NONE)
+              .setReferencedType(NUMBER_TYPE)
+              .build();
+      assertType(numberProxy).isUnresolved();
+
+      builder.addAlternate(numberProxy);
+    }
+    JSType result = builder.build();
+
+    // Then
+    assertThat(result.getUnionMembers()).hasSize(1);
+    assertType(result).isEqualTo(NUMBER_TYPE);
+  }
+
+  @Test
+  public void testToStringNameConflict() {
+    assertThat(createUnionType(base, baseNameConflict).toString()).isEqualTo("(Base|Base)");
   }
 }

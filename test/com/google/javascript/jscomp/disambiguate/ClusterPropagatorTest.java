@@ -30,8 +30,8 @@ public final class ClusterPropagatorTest {
 
   private final ClusterPropagator propagator = new ClusterPropagator();
 
-  private final FlatType src = FlatType.createForTesting(-1);
-  private final FlatType dest = FlatType.createForTesting(-2);
+  private final ColorGraphNode src = ColorGraphNode.createForTesting(-1);
+  private final ColorGraphNode dest = ColorGraphNode.createForTesting(-2);
 
   private final PropertyClustering prop = new PropertyClustering("prop");
 
@@ -79,7 +79,7 @@ public final class ClusterPropagatorTest {
   public void propagation_doesNotMergeProperties_thatAreInvalidated() {
     // Given
     associate(this.prop, this.src);
-    this.prop.invalidate();
+    this.prop.invalidate(Invalidation.wellKnownProperty());
 
     // When
     this.propagateFromSrcToDest();
@@ -89,42 +89,14 @@ public final class ClusterPropagatorTest {
     assertThat(this.dest.getAssociatedProps()).isEmpty();
   }
 
-  @Test
-  public void propagation_appliesInvalidation_toSrc() {
-    // Given
-    associate(this.prop, this.src);
-    this.src.setInvalidating();
-
-    // When
-    this.propagateFromSrcToDest();
-
-    // Then
-    assertThat(this.result).isFalse();
-    assertThat(this.prop.isInvalidated()).isTrue();
-  }
-
-  @Test
-  public void propagation_appliesInvalidation_toDest_afterCopying() {
-    // Given
-    associate(this.prop, this.src);
-    this.dest.setInvalidating();
-
-    // When
-    this.propagateFromSrcToDest();
-
-    // Then
-    assertThat(this.result).isFalse();
-    assertThat(this.prop.isInvalidated()).isTrue();
-  }
-
   @After
   public void verifyPropertyFlow() {
     ImmutableSet<PropertyClustering> validSrcProps =
-        this.src.getAssociatedProps().stream()
+        this.src.getAssociatedProps().keySet().stream()
             .filter((p) -> !p.isInvalidated())
             .collect(toImmutableSet());
 
-    assertThat(this.dest.getAssociatedProps()).containsAtLeastElementsIn(validSrcProps);
+    assertThat(this.dest.getAssociatedProps().keySet()).containsAtLeastElementsIn(validSrcProps);
   }
 
   @After
@@ -138,19 +110,19 @@ public final class ClusterPropagatorTest {
     }
   }
 
-  private static boolean areAssociated(PropertyClustering prop, FlatType flat) {
+  private static boolean areAssociated(PropertyClustering prop, ColorGraphNode flat) {
     if (prop.getClusters().elements().contains(flat)) {
-      assertThat(flat.getAssociatedProps()).contains(prop);
+      assertThat(flat.getAssociatedProps()).containsKey(prop);
       return true;
     }
 
-    assertThat(flat.getAssociatedProps()).doesNotContain(prop);
+    assertThat(flat.getAssociatedProps()).doesNotContainKey(prop);
     return false;
   }
 
-  private static void associate(PropertyClustering prop, FlatType flat) {
-    flat.getAssociatedProps().add(prop);
-    prop.getClusters().add(flat);
+  private static void associate(PropertyClustering prop, ColorGraphNode node) {
+    node.getAssociatedProps().put(prop, ColorGraphNode.PropAssociation.AST);
+    prop.getClusters().add(node);
   }
 
   private void propagateFromSrcToDest() {

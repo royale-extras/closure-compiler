@@ -34,7 +34,7 @@ public final class UniqueIdSupplierTest {
   @Test
   public void testSingleCompilerInputGeneratesUniqueIds() {
     CompilerInput input = new CompilerInput(SourceFile.fromCode("tmp", "function foo() {}"));
-    int fileHashCode = input.getSourceFile().getOriginalPath().hashCode();
+    int fileHashCode = input.getSourceFile().getName().hashCode();
     String inputHashString = (fileHashCode < 0) ? ("m" + -fileHashCode) : ("" + fileHashCode);
 
     String uniqueId1 = uniqueIdSupplier.getUniqueId(input);
@@ -47,14 +47,37 @@ public final class UniqueIdSupplierTest {
   }
 
   @Test
+  public void testFilePathsHavingSameHashCode_generatesUniqueIds() {
+    // Strings "FB" and "Ea" generate the same hashcode.
+    CompilerInput input1 = new CompilerInput(SourceFile.fromCode("FB", "function foo() {}"));
+    CompilerInput input2 = new CompilerInput(SourceFile.fromCode("Ea", "function foo() {}"));
+
+    String uniqueId1 = uniqueIdSupplier.getUniqueId(input1);
+    String uniqueId2 = uniqueIdSupplier.getUniqueId(input2);
+    assertThat(uniqueId1).isNotEmpty();
+    assertThat(uniqueId2).isNotEmpty();
+    assertThat(uniqueId1).isNotEqualTo(uniqueId2);
+
+    int fileHashCode1 = input1.getSourceFile().getName().hashCode();
+    int fileHashCode2 = input2.getSourceFile().getName().hashCode();
+    String inputHashString1 = (fileHashCode1 < 0) ? ("m" + -fileHashCode1) : ("" + fileHashCode1);
+    String inputHashString2 = (fileHashCode2 < 0) ? ("m" + -fileHashCode2) : ("" + fileHashCode2);
+    // The hash strings for the two files are the same, still the supplier generates unique IDs for
+    // them
+    assertThat(inputHashString1).isEqualTo(inputHashString2);
+    assertThat(uniqueId1).contains(inputHashString1 + "$0");
+    assertThat(uniqueId2).contains(inputHashString2 + "$1");
+  }
+
+  @Test
   public void testMultipleCompilerInputsGenerateUniqueIds() {
     CompilerInput input1 = new CompilerInput(SourceFile.fromCode("tmp1", "function foo() {}"));
-    int inputHashCode1 = input1.getSourceFile().getOriginalPath().hashCode();
+    int inputHashCode1 = input1.getSourceFile().getName().hashCode();
     String inputHashString1 =
         (inputHashCode1 < 0) ? ("m" + -inputHashCode1) : ("" + inputHashCode1);
 
     CompilerInput input2 = new CompilerInput(SourceFile.fromCode("tmp2", "function foo() {}"));
-    int inputHashCode2 = input2.getSourceFile().getOriginalPath().hashCode();
+    int inputHashCode2 = input2.getSourceFile().getName().hashCode();
     String inputHashString2 =
         (inputHashCode2 < 0) ? ("m" + -inputHashCode2) : ("" + inputHashCode2);
 
@@ -84,7 +107,7 @@ public final class UniqueIdSupplierTest {
     assertThat(uniqueId1).isNotEmpty();
     assertThat(uniqueId2).isNotEmpty();
     assertThat(uniqueId1)
-        .isEqualTo(uniqueId2); // differnt IDs for same input with different compilers
+        .isEqualTo(uniqueId2); // different IDs for same input with different compilers
     assertThat(uniqueId1)
         .isNotEqualTo(differentUniqueId1); // different IDs for same input with same compiler
   }

@@ -16,23 +16,43 @@
 
 package com.google.javascript.jscomp.modules;
 
-import com.google.auto.value.AutoValue;
-import com.google.javascript.jscomp.deps.ModuleLoader;
+import static java.util.Objects.requireNonNull;
+
+import com.google.auto.value.AutoBuilder;
+import com.google.javascript.jscomp.deps.ModuleLoader.ModulePath;
 import com.google.javascript.rhino.Node;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An <code>import</code>ed name in a module.
  *
  * <p>See <a href="https://www.ecma-international.org/ecma-262/9.0/index.html#table-39">the
  * ImportEntry in the ECMAScript spec.</a>
+ *
+ * @param moduleRequest Returns the module identifier of this import.
+ * @param importName Returns the name that was imported from the requested module.
+ *     <p>For {@code import *} this will return "*".
+ * @param localName Returns the local name the imported value is bound to.
+ * @param modulePath Returns the path of the containing module, if from an ES module.
+ * @param importNode Returns the import node for source information.
+ * @param nameNode Returns the name node for source information.
  */
-@AutoValue
-public abstract class Import {
-  // Prevent unwanted subclasses.
-  Import() {}
+public record Import(
+    String moduleRequest,
+    String importName,
+    String localName,
+    @Nullable ModulePath modulePath,
+    Node importNode,
+    Node nameNode) {
+  public Import {
+    requireNonNull(moduleRequest, "moduleRequest");
+    requireNonNull(importName, "importName");
+    requireNonNull(localName, "localName");
+    requireNonNull(importNode, "importNode");
+    requireNonNull(nameNode, "nameNode");
+  }
 
-  @AutoValue.Builder
+  @AutoBuilder
   abstract static class Builder {
     abstract Builder moduleRequest(String value);
 
@@ -40,7 +60,7 @@ public abstract class Import {
 
     abstract Builder localName(String value);
 
-    abstract Builder modulePath(ModuleLoader.ModulePath value);
+    abstract Builder modulePath(ModulePath value);
 
     abstract Builder importNode(Node value);
 
@@ -50,29 +70,6 @@ public abstract class Import {
   }
 
   static Builder builder() {
-    return new AutoValue_Import.Builder();
+    return new AutoBuilder_Import_Builder();
   }
-
-  /** Returns the module identifier of this import. */
-  public abstract String moduleRequest();
-
-  /**
-   * Returns the name that was imported from the requested module.
-   *
-   * <p>For {@code import *} this will return "*".
-   */
-  public abstract String importName();
-
-  /** Returns the local name the imported value is bound to. */
-  public abstract String localName();
-
-  /** Returns the path of the containing module, if from an ES module. */
-  @Nullable
-  public abstract ModuleLoader.ModulePath modulePath();
-
-  /** Returns the import node for source information. */
-  public abstract Node importNode();
-
-  /** Returns the name node for source information. */
-  public abstract Node nameNode();
 }

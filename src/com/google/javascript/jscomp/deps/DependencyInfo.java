@@ -17,30 +17,28 @@
 package com.google.javascript.jscomp.deps;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.Streams.stream;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Streams;
 import com.google.errorprone.annotations.Immutable;
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
-/**
- * A data structure for JS dependency information for a single .js file.
- */
-public interface DependencyInfo extends Serializable {
+/** A data structure for JS dependency information for a single .js file. */
+public interface DependencyInfo {
 
   /** A dependency link between two files, e.g. goog.require('namespace'), import 'file'; */
   @AutoValue
   @Immutable
-  abstract class Require implements Serializable {
+  abstract class Require {
     public static final Require BASE = googRequireSymbol("goog");
 
     public enum Type {
@@ -52,12 +50,12 @@ public interface DependencyInfo extends Serializable {
       PARSED_FROM_DEPS,
       /** CommonJS require() call. */
       COMMON_JS,
-      /** Compiler module dependencies. */
-      COMPILER_MODULE
+      /** Compiler chunk graph dependencies. */
+      COMPILER_CHUNK
     }
 
     public static ImmutableList<String> asSymbolList(Iterable<Require> requires) {
-      return Streams.stream(requires).map(Require::getSymbol).collect(toImmutableList());
+      return stream(requires).map(Require::getSymbol).collect(toImmutableList());
     }
 
     public static Require googRequireSymbol(String symbol) {
@@ -76,8 +74,8 @@ public interface DependencyInfo extends Serializable {
       return builder().setRawText(rawPath).setSymbol(symbol).setType(Type.COMMON_JS).build();
     }
 
-    public static Require compilerModule(String symbol) {
-      return builder().setRawText(symbol).setSymbol(symbol).setType(Type.COMPILER_MODULE).build();
+    public static Require compilerChunk(String symbol) {
+      return builder().setRawText(symbol).setSymbol(symbol).setType(Type.COMPILER_CHUNK).build();
     }
 
     public static Require parsedFromDeps(String symbol) {
@@ -132,7 +130,9 @@ public interface DependencyInfo extends Serializable {
   /** Gets the symbols required by this file. */
   ImmutableList<Require> getRequires();
 
-  ImmutableList<String> getRequiredSymbols();
+  default ImmutableList<String> getRequiredSymbols() {
+    return Require.asSymbolList(getRequires());
+  }
 
   /** Gets the symbols type-required by this file (i.e. for typechecking only). */
   ImmutableList<String> getTypeRequires();
@@ -140,29 +140,21 @@ public interface DependencyInfo extends Serializable {
   /** Gets the loading information for this file. */
   ImmutableMap<String, String> getLoadFlags();
 
-  /** Whether the symbol is provided by a module */
-  boolean isModule();
+  /** Whether the symbol is provided by an ES6 module */
+  default boolean isEs6Module() {
+    return Objects.equals(getLoadFlags().get("module"), "es6");
+  }
+
+  /** Whether the symbol is provided by a goog module */
+  default boolean isGoogModule() {
+    return Objects.equals(getLoadFlags().get("module"), "goog");
+  }
 
   /** Whether the file '@externs' annotation. */
   boolean getHasExternsAnnotation();
 
   /** Whether the file has the '@nocompile' annotation. */
   boolean getHasNoCompileAnnotation();
-
-  /**
-   * Abstract base implementation that defines derived accessors such
-   * as {@link #isModule}.
-   */
-  abstract class Base implements DependencyInfo {
-    @Override public boolean isModule() {
-      return "goog".equals(getLoadFlags().get("module"));
-    }
-
-    @Override
-    public ImmutableList<String> getRequiredSymbols() {
-      return Require.asSymbolList(getRequires());
-    }
-  }
 
   /** Utility methods. */
   class Util {
@@ -178,7 +170,7 @@ public interface DependencyInfo extends Serializable {
       writeJsArray(out, info.getProvides());
       out.append(", ");
       writeJsArray(out, Require.asSymbolList(info.getRequires()));
-      Map<String, String> loadFlags = info.getLoadFlags();
+      ImmutableMap<String, String> loadFlags = info.getLoadFlags();
       if (!loadFlags.isEmpty()) {
         out.append(", ");
         writeJsObject(out, loadFlags);

@@ -16,21 +16,22 @@
 package com.google.javascript.jscomp.lint;
 
 import com.google.javascript.jscomp.AbstractCompiler;
+import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
-import com.google.javascript.jscomp.HotSwapCompilerPass;
 import com.google.javascript.jscomp.NodeTraversal;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
 
 /**
  * Check for unused labels blocks. This can help catching errors like:
+ *
  * <pre>
  *   () =&gt; {a: 2}  // Returns undefined, not an Object
  * </pre>
  *
- * <p>Inspired by ESLint (https://github.com/eslint/eslint/blob/master/lib/rules/no-unused-labels.js)
+ * <p>Inspired by ESLint
+ * (https://github.com/eslint/eslint/blob/master/lib/rules/no-unused-labels.js)
  */
-public final class CheckUnusedLabels implements Callback, HotSwapCompilerPass {
+public final class CheckUnusedLabels implements NodeTraversal.Callback, CompilerPass {
   public static final DiagnosticType UNUSED_LABEL = DiagnosticType.disabled(
       "JSC_UNUSED_LABEL", "Unused label {0}.");
 
@@ -58,15 +59,9 @@ public final class CheckUnusedLabels implements Callback, HotSwapCompilerPass {
   }
 
   @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
-  }
-
-  @Override
   public final boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
-      case BREAK:
-      case CONTINUE:
+      case BREAK, CONTINUE -> {
         if (n.hasChildren()) {
           LabelContext temp = currentContext;
           while (temp != null) {
@@ -78,11 +73,10 @@ public final class CheckUnusedLabels implements Callback, HotSwapCompilerPass {
           }
         }
         return false;
-      case LABEL:
-        currentContext = new LabelContext(n.getFirstChild().getString(), currentContext);
-        break;
-      default:
-        break;
+      }
+      case LABEL ->
+          currentContext = new LabelContext(n.getFirstChild().getString(), currentContext);
+      default -> {}
     }
     return true;
   }

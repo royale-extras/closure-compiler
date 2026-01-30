@@ -38,10 +38,11 @@
  * ***** END LICENSE BLOCK ***** */
 package com.google.javascript.rhino.jstype;
 
-import com.google.common.collect.Sets;
+import static com.google.javascript.jscomp.base.JSCompObjects.identical;
+
+import com.google.javascript.jscomp.base.LinkedIdentityHashSet;
 import com.google.javascript.rhino.jstype.ContainsUpperBoundSuperTypeVisitor.Result;
-import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A type visitor that traverse through the referenced types of "forwaring types" to search for a
@@ -57,7 +58,7 @@ import javax.annotation.Nullable;
 final class ContainsUpperBoundSuperTypeVisitor extends Visitor.WithDefaultCase<Result> {
 
   private final JSType target;
-  private final Set<JSType> seen = Sets.newIdentityHashSet();
+  private final LinkedIdentityHashSet<JSType> seen = new LinkedIdentityHashSet<>();
 
   public ContainsUpperBoundSuperTypeVisitor(JSType target) {
     this.target = target;
@@ -69,7 +70,7 @@ final class ContainsUpperBoundSuperTypeVisitor extends Visitor.WithDefaultCase<R
       return Result.ABSENT;
     }
 
-    return JSType.areIdentical(type, this.target) ? Result.PRESENT : Result.ABSENT;
+    return identical(type, this.target) ? Result.PRESENT : Result.ABSENT;
   }
 
   @Override
@@ -89,7 +90,7 @@ final class ContainsUpperBoundSuperTypeVisitor extends Visitor.WithDefaultCase<R
 
   @Override
   public Result caseUnionType(UnionType type) {
-    if (JSType.areIdentical(type, target)) {
+    if (identical(type, target)) {
       return Result.PRESENT;
     }
 
@@ -104,7 +105,7 @@ final class ContainsUpperBoundSuperTypeVisitor extends Visitor.WithDefaultCase<R
   }
 
   private Result caseForwardingType(JSType type, JSType reference) {
-    if (JSType.areIdentical(type, target)) {
+    if (identical(type, target)) {
       return Result.PRESENT;
     } else if (seen.contains(type)) {
       return Result.CYCLE;

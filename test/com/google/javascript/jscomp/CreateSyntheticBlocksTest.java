@@ -15,18 +15,17 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
+
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.Node;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link CreateSyntheticBlocks}
- *
- * @author johnlenz@google.com (John Lenz)
- */
+/** Tests for {@link CreateSyntheticBlocks} */
 @RunWith(JUnit4.class)
 public final class CreateSyntheticBlocksTest extends CompilerTestCase {
   private static final String START_MARKER = "startMarker";
@@ -38,8 +37,6 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
     super.setUp();
     // Can't use compare as a tree because of the added synthetic blocks.
     disableCompareAsTree();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
-    disableLineNumberCheck();
   }
 
   @Override
@@ -48,15 +45,16 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
       @Override
       public void process(Node externs, Node js) {
         new CreateSyntheticBlocks(compiler, START_MARKER, END_MARKER).process(externs, js);
+        Normalize.createNormalizeForOptimizations(compiler).process(externs, js);
         new PeepholeOptimizationsPass(
                 compiler,
                 getName(),
                 new MinimizeExitPoints(),
                 new PeepholeRemoveDeadCode(),
-                new PeepholeMinimizeConditions(true /* late */),
+                new PeepholeMinimizeConditions(/* late= */ true),
                 new PeepholeFoldConstants(true, false /* useTypes */))
             .process(externs, js);
-        new Denormalize(compiler).process(externs, js);
+        new Denormalize(compiler, FeatureSet.BARE_MINIMUM).process(externs, js);
       }
     };
   }
@@ -65,8 +63,7 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
 
   @Test
   public void testFold1() {
-    test("function f() { if (x) return; y(); }",
-         "function f(){x||y()}");
+    test("function f() { if (x) return; y(); }", "function f(){x||y()}");
   }
 
   @Test
@@ -81,15 +78,19 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
 
   @Test
   public void testFold2() {
-    test("function f() { if (x) return; y(); if (a) return; b(); }",
-         "function f(){if(!x){y();a||b()}}");
+    test(
+        "function f() { if (x) return; y(); if (a) return; b(); }",
+        "function f(){if(!x){y();a||b()}}");
   }
 
   @Test
   public void testFoldWithMarkers2() {
-    testSame("function f(){startMarker(\"FOO\");startMarker(\"BAR\");" +
-             "if(x)return;endMarker(\"BAR\");y();if(a)return;" +
-             "endMarker(\"FOO\");b()}");
+    testSame(
+        """
+        function f(){startMarker("FOO");startMarker("BAR");\
+        if(x)return;endMarker("BAR");y();if(a)return;\
+        endMarker("FOO");b()}\
+        """);
   }
 
   @Test
@@ -104,20 +105,17 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
 
   @Test
   public void testUnmatchedEndMarker2() {
-    testError("if(y){startMarker();x()}endMarker()",
-        CreateSyntheticBlocks.UNMATCHED_END_MARKER);
+    testError("if(y){startMarker();x()}endMarker()", CreateSyntheticBlocks.UNMATCHED_END_MARKER);
   }
 
   @Test
   public void testInvalid1() {
-    testError("startMarker() && true",
-        CreateSyntheticBlocks.INVALID_MARKER_USAGE);
+    testError("startMarker() && true", CreateSyntheticBlocks.INVALID_MARKER_USAGE);
   }
 
   @Test
   public void testInvalid2() {
-    testError("false && endMarker()",
-         CreateSyntheticBlocks.INVALID_MARKER_USAGE);
+    testError("false && endMarker()", CreateSyntheticBlocks.INVALID_MARKER_USAGE);
   }
 
   @Test
@@ -140,10 +138,45 @@ public final class CreateSyntheticBlocksTest extends CompilerTestCase {
   public void testArrowFunction() {
     testSame("var y=()=>{startMarker();x();endMarker()}");
     testError(
-        "var y=()=>{startMarker();x();};endMarker()",
-        CreateSyntheticBlocks.UNMATCHED_END_MARKER);
-    testError(
-        "var y=()=>startMarker();",
-        CreateSyntheticBlocks.INVALID_MARKER_USAGE);
+        "var y=()=>{startMarker();x();};endMarker()", CreateSyntheticBlocks.UNMATCHED_END_MARKER);
+    testError("var y=()=>startMarker();", CreateSyntheticBlocks.INVALID_MARKER_USAGE);
+  }
+
+  @Test
+  public void testFunctionDeclaration1() {
+    test(
+        "startMarker(); a(); function fn() {}; b(); endMarker()",
+        "startMarker();var fn=function(){};a();b();endMarker()");
+  }
+
+  @Test
+  public void testFunctionDeclaration2() {
+    testSame("startMarker();a();var fn=function(){};b();endMarker()");
+  }
+
+  @Test
+  public void testClassDeclaration1() {
+    // Document that classes are mishandled with regard to block scoping
+    testSame("startMarker();class C{}endMarker()");
+  }
+
+  @Test
+  public void testVariableDeclaration1() {
+    // Document that let and const are mishandled with regard to block scoping
+    testSame("startMarker();var x=1;endMarker()");
+    testSame("startMarker();let x=1;endMarker()");
+    testSame("startMarker();const x=1;endMarker()");
+  }
+
+  @Test
+  public void testSyntheticBlock_doesNotCreateNewScope() {
+    testSame("startMarker();var x=1;endMarker()");
+    Node script = this.getLastCompiler().getJsRoot().getOnlyChild();
+    assertNode(script).isScript();
+    Node synctheticBlock = script.getFirstChild();
+    assertNode(synctheticBlock).isBlock();
+    assertThat(synctheticBlock.isSyntheticBlock()).isTrue();
+    // confirm that synthetic block does not create a new block scope
+    assertThat(NodeUtil.createsBlockScope(synctheticBlock)).isFalse();
   }
 }

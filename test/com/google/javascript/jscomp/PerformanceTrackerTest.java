@@ -17,6 +17,7 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.CompilerOptions.TracerMode;
@@ -31,11 +32,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for PerformanceTracker.
- *
- * @author dimvar@google.com (Dimitris Vardoulakis)
- */
+/** Unit tests for PerformanceTracker. */
 @RunWith(JUnit4.class)
 public final class PerformanceTrackerTest {
   private final Node emptyExternRoot = new Node(Token.BLOCK);
@@ -129,18 +126,19 @@ public final class PerformanceTrackerTest {
     assertThat(report)
         .containsMatch(
             Pattern.compile(
-                lines(
-                    "Input AST Manifest:",
-                    "token,count",
-                    "BLOCK,3",
-                    "EXPR_RESULT,1",
-                    "FUNCTION,1",
-                    "HOOK,1",
-                    "NAME,1",
-                    "PARAM_LIST,1",
-                    "ROOT,1",
-                    "SCRIPT,1",
-                    "STRING,3"),
+                """
+                Input AST Manifest:
+                token,count
+                BLOCK,3
+                EXPR_RESULT,1
+                FUNCTION,1
+                HOOK,1
+                NAME,1
+                PARAM_LIST,1
+                ROOT,1
+                SCRIPT,1
+                STRINGLIT,3
+                """,
                 Pattern.DOTALL));
   }
 
@@ -151,36 +149,40 @@ public final class PerformanceTrackerTest {
     String report = extractReport(tracker);
     Pattern p =
         Pattern.compile(
-            lines(
-                ".*TOTAL:",
-                "Start time\\(ms\\): [0-9]+",
-                "End time\\(ms\\): [0-9]+",
-                "Wall time\\(ms\\): [0-9]+",
-                "Passes runtime\\(ms\\): [0-9]+",
-                "Max mem usage \\(measured after each pass\\)\\(MB\\): -?[0-9]+",
-                "#Runs: [0-9]+",
-                "#Changing runs: [0-9]+",
-                "#Loopable runs: [0-9]+",
-                "#Changing loopable runs: [0-9]+",
-                "Estimated AST reduction\\(#nodes\\): [0-9]+",
-                "Estimated Reduction\\(bytes\\): [0-9]+",
-                "Estimated GzReduction\\(bytes\\): [0-9]+",
-                "Estimated AST size\\(#nodes\\): -?[0-9]+",
-                "Estimated Size\\(bytes\\): -?[0-9]+",
-                "Estimated GzSize\\(bytes\\): -?[0-9]+",
-                "",
-                "Inputs:",
-                "JS lines:   [0-9]+",
-                "JS sources: [0-9]+",
-                "Extern lines:   [0-9]+",
-                "Extern sources: [0-9]+",
-                "",
-                "Summary:",
-                "pass,runtime,allocMem,runs,changingRuns,astReduction,reduction,gzReduction",
-                "",
-                "Log:",
-                "pass,runtime,allocMem,codeChanged,astReduction,reduction,gzReduction,astSize,size,gzSize",
-                ".*"),
+            """
+            .*TOTAL:
+            Start time\\(ms\\): [0-9]+
+            End time\\(ms\\): [0-9]+
+            Wall time\\(ms\\): [0-9]+
+            Passes runtime\\(ms\\): [0-9]+
+            Max mem usage \\(measured after each pass\\)\\(MB\\): -?[0-9]+
+            #Runs: [0-9]+
+            #Changing runs: [0-9]+
+            #Loopable runs: [0-9]+
+            #Changing loopable runs: [0-9]+
+            Estimated AST reduction\\(#nodes\\): [0-9]+
+            Estimated Reduction\\(bytes\\): [0-9]+
+            Estimated GzReduction\\(bytes\\): [0-9]+
+            Estimated AST size\\(#nodes\\): -?[0-9]+
+            Estimated Size\\(bytes\\): -?[0-9]+
+            Estimated GzSize\\(bytes\\): -?[0-9]+
+
+            DisambiguateProperties: not executed
+            AmbiguateProperties: not executed
+
+            Inputs:
+            JS lines:   [0-9]+
+            JS sources: [0-9]+
+            Extern lines:   [0-9]+
+            Extern sources: [0-9]+
+
+            Summary:
+            pass,runtime,allocMem,runs,changingRuns,astReduction,reduction,gzReduction
+
+            Log:
+            pass,runtime,allocMem,codeChanged,astReduction,reduction,gzReduction,astSize,size,gzSize
+            .*
+            """,
             Pattern.DOTALL);
 
     assertThat(report).matches(p);
@@ -191,10 +193,6 @@ public final class PerformanceTrackerTest {
     try (PrintStream outstream = new PrintStream(output)) {
       tracker.outputTracerReport(outstream);
     }
-    return output.toString();
-  }
-
-  private static String lines(String... lines) {
-    return String.join("\n", lines);
+    return output.toString(UTF_8);
   }
 }

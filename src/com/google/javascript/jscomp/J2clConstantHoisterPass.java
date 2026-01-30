@@ -22,7 +22,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.javascript.rhino.Node;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
@@ -44,22 +44,23 @@ public class J2clConstantHoisterPass implements CompilerPass {
     }
 
     final Multimap<String, Node> fieldAssignments = ArrayListMultimap.create();
-    final Set<Node> hoistableFunctions = new HashSet<>();
-    NodeTraversal.traversePostOrder(
-        compiler,
-        root,
-        (NodeTraversal t, Node node, Node parent) -> {
-          // TODO(stalcup): don't gather assignments ourselves, switch to a persistent
-          // DefinitionUseSiteFinder instead.
-          if (parent != null && NodeUtil.isLValue(node)) {
-            fieldAssignments.put(node.getQualifiedName(), parent);
-          }
+    final Set<Node> hoistableFunctions = new LinkedHashSet<>();
+    NodeTraversal.builder()
+        .setCompiler(compiler)
+        .setCallback(
+            (NodeTraversal t, Node node, Node parent) -> {
+              // TODO(stalcup): don't gather assignments ourselves, switch to a persistent
+              // DefinitionUseSiteFinder instead.
+              if (parent != null && NodeUtil.isLValue(node)) {
+                fieldAssignments.put(node.getQualifiedName(), parent);
+              }
 
-          // TODO(stalcup): convert to a persistent index of hoistable functions.
-          if (isHoistableFunction(t, node)) {
-            hoistableFunctions.add(node);
-          }
-        });
+              // TODO(stalcup): convert to a persistent index of hoistable functions.
+              if (isHoistableFunction(t, node)) {
+                hoistableFunctions.add(node);
+              }
+            })
+        .traverse(root);
 
     for (Collection<Node> assignments : fieldAssignments.asMap().values()) {
       maybeHoistClassField(assignments, hoistableFunctions);
@@ -96,7 +97,7 @@ public class J2clConstantHoisterPass implements CompilerPass {
 
     // And it is assigned to a literal value; hence could be used in static eval and safe to move:
     Node assignmentRhs = clinitAssignment.getSecondChild();
-    if (!NodeUtil.isLiteralValue(assignmentRhs, true /* includeFunctions */)
+    if (!NodeUtil.isLiteralValue(assignmentRhs, /* includeFunctions= */ true)
         || (assignmentRhs.isFunction() && !hoistableFunctions.contains(assignmentRhs))) {
       return;
     }
@@ -119,7 +120,7 @@ public class J2clConstantHoisterPass implements CompilerPass {
     Node declarationInClass = topLevelDeclaration.getFirstChild();
     Node declarationAssignedValue = declarationInClass.getFirstChild();
 
-    Node clinitChangeScope = NodeUtil.getEnclosingChangeScopeRoot(clinitAssignment);
+    Node clinitChangeScope = ChangeTracker.getEnclosingChangeScopeRoot(clinitAssignment);
     // Remove the clinit initialization
     NodeUtil.removeChild(clinitAssignment.getParent(), clinitAssignment);
 
@@ -131,9 +132,9 @@ public class J2clConstantHoisterPass implements CompilerPass {
       declarationInClass.addChildToFront(clinitAssignedValue);
       compiler.reportChangeToEnclosingScope(topLevelDeclaration);
     } else if (!declarationAssignedValue.equals(clinitAssignedValue)) {
-      checkState(NodeUtil.isLiteralValue(declarationAssignedValue, false /* includeFunctions */));
+      checkState(NodeUtil.isLiteralValue(declarationAssignedValue, /* includeFunctions= */ false));
       // Replace the assignment in declaration with the value from clinit
-      declarationInClass.replaceChild(declarationAssignedValue, clinitAssignedValue);
+      declarationAssignedValue.replaceWith(clinitAssignedValue);
       compiler.reportChangeToEnclosingScope(topLevelDeclaration);
     }
     declarationInClass.setDeclaredConstantVar(true);
@@ -149,7 +150,7 @@ public class J2clConstantHoisterPass implements CompilerPass {
         && (!node.getFirstChild().hasChildren()
             || (node.getFirstFirstChild() != null
                 && NodeUtil.isLiteralValue(
-                    node.getFirstFirstChild(), false /* includeFunctions */)));
+                    node.getFirstFirstChild(), /* includeFunctions= */ false)));
   }
 
   private static boolean isClinitFieldAssignment(Node node) {

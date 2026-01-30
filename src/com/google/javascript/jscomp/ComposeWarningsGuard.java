@@ -16,32 +16,35 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.base.Tri;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedSet;
 import java.util.TreeSet;
+import org.jspecify.annotations.Nullable;
 
 /**
- * WarningsGuard that represents just a chain of other guards. For example we
- * could have following chain
- * 1) all warnings outside of /foo/ should be suppressed
- * 2) errors with key JSC_BAR should be marked as warning
- * 3) the rest should be reported as error
+ * WarningsGuard that represents just a chain of other guards. For example we could have following
+ * chain 1) all warnings outside of /foo/ should be suppressed 2) errors with key JSC_BAR should be
+ * marked as warning 3) the rest should be reported as error
  *
- * This class is designed for such behavior.
+ * <p>This class is designed for such behavior.
  */
-public class ComposeWarningsGuard extends WarningsGuard {
+public final class ComposeWarningsGuard extends WarningsGuard {
 
   private static final long serialVersionUID = 1L;
 
   // The order that the guards were added in.
-  private final Map<WarningsGuard, Integer> orderOfAddition = new HashMap<>();
+  private final Map<WarningsGuard, Integer> orderOfAddition = new LinkedHashMap<>();
   private int numberOfAdds = 0;
 
   private final Comparator<WarningsGuard> guardComparator = new GuardComparator(orderOfAddition);
@@ -81,8 +84,7 @@ public class ComposeWarningsGuard extends WarningsGuard {
   }
 
   void addGuard(WarningsGuard guard) {
-    if (guard instanceof ComposeWarningsGuard) {
-      ComposeWarningsGuard composeGuard = (ComposeWarningsGuard) guard;
+    if (guard instanceof ComposeWarningsGuard composeGuard) {
       if (composeGuard.demoteErrors) {
         this.demoteErrors = composeGuard.demoteErrors;
       }
@@ -104,7 +106,7 @@ public class ComposeWarningsGuard extends WarningsGuard {
   }
 
   @Override
-  public CheckLevel level(JSError error) {
+  public @Nullable CheckLevel level(JSError error) {
     for (WarningsGuard guard : guards) {
       CheckLevel newLevel = guard.level(error);
       if (newLevel != null) {
@@ -118,16 +120,35 @@ public class ComposeWarningsGuard extends WarningsGuard {
   }
 
   @Override
-  public boolean disables(DiagnosticGroup group) {
+  public Tri mustRunChecks(DiagnosticGroup group) {
+    // TODO(b/189635620): Merge these helper methods. Why are they asymmetric?
+    boolean enable = this.enables(group);
+    boolean disable = this.disables(group);
+
+    checkState(!enable || !disable, "%s applied to %s", this, group);
+    if (enable) {
+      return Tri.TRUE;
+    } else if (disable) {
+      return Tri.FALSE;
+    } else {
+      return Tri.UNKNOWN;
+    }
+  }
+
+  private boolean disables(DiagnosticGroup group) {
     nextSingleton:
     for (DiagnosticType type : group.getTypes()) {
       DiagnosticGroup singleton = DiagnosticGroup.forType(type);
 
       for (WarningsGuard guard : guards) {
-        if (guard.disables(singleton)) {
-          continue nextSingleton;
-        } else if (guard.enables(singleton)) {
-          return false;
+        switch (guard.mustRunChecks(singleton)) {
+          case TRUE -> {
+            return false;
+          }
+          case FALSE -> {
+            continue nextSingleton;
+          }
+          case UNKNOWN -> {}
         }
       }
 
@@ -137,49 +158,24 @@ public class ComposeWarningsGuard extends WarningsGuard {
     return true;
   }
 
-  /**
-   * Determines whether this guard will "elevate" the status of any disabled
-   * diagnostic type in the group to a warning or an error.
-   */
-  @Override
-  public boolean enables(DiagnosticGroup group) {
+  private boolean enables(DiagnosticGroup group) {
     for (WarningsGuard guard : guards) {
-      if (guard.enables(group)) {
-        return true;
-      } else if (guard.disables(group)) {
-        return false;
+      switch (guard.mustRunChecks(group)) {
+        case TRUE -> {
+          return true;
+        }
+        case FALSE -> {
+          return false;
+        }
+        case UNKNOWN -> {}
       }
     }
 
     return false;
   }
 
-  List<WarningsGuard> getGuards() {
-    return Collections.unmodifiableList(new ArrayList<>(guards));
-  }
-
-  /**
-   * Make a warnings guard that's the same as this one but demotes all
-   * errors to warnings.
-   */
-  ComposeWarningsGuard makeEmergencyFailSafeGuard() {
-    ComposeWarningsGuard safeGuard = new ComposeWarningsGuard();
-    safeGuard.demoteErrors = true;
-    for (WarningsGuard guard : guards.descendingSet()) {
-      safeGuard.addGuard(guard);
-    }
-    return safeGuard;
-  }
-
-  @Override
-  protected ComposeWarningsGuard makeNonStrict() {
-    ComposeWarningsGuard nonStrictGuard = new ComposeWarningsGuard();
-    for (WarningsGuard guard : guards.descendingSet()) {
-      if (!(guard instanceof StrictWarningsGuard)) {
-        nonStrictGuard.addGuard(guard.makeNonStrict());
-      }
-    }
-    return nonStrictGuard;
+  SortedSet<WarningsGuard> getGuards() {
+    return Collections.unmodifiableSortedSet(this.guards);
   }
 
   @Override

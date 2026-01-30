@@ -26,18 +26,15 @@ import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.NodeTraversal;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.jscomp.Scope;
 import com.google.javascript.jscomp.Var;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
-import java.util.HashSet;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /** Checks that exports of ES6 modules are not mutated outside of module initialization. */
-public final class CheckNoMutatedEs6Exports implements Callback, CompilerPass {
+public final class CheckNoMutatedEs6Exports implements NodeTraversal.Callback, CompilerPass {
 
   public static final DiagnosticType MUTATED_EXPORT =
       DiagnosticType.warning(
@@ -50,7 +47,7 @@ public final class CheckNoMutatedEs6Exports implements Callback, CompilerPass {
   private final AbstractCompiler compiler;
   private final Multimap<String, Node> mutatedNames =
       MultimapBuilder.hashKeys().hashSetValues().build();
-  private final Set<String> exportedLocalNames = new HashSet<>();
+  private final Set<String> exportedLocalNames = new LinkedHashSet<>();
 
   public CheckNoMutatedEs6Exports(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -78,24 +75,26 @@ public final class CheckNoMutatedEs6Exports implements Callback, CompilerPass {
 
   @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
-    switch (n.getToken()) {
-      case SCRIPT:
-        return n.getBooleanProp(Node.ES6_MODULE);
-      case EXPORT:
+    return switch (n.getToken()) {
+      case SCRIPT -> n.getBooleanProp(Node.ES6_MODULE);
+      case EXPORT -> {
         visitExport(n);
-        return true;
-      case NAME:
+        yield true;
+      }
+      case NAME -> {
         visitName(t, n);
-        return true;
-      default:
-        return true;
-    }
+        yield true;
+      }
+      default -> true;
+    };
   }
 
   private void visitExport(Node export) {
-    if (export.hasOneChild() && export.getFirstChild().getToken() == Token.EXPORT_SPECS) {
+    if (export.hasOneChild() && export.getFirstChild().isExportSpecs()) {
       // export {a, b as c};
-      for (Node exportSpec : export.getFirstChild().children()) {
+      for (Node exportSpec = export.getFirstFirstChild();
+          exportSpec != null;
+          exportSpec = exportSpec.getNext()) {
         checkState(exportSpec.hasTwoChildren());
         exportedLocalNames.add(exportSpec.getFirstChild().getString());
       }
@@ -105,12 +104,12 @@ public final class CheckNoMutatedEs6Exports implements Callback, CompilerPass {
       if (NodeUtil.isNameDeclaration(declaration)) {
         // export const x = 0;
         // export let a, b, c;
-        List<Node> lhsNodes = NodeUtil.findLhsNodesInNode(declaration);
-
-        for (Node lhs : lhsNodes) {
-          checkState(lhs.isName());
-          exportedLocalNames.add(lhs.getString());
-        }
+        NodeUtil.visitLhsNodesInNode(
+            declaration,
+            (lhs) -> {
+              checkState(lhs.isName());
+              exportedLocalNames.add(lhs.getString());
+            });
       } else if (export.getBooleanProp(Node.EXPORT_DEFAULT)) {
         // export default function() {}
         // export default function foo() {}

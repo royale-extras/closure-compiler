@@ -19,17 +19,15 @@ package com.google.javascript.jscomp.deps;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMultiset;
-import com.google.common.collect.Multimap;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Multimaps;
-import com.google.common.collect.Multiset;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.Compiler;
+import com.google.javascript.jscomp.CompilerInput;
 import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.ErrorManager;
 import com.google.javascript.jscomp.JSError;
-import com.google.javascript.jscomp.JsAst;
 import com.google.javascript.jscomp.LazyParsedDependencyInfo;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.deps.DependencyInfo.Require;
@@ -48,6 +46,7 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Generates deps.js files by scanning JavaScript files for
@@ -97,10 +96,6 @@ public class DepsGenerator {
       "DEPS_DUPE_PROVIDES",
       "Namespace \"{0}\" is already provided in other file {1}");
 
-  static final DiagnosticType DUPE_REQUIRE_WARNING = DiagnosticType.warning(
-      "DEPS_DUPE_REQUIRES",
-      "Namespace \"{0}\" is required multiple times");
-
   static final DiagnosticType NO_DEPS_WARNING = DiagnosticType.warning(
       "DEPS_NO_DEPS",
       "No dependencies found in file");
@@ -125,11 +120,12 @@ public class DepsGenerator {
 
   /**
    * Performs the parsing inputs and writing of outputs.
+   *
    * @throws IOException Occurs upon an IO error.
-   * @return Returns a String of goog.addDependency calls that will build
-   *     the dependency graph. Returns null if there was an error.
+   * @return Returns a String of goog.addDependency calls that will build the dependency graph.
+   *     Returns null if there was an error.
    */
-  public String computeDependencyCalls() throws IOException {
+  public @Nullable String computeDependencyCalls() throws IOException {
     // Build a map of closure-relative path -> DepInfo.
     Map<String, DependencyInfo> depsFiles = parseDepsFiles();
     if (logger.isLoggable(Level.FINE)) {
@@ -223,7 +219,7 @@ public class DepsGenerator {
 
       ImmutableList<String> provides = dependencyInfo.getProvides();
 
-      if ("es6".equals(dependencyInfo.getLoadFlags().get("module"))) {
+      if (dependencyInfo.isEs6Module()) {
         String mungedProvide = loader.resolve(dependencyInfo.getName()).toModuleName();
         // Filter out the munged symbol.
         // Note that at the moment ES6 modules should not have any other provides! In the future
@@ -272,13 +268,6 @@ public class DepsGenerator {
     addToProvideMap(parsedFileDependencies, providesMap, false);
     // For each require in the parsed sources:
     for (DependencyInfo depInfo : parsedFileDependencies) {
-      Multiset<String> symbols = ImmutableMultiset.copyOf(depInfo.getRequiredSymbols());
-      for (String symbol : symbols.elementSet()) {
-        if (symbols.count(symbol) > 1) {
-          reportDuplicateRequire(symbol, depInfo);
-        }
-      }
-
       for (Require require : depInfo.getRequires()) {
         String namespace = require.getSymbol();
         // Check for missing provides.
@@ -288,22 +277,17 @@ public class DepsGenerator {
         } else if (provider == depInfo) {
           reportSameFile(namespace, depInfo);
         } else {
-          depInfo.isModule();
-          boolean providerIsEs6Module = "es6".equals(provider.getLoadFlags().get("module"));
+          boolean providerIsEs6Module = provider.isEs6Module();
 
           switch (require.getType()) {
-            case ES6_IMPORT:
+            case ES6_IMPORT -> {
               if (!providerIsEs6Module) {
                 reportEs6ImportForNonEs6Module(provider, depInfo);
               }
-              break;
-            case GOOG_REQUIRE_SYMBOL:
-            case PARSED_FROM_DEPS:
-              break;
-            case COMMON_JS:
-            case COMPILER_MODULE:
-            default:
-              throw new IllegalStateException("Unexpected import type: " + require.getType());
+            }
+            case GOOG_REQUIRE_SYMBOL, PARSED_FROM_DEPS -> {}
+            case COMMON_JS, COMPILER_CHUNK ->
+                throw new IllegalStateException("Unexpected import type: " + require.getType());
           }
         }
       }
@@ -349,13 +333,6 @@ public class DepsGenerator {
     }
   }
 
-  private void reportDuplicateRequire(
-      String namespace, DependencyInfo depInfo) {
-    errorManager.report(CheckLevel.WARNING,
-        JSError.make(depInfo.getName(), -1, -1,
-            DUPE_REQUIRE_WARNING, namespace));
-  }
-
   private void reportNoDepsInDepsFile(String filePath) {
     errorManager.report(CheckLevel.WARNING,
         JSError.make(filePath, -1, -1, NO_DEPS_WARNING));
@@ -382,7 +359,7 @@ public class DepsGenerator {
                 .toModuleName());
       } else {
         // ES6 modules already provide these munged symbols.
-        if (!"es6".equals(depInfo.getLoadFlags().get("module"))) {
+        if (!depInfo.isEs6Module()) {
           provides.add(loader.resolve(depInfo.getName()).toModuleName());
         }
       }
@@ -492,7 +469,12 @@ public class DepsGenerator {
             jsParser.parseFile(
                 file.getName(), closureRelativePath,
                 file.getCode());
-        depInfo = new LazyParsedDependencyInfo(depInfo, new JsAst(file), compiler);
+        depInfo = new LazyParsedDependencyInfo(depInfo, new CompilerInput(file), compiler);
+
+        // Skip externs files, which should never be loaded.
+        if (depInfo.getHasExternsAnnotation()) {
+          continue;
+        }
 
         // Kick the source out of memory.
         file.clearCachedSource();
@@ -519,7 +501,7 @@ public class DepsGenerator {
     if (mergeStrategy == InclusionStrategy.ALWAYS) {
       // This multimap is just for splitting DepsInfo objects by
       // it's definition deps.js file
-      Multimap<String, DependencyInfo> infosIndex =
+      ImmutableListMultimap<String, DependencyInfo> infosIndex =
           Multimaps.index(depsFiles.values(), DependencyInfo::getName);
 
       for (String depsPath : infosIndex.keySet()) {

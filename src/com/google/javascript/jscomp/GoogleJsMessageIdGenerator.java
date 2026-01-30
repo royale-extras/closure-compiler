@@ -19,10 +19,9 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.common.base.CaseFormat;
 import com.google.common.base.Strings;
 import com.google.javascript.jscomp.JsMessage.IdGenerator;
-import com.google.javascript.jscomp.JsMessage.PlaceholderReference;
+import com.google.javascript.jscomp.JsMessage.Part;
 import java.util.List;
 
 /**
@@ -55,17 +54,15 @@ public final class GoogleJsMessageIdGenerator implements IdGenerator {
   }
 
   @Override
-  public String generateId(String meaning, List<CharSequence> messageParts) {
+  public String generateId(String meaning, List<Part> messageParts) {
     checkState(meaning != null);
 
     StringBuilder sb = new StringBuilder();
-    for (CharSequence part : messageParts) {
-      if (part instanceof PlaceholderReference) {
-        sb.append(CaseFormat.LOWER_CAMEL.to(
-            CaseFormat.UPPER_UNDERSCORE,
-            ((PlaceholderReference) part).getName()));
+    for (Part part : messageParts) {
+      if (part.isPlaceholder()) {
+        sb.append(part.getCanonicalPlaceholderName());
       } else {
-        sb.append(part);
+        sb.append(part.getString());
       }
     }
     String tcValue = sb.toString();
@@ -106,7 +103,6 @@ public final class GoogleJsMessageIdGenerator implements IdGenerator {
       return FP.fingerprint(tmp, 0, tmp.length);
     }
 
-    @SuppressWarnings("fallthrough")
     private static int hash32(byte[] str, int start, int limit, int c) {
       int a = 0x9e3779b9;
       int b = 0x9e3779b9;

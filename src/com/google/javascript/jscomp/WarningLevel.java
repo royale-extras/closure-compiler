@@ -28,17 +28,9 @@ public enum WarningLevel {
 
   public void setOptionsForWarningLevel(CompilerOptions options) {
     switch (this) {
-      case QUIET:
-        silenceAllWarnings(options);
-        break;
-      case DEFAULT:
-        addDefaultWarnings(options);
-        break;
-      case VERBOSE:
-        addVerboseWarnings(options);
-        break;
-      default:
-        throw new RuntimeException("Unknown warning level.");
+      case QUIET -> silenceAllWarnings(options);
+      case DEFAULT -> addDefaultWarnings(options);
+      case VERBOSE -> addVerboseWarnings(options);
     }
   }
 
@@ -55,7 +47,6 @@ public enum WarningLevel {
     // Allow passes that aren't going to report anything to be skipped.
 
     options.setWarningLevel(DiagnosticGroups.MISSING_PROVIDE, CheckLevel.OFF);
-    options.setCheckMissingGetCssNameLevel(CheckLevel.OFF);
     options.setCheckTypes(false);
     options.setWarningLevel(DiagnosticGroups.CHECK_TYPES, CheckLevel.OFF);
     options.setWarningLevel(DiagnosticGroups.CHECK_USELESS_CODE, CheckLevel.OFF);
@@ -63,7 +54,6 @@ public enum WarningLevel {
     options.setWarningLevel(DiagnosticGroups.ACCESS_CONTROLS, CheckLevel.OFF);
     options.setWarningLevel(DiagnosticGroups.CONST, CheckLevel.OFF);
     options.setWarningLevel(DiagnosticGroups.CONSTANT_PROPERTY, CheckLevel.OFF);
-    options.setCheckGlobalNamesLevel(CheckLevel.OFF);
     options.setCheckSuspiciousCode(false);
     options.setWarningLevel(DiagnosticGroups.GLOBAL_THIS, CheckLevel.OFF);
     options.setWarningLevel(DiagnosticGroups.GLOBAL_THIS, CheckLevel.OFF);
@@ -104,7 +94,6 @@ public enum WarningLevel {
     // way for optional arguments to be specified, these warnings may result in
     // false positives.
     options.setCheckTypes(true);
-    options.setCheckGlobalNamesLevel(CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.MISSING_PROPERTIES, CheckLevel.WARNING);
     options.setWarningLevel(
         DiagnosticGroups.DEPRECATED, CheckLevel.WARNING);
@@ -124,8 +113,5 @@ public enum WarningLevel {
     // Kindly tell the user that they have JsDocs that we don't understand.
     options.setWarningLevel(DiagnosticGroups.NON_STANDARD_JSDOC,
         CheckLevel.WARNING);
-
-    // Transitional.
-    options.enforceAccessControlCodingConventions = true;
   }
 }

@@ -39,16 +39,16 @@
 
 package com.google.javascript.rhino;
 
+import org.jspecify.annotations.Nullable;
+
 /**
- * Represents a position in some piece of source code, with an associated
- * item of type T found at that position.
+ * Represents a position in some piece of source code, with an associated item of type T found at
+ * that position.
  *
  */
 public abstract class SourcePosition<T> {
-  /**
-   * The (well typed) item found at the source position.
-   */
-  private T item = null;
+  /** The (well typed) item found at the source position. */
+  private @Nullable T item = null;
 
   /**
    * The starting line number.
@@ -134,5 +134,12 @@ public abstract class SourcePosition<T> {
    */
   public int getPositionOnEndLine() {
     return endCharno;
+  }
+
+  boolean isSamePositionAs(SourcePosition<?> that) {
+    return this.startLineno == that.startLineno
+        && this.startCharno == that.startCharno
+        && this.endLineno == that.endLineno
+        && this.endCharno == that.endCharno;
   }
 }

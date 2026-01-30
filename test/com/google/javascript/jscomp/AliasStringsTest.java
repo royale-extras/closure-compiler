@@ -16,25 +16,22 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.CompilerOptions.AliasStringsMode;
 import com.google.javascript.jscomp.testing.JSChunkGraphBuilder;
-import java.util.Set;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link AliasStrings}.
- *
- */
+/** Tests for {@link AliasStrings}. */
 @RunWith(JUnit4.class)
 public final class AliasStringsTest extends CompilerTestCase {
 
   private static final String EXTERNS = "alert";
-  private static final Set<String> ALL_STRINGS = null;
 
-  private Set<String> strings = ALL_STRINGS;
   private boolean hashReduction = false;
+
+  private AliasStringsMode aliasStringsMode = AliasStringsMode.ALL;
 
   public AliasStringsTest() {
     super(EXTERNS);
@@ -43,285 +40,143 @@ public final class AliasStringsTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     AliasStrings pass =
-        new AliasStrings(compiler, compiler.getModuleGraph(), strings, "(?i)secret", false);
+        new AliasStrings(compiler, compiler.getChunkGraph(), false, aliasStringsMode);
     if (hashReduction) {
       pass.unitTestHashReductionMask = 0;
     }
     return pass;
   }
 
+  @Override
+  @Before
+  public void setUp() throws Exception {
+    super.setUp();
+    aliasStringsMode = AliasStringsMode.ALL;
+  }
+
   @Test
   public void testTemplateLiteral() {
-    strings = ImmutableSet.of("aliasable string");
     // TODO(bradfordcsmith): Maybe implement using aliases in template literals?
     test(
-        lines(
-            "const A = 'aliasable string';",
-            "const B = 'aliasable string';",
-            "const AB = `${A}aliasable string${B}`;"),
-        lines(
-            "var $$S_aliasable$20string = 'aliasable string';",
-            "const A = $$S_aliasable$20string;",
-            "const B = $$S_aliasable$20string;",
-            "const AB = `${A}aliasable string${B}`"));
+        """
+        const A = 'aliasable string';
+        const B = 'aliasable string';
+        const AB = `${A}aliasable string${B}`;
+        """,
+        """
+        var $$S_aliasable$20string = 'aliasable string';
+        const A = $$S_aliasable$20string;
+        const B = $$S_aliasable$20string;
+        const AB = `${A}aliasable string${B}`
+        """);
   }
 
   @Test
-  public void testAssignment() {
-    strings = ImmutableSet.of("none", "width", "overimaginative");
+  public void testAliasAggressively() {
+    testSame("function f() { return 'aliasable string'; }");
 
-    // Strings not in alias list
-    testSame("var foo='foo'");
-    testSame("if(true) {myStr='width'}");
-    testSame("a='titanium',b='titanium',c='titanium',d='titanium'");
-
-    // Not worth aliasing:
-    testSame("myStr='width'");
-    testSame("Bar.prototype.start='none'");
-    // Worth aliasing:
-    test("a='overimaginative';b='overimaginative'",
-         "var $$S_overimaginative='overimaginative';" +
-         "a=$$S_overimaginative;b=$$S_overimaginative");
-    test("if(true) {a='overimaginative';b='overimaginative'}",
-        "var $$S_overimaginative='overimaginative';" +
-        "if(true) {a=$$S_overimaginative;b=$$S_overimaginative }");
-
-    testSame("var width=1234");
-    testSame("width=1234;width=10000;width=9900;width=17;");
+    aliasStringsMode = AliasStringsMode.ALL_AGGRESSIVE;
+    test(
+        "function f() { return 'aliasable string'; }",
+        """
+        var $$S_aliasable$20string = 'aliasable string';
+        function f() { return $$S_aliasable$20string; }
+        """);
   }
 
   @Test
-  public void testSeveral() {
-    strings = ImmutableSet.of("", "px", "none", "width");
-
-    // 'display' is not in the allowed string set and only 'none' and 'width' are large and common
-    // enough to be worth interning.
+  public void testProtectedMessage() {
     test(
-        "function f() {"
-            + "  var styles1 = ["
-            + "      'width', 100, 'px', 'display', 'none'"
-            + "  ].join('');"
-            + "  var styles2 = ["
-            + "      'width', 100, 'px', 'display', 'none'"
-            + "  ].join('');"
-            + "  var styles3 = ["
-            + "      'width', 100, 'px', 'display', 'none'"
-            + "  ].join('');"
-            + "  var styles4 = ["
-            + "      'width', 100, 'px', 'display', 'none'"
-            + "  ].join('');"
-            + "  var styles5 = ["
-            + "      'width', 100, 'px', 'display', 'none'"
-            + "  ].join('');"
-            + "  var styles6 = ["
-            + "      'width', 100, 'px', 'display', 'none'"
-            + "  ].join('');"
-            + "}",
-        "var $$S_none = 'none';"
-            + "var $$S_width = 'width';"
-            + "function f() {"
-            + "  var styles1 = ["
-            + "      $$S_width, 100, 'px', 'display', $$S_none"
-            + "  ].join('');"
-            + "  var styles2 = ["
-            + "      $$S_width, 100, 'px', 'display', $$S_none"
-            + "  ].join('');"
-            + "  var styles3 = ["
-            + "      $$S_width, 100, 'px', 'display', $$S_none"
-            + "  ].join('');"
-            + "  var styles4 = ["
-            + "      $$S_width, 100, 'px', 'display', $$S_none"
-            + "  ].join('');"
-            + "  var styles5 = ["
-            + "      $$S_width, 100, 'px', 'display', $$S_none"
-            + "  ].join('');"
-            + "  var styles6 = ["
-            + "      $$S_width, 100, 'px', 'display', $$S_none"
-            + "  ].join('')"
-            + "}");
-  }
+        """
+        const A = 'aliasable string';
+        const B = 'aliasable string';
+        var MSG_A =
+            DEFINE_MSG_CALLEE(
+                {
+                  "key":    "MSG_A",
+                  "msg_text":"aliasable string",
+                });
 
-  @Test
-  public void testSortedOutput() {
-    strings =
-        ImmutableSet.of(
-            "abababababababababab",
-            "aaaaaaaaaaaaaaaaaaaa",
-            "acacacacacacacacacac",
-            "bcabcabcabcabcabcabc",
-            "bbabbabbabbabbabbabb");
-    test(
-        "function f() {return ['abababababababababab', 'abababababababababab', "
-            + "                       'aaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaa', "
-            + "                       'acacacacacacacacacac', 'acacacacacacacacacac', "
-            + "                       'bcabcabcabcabcabcabc', 'bcabcabcabcabcabcabc', "
-            + "                       'bbabbabbabbabbabbabb', 'bbabbabbabbabbabbabb']}",
-        "var $$S_aaaaaaaaaaaaaaaaaaaa='aaaaaaaaaaaaaaaaaaaa';"
-            + "var $$S_abababababababababab='abababababababababab';"
-            + "var $$S_acacacacacacacacacac='acacacacacacacacacac';"
-            + "var $$S_bbabbabbabbabbabbabb='bbabbabbabbabbabbabb';"
-            + "var $$S_bcabcabcabcabcabcabc='bcabcabcabcabcabcabc';"
-            + "function f() {"
-            + "  return [$$S_abababababababababab, $$S_abababababababababab, "
-            + "          $$S_aaaaaaaaaaaaaaaaaaaa, $$S_aaaaaaaaaaaaaaaaaaaa, "
-            + "          $$S_acacacacacacacacacac, $$S_acacacacacacacacacac, "
-            + "          $$S_bcabcabcabcabcabcabc, $$S_bcabcabcabcabcabcabc, "
-            + "          $$S_bbabbabbabbabbabbabb, $$S_bbabbabbabbabbabbabb]}");
-  }
+        """
+            .replace("DEFINE_MSG_CALLEE", ReplaceMessagesConstants.DEFINE_MSG_CALLEE),
+        // msg_text's string is left unchanged instead of using an alias,
+        // because `ReplaceMessages` needs the literal string here.
+        """
+        var $$S_aliasable$20string = 'aliasable string';
+        const A = $$S_aliasable$20string;
+        const B = $$S_aliasable$20string;
+        var MSG_A =
+            DEFINE_MSG_CALLEE(
+                {
+                  "key":    "MSG_A",
+                  "msg_text":"aliasable string",
+                });
 
-  @Test
-  public void testObjectLiterals() {
-    strings = ImmutableSet.of("pxpxpxpxpxpxpxpxpxpx", "abcdefghijabcdefghij");
-
-    testSame("var foo={px:435}");
-
-    // string as key
-    testSame("var foo={'pxpxpxpxpxpxpxpxpxpx':435}");
-    testSame("bar=function f(){return {'pxpxpxpxpxpxpxpxpxpx':435}}");
-
-    test(
-        "function f() {var foo={bar:'abcdefghijabcdefghij'+'abcdefghijabcdefghij'}}",
-        "var $$S_abcdefghijabcdefghij='abcdefghijabcdefghij';"
-            + "function f() {var foo={bar:$$S_abcdefghijabcdefghij+$$S_abcdefghijabcdefghij}}");
-
-    test(
-        "function f() {"
-            + "  var foo = {"
-            + "      px: 435,"
-            + "      foo1: 'pxpxpxpxpxpxpxpxpxpx',"
-            + "      foo2: 'pxpxpxpxpxpxpxpxpxpx',"
-            + "      bar: 'baz'"
-            + "  }"
-            + "}",
-        "var $$S_pxpxpxpxpxpxpxpxpxpx = 'pxpxpxpxpxpxpxpxpxpx';"
-            + "function f() {"
-            + "  var foo = {"
-            + "      px: 435,"
-            + "      foo1: $$S_pxpxpxpxpxpxpxpxpxpx,"
-            + "      foo2: $$S_pxpxpxpxpxpxpxpxpxpx,"
-            + "      bar: 'baz'"
-            + "  }"
-            + "}");
-  }
-
-  @Test
-  public void testGetProp() {
-    strings = ImmutableSet.of("pxpxpxpxpxpxpxpxpxpx", "widthwidthwidthwidth");
-
-    testSame("function f(){element.style.px=1234}");
-
-    test(
-        "function f() {"
-            + "  shape.width.units='pxpxpxpxpxpxpxpxpxpx';"
-            + "  shape.width.units='pxpxpxpxpxpxpxpxpxpx';"
-            + "}",
-        "var $$S_pxpxpxpxpxpxpxpxpxpx='pxpxpxpxpxpxpxpxpxpx';"
-            + "function f() {"
-            + "  shape.width.units=$$S_pxpxpxpxpxpxpxpxpxpx;"
-            + "  shape.width.units=$$S_pxpxpxpxpxpxpxpxpxpx;"
-            + "}");
-
-    test(
-        "function f() {"
-            + "  shape['widthwidthwidthwidth'].units='pt';"
-            + "  shape['widthwidthwidthwidth'].units='pt';"
-            + "}",
-        "var $$S_widthwidthwidthwidth='widthwidthwidthwidth';"
-            + "function f() {"
-            + "  shape[$$S_widthwidthwidthwidth].units='pt';"
-            + "  shape[$$S_widthwidthwidthwidth].units='pt';"
-            + "}");
-  }
-
-  @Test
-  public void testFunctionCalls() {
-    strings = ImmutableSet.of("", ",", "overimaginative");
-
-    // Not worth aliasing
-    testSame("alert('')");
-    testSame("var a=[1,2,3];a.join(',')");
-    // worth aliasing
-    test("f('overimaginative', 'overimaginative')",
-         "var $$S_overimaginative='overimaginative';" +
-         "f($$S_overimaginative,$$S_overimaginative)");
- }
-
-  @Test
-  public void testRegularExpressions() {
-    strings = ImmutableSet.of("px");
-
-    testSame("/px/.match('10px')");
-  }
-
-  @Test
-  public void testSkipList() {
-    // The 'TOPseCreT' string is configured to be ignored even though it fits the aliasing
-    // conditions.
-    test(
-        "(function() {"
-            + "  var f = 'sec ret sec ret sec ' + 'sec ret sec ret sec ';"
-            + "  g = 'TOPseCreT TOPseCreT ' + 'TOPseCreT TOPseCreT '"
-            + "})"
-            + "",
-        "var $$S_sec$20ret$20sec$20ret$20sec$20 = 'sec ret sec ret sec ';"
-            + "(function() {"
-            + "  var f = $$S_sec$20ret$20sec$20ret$20sec$20 + $$S_sec$20ret$20sec$20ret$20sec$20;"
-            + "  g = 'TOPseCreT TOPseCreT ' + 'TOPseCreT TOPseCreT '"
-            + "})");
+        """
+            .replace("DEFINE_MSG_CALLEE", ReplaceMessagesConstants.DEFINE_MSG_CALLEE));
   }
 
   @Test
   public void testLongStableAlias() {
-    strings = ALL_STRINGS;
-
     // Check long strings get a hash code
 
-    test("a='Antidisestablishmentarianism';" +
-         "b='Antidisestablishmentarianism';",
-         "var $$S_Antidisestablishment_e428eaa9=" +
-         "  'Antidisestablishmentarianism';"      +
-         "a=$$S_Antidisestablishment_e428eaa9;"   +
-         "b=$$S_Antidisestablishment_e428eaa9");
+    test(
+        """
+        a='Antidisestablishmentarianism';
+        b='Antidisestablishmentarianism';
+        """,
+        """
+        var $$S_Antidisestablishment_e428eaa9=
+          'Antidisestablishmentarianism';
+        a=$$S_Antidisestablishment_e428eaa9;
+        b=$$S_Antidisestablishment_e428eaa9
+        """);
 
     // Check that small changes give different hash codes
 
-    test("a='AntidisestablishmentarianIsm';" +
-         "b='AntidisestablishmentarianIsm';",
-         "var $$S_Antidisestablishment_e4287289=" +
-         "  'AntidisestablishmentarianIsm';"      +
-         "a=$$S_Antidisestablishment_e4287289;"   +
-         "b=$$S_Antidisestablishment_e4287289");
+    test(
+        """
+        a='AntidisestablishmentarianIsm';
+        b='AntidisestablishmentarianIsm';
+        """,
+        """
+        var $$S_Antidisestablishment_e4287289=
+          'AntidisestablishmentarianIsm';
+        a=$$S_Antidisestablishment_e4287289;
+        b=$$S_Antidisestablishment_e4287289
+        """);
 
     // TODO(user): check that hash code collisions are handled.
   }
 
   @Test
   public void testLongStableAliasHashCollision() {
-    strings = ALL_STRINGS;
     hashReduction = true;
 
     // Check that hash code collisions generate different alias
     // variable names
 
-    test("f('Antidisestablishmentarianism');"  +
-         "f('Antidisestablishmentarianism');"  +
-         "f('Antidisestablishmentarianismo');" +
-         "f('Antidisestablishmentarianismo');",
-
-         "var $$S_Antidisestablishment_0="     +
-         "  'Antidisestablishmentarianism';"   +
-         "var $$S_Antidisestablishment_0_1="   +
-         "  'Antidisestablishmentarianismo';"  +
-
-         "f($$S_Antidisestablishment_0);"      +
-         "f($$S_Antidisestablishment_0);"      +
-         "f($$S_Antidisestablishment_0_1);"    +
-         "f($$S_Antidisestablishment_0_1);");
+    test(
+        """
+        f('Antidisestablishmentarianism');
+        f('Antidisestablishmentarianism');
+        f('Antidisestablishmentarianismo');
+        f('Antidisestablishmentarianismo');
+        """,
+        """
+        var $$S_Antidisestablishment_0=
+          'Antidisestablishmentarianism';
+        var $$S_Antidisestablishment_0_1=
+          'Antidisestablishmentarianismo';
+        f($$S_Antidisestablishment_0);
+        f($$S_Antidisestablishment_0);
+        f($$S_Antidisestablishment_0_1);
+        f($$S_Antidisestablishment_0_1);
+        """);
   }
 
   @Test
   public void testStringsThatAreGlobalVarValues() {
-    strings = ALL_STRINGS;
 
     testSame("var foo='foo'; var bar='';");
 
@@ -350,109 +205,129 @@ public final class AliasStringsTest extends CompilerTestCase {
   }
 
   @Test
-  public void testStringsInModules() {
-    strings = ALL_STRINGS;
+  public void testStringsInChunks() {
 
-    // Aliases must be placed in the correct module. The alias for
+    // Aliases must be placed in the correct chunk. The alias for
     // '------adios------' must be lifted from m2 and m3 and go in the
-    // common parent module m1
+    // common parent chunks m1
 
-    JSModule[] modules =
+    JSChunk[] chunks =
         JSChunkGraphBuilder.forBush()
             .addChunk(
-                "function f(a) { alert('ffffffffffffffffffff' + 'ffffffffffffffffffff' + a); }"
-                    + "function g() { alert('ciaociaociaociaociao'); }")
+                """
+                function f(a) { alert('ffffffffffffffffffff' + 'ffffffffffffffffffff' + a); }
+                function g() { alert('ciaociaociaociaociao'); }
+                """)
             .addChunk(
-                "f('---------hi---------');f('bye');function h(a) { alert('hhhhhhhhhhhhhhhhhhhh'"
-                    + " + 'hhhhhhhhhhhhhhhhhhhh' + a); }")
+                """
+                f('---------hi---------');f('bye');function h(a) { alert('hhhhhhhhhhhhhhhhhhhh'
+                 + 'hhhhhhhhhhhhhhhhhhhh' + a); }
+                """)
             .addChunk(
-                "f('---------hi---------');h('ciaociaociaociaociao' +"
-                    + " '--------adios-------');(function() { alert('zzzzzzzzzzzzzzzzzzzz' +"
-                    + " 'zzzzzzzzzzzzzzzzzzzz'); })();")
+                """
+                f('---------hi---------');h('ciaociaociaociaociao' +
+                 '--------adios-------');(function() { alert('zzzzzzzzzzzzzzzzzzzz' +
+                 'zzzzzzzzzzzzzzzzzzzz'); })();
+                """)
             .addChunk(
-                "f('---------hi---------'); alert('--------adios-------');"
-                    + "h('-------peaches------'); h('-------peaches------');")
+                """
+                f('---------hi---------'); alert('--------adios-------');
+                h('-------peaches------'); h('-------peaches------');
+                """)
             .build();
 
     test(
-        modules,
-        new String[] {
-          // m1
-          "var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';"
-              + "var $$S_ffffffffffffffffffff = 'ffffffffffffffffffff';"
-              + "function f(a) { alert($$S_ffffffffffffffffffff + $$S_ffffffffffffffffffff + a); }"
-              + "function g() { alert($$S_ciaociaociaociaociao); }",
-          // m2
-          "var $$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d"
-              + " = '---------hi---------';"
-              + "var $$S_$2d$2d$2d$2d$2d$2d$2d$2d_adios$2d$2d$2d$2d$2d$2d$2d"
-              + " = '--------adios-------'; "
-              + "var $$S_hhhhhhhhhhhhhhhhhhhh = 'hhhhhhhhhhhhhhhhhhhh';"
-              + "f($$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d);"
-              + "f('bye');"
-              + "function h(a) { alert($$S_hhhhhhhhhhhhhhhhhhhh + $$S_hhhhhhhhhhhhhhhhhhhh + a); }",
-          // m3
-          "var $$S_zzzzzzzzzzzzzzzzzzzz = 'zzzzzzzzzzzzzzzzzzzz';"
-              + "f($$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d);"
-              + "h($$S_ciaociaociaociaociao + "
-              + "$$S_$2d$2d$2d$2d$2d$2d$2d$2d_adios$2d$2d$2d$2d$2d$2d$2d);"
-              + "(function() { alert($$S_zzzzzzzzzzzzzzzzzzzz + $$S_zzzzzzzzzzzzzzzzzzzz) })();",
-          // m4
-          "var $$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d"
-              + " = '-------peaches------';"
-              + "f($$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d);"
-              + "alert($$S_$2d$2d$2d$2d$2d$2d$2d$2d_adios$2d$2d$2d$2d$2d$2d$2d);"
-              + "h($$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d);"
-              + "h($$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d);",
-        });
+        srcs(chunks),
+        expected(
+            // m1
+            """
+            var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';
+            var $$S_ffffffffffffffffffff = 'ffffffffffffffffffff';
+            function f(a) {
+              alert($$S_ffffffffffffffffffff + $$S_ffffffffffffffffffff + a);
+            }
+            function g() { alert($$S_ciaociaociaociaociao); }
+            """,
+            // m2
+            """
+            var $$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d
+             = '---------hi---------';
+            var $$S_$2d$2d$2d$2d$2d$2d$2d$2d_adios$2d$2d$2d$2d$2d$2d$2d
+             = '--------adios-------';
+            var $$S_hhhhhhhhhhhhhhhhhhhh = 'hhhhhhhhhhhhhhhhhhhh';
+            f($$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d);
+            f('bye');
+            function h(a) {
+              alert($$S_hhhhhhhhhhhhhhhhhhhh + $$S_hhhhhhhhhhhhhhhhhhhh + a);
+            }
+            """,
+            // m3
+            """
+            var $$S_zzzzzzzzzzzzzzzzzzzz = 'zzzzzzzzzzzzzzzzzzzz';
+            f($$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d);
+            h($$S_ciaociaociaociaociao +\s
+            $$S_$2d$2d$2d$2d$2d$2d$2d$2d_adios$2d$2d$2d$2d$2d$2d$2d);
+            (function() { alert($$S_zzzzzzzzzzzzzzzzzzzz + $$S_zzzzzzzzzzzzzzzzzzzz)
+             })();
+            """,
+            // m4
+            """
+            var $$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d
+             = '-------peaches------';
+            f($$S_$2d$2d$2d$2d$2d$2d$2d$2d$2dhi$2d$2d$2d$2d$2d$2d$2d$2d$2d);
+            alert($$S_$2d$2d$2d$2d$2d$2d$2d$2d_adios$2d$2d$2d$2d$2d$2d$2d);
+            h($$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d);
+            h($$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d);
+            """));
   }
 
   @Test
-  public void testStringsInModules2() {
-    strings = ALL_STRINGS;
+  public void testStringsInChunks2() {
 
-    // Aliases must be placed in the correct module. The alias for
+    // Aliases must be placed in the correct chunk. The alias for
     // '------adios------' must be lifted from m2 and m3 and go in the
-    // common parent module m1
+    // common parent chunk m1
 
-    JSModule[] modules =
+    JSChunk[] chunks =
         JSChunkGraphBuilder.forBush()
             .addChunk("function g() { alert('ciaociaociaociaociao'); }")
             .addChunk(
-                "function h(a) {"
-                    + "  alert('hhhhhhhhhhhhhhhhhhh:' + a);"
-                    + "  alert('hhhhhhhhhhhhhhhhhhh:' + a);"
-                    + "}")
+                """
+                function h(a) {
+                  alert('hhhhhhhhhhhhhhhhhhh:' + a);
+                  alert('hhhhhhhhhhhhhhhhhhh:' + a);
+                }
+                """)
             .addChunk("h('ciaociaociaociaociao' + 'adios');")
             .addChunk("g();")
             .build();
 
     test(
-        modules,
-        new String[] {
-          // m1
-          lines(
-              "var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';",
-              "function g() { alert($$S_ciaociaociaociaociao); }"),
-          // m2
-          lines(
-              "var $$S_hhhhhhhhhhhhhhhhhhh$3a = 'hhhhhhhhhhhhhhhhhhh:';",
-              "function h(a) {"
-                  + "  alert($$S_hhhhhhhhhhhhhhhhhhh$3a + a);"
-                  + "  alert($$S_hhhhhhhhhhhhhhhhhhh$3a + a);"
-                  + "}"),
-          // m3
-          "h($$S_ciaociaociaociaociao + 'adios');",
-          // m4
-          "g();",
-        });
+        srcs(chunks),
+        expected(
+            // m1
+            """
+            var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';
+            function g() { alert($$S_ciaociaociaociaociao); }
+            """,
+            // m2
+            """
+            var $$S_hhhhhhhhhhhhhhhhhhh$3a = 'hhhhhhhhhhhhhhhhhhh:';
+            function h(a) {
+              alert($$S_hhhhhhhhhhhhhhhhhhh$3a + a);
+              alert($$S_hhhhhhhhhhhhhhhhhhh$3a + a);
+            }
+            """,
+            // m3
+            "h($$S_ciaociaociaociaociao + 'adios');",
+            // m4
+            "g();"));
   }
 
   @Test
-  public void testAliasInCommonModuleInclusive() {
-    strings = ALL_STRINGS;
+  public void testAliasInCommonChunkInclusive() {
 
-    JSModule[] modules =
+    JSChunk[] chunks =
         JSChunkGraphBuilder.forBush()
             .addChunk("")
             .addChunk("function g() { alert('ciaociaociaociaociao'); }")
@@ -461,26 +336,26 @@ public final class AliasStringsTest extends CompilerTestCase {
             .build();
 
     // The "ciao" string is used in m1 and m2.
-    // Since m2 depends on m1, we should create the module there and not force it into m0.
+    // Since m2 depends on m1, we should create the alias there and not force it into m0.
     test(
-        modules,
-        new String[] {
-          // m0
-          "",
-          // m1
-          lines(
-              "var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';",
-              "function g() { alert($$S_ciaociaociaociaociao); }"),
-          // m2
-          "h($$S_ciaociaociaociaociao + 'adios');",
-          // m3
-          "g();",
-        });
+        srcs(chunks),
+        expected(
+            // m0
+            "",
+            // m1
+            """
+            var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';
+            function g() { alert($$S_ciaociaociaociaociao); }
+            """,
+            // m2
+            "h($$S_ciaociaociaociaociao + 'adios');",
+            // m3
+            "g();"));
   }
 
   @Test
-  public void testEmptyModules() {
-    JSModule[] modules =
+  public void testEmptyChunks() {
+    JSChunk[] chunks =
         JSChunkGraphBuilder.forStar()
             .addChunk("")
             .addChunk("function foo() { f('goodgoodgoodgoodgood') }")
@@ -488,14 +363,33 @@ public final class AliasStringsTest extends CompilerTestCase {
             .build();
 
     test(
-        modules,
-        new String[] {
-          // m0
-          "var $$S_goodgoodgoodgoodgood='goodgoodgoodgoodgood'",
-          // m1
-          "function foo() {f($$S_goodgoodgoodgoodgood)}",
-          // m2
-          "function foo() {f($$S_goodgoodgoodgoodgood)}",
-        });
+        srcs(chunks),
+        expected(
+            // m0
+            "var $$S_goodgoodgoodgoodgood='goodgoodgoodgoodgood'",
+            // m1
+            "function foo() {f($$S_goodgoodgoodgoodgood)}",
+            // m2
+            "function foo() {f($$S_goodgoodgoodgoodgood)}"));
+  }
+
+  @Test
+  public void testOnlyAliasLargeStrings() {
+    aliasStringsMode = AliasStringsMode.LARGE;
+
+    test(
+"""
+const A = 'non aliasable string with length <= 100 characters';
+const B = 'non aliasable string with length <= 100 characters';
+const C = 'aliasable large string largestringlargestringlargestringlargestringlargestringlargestringlargestring!';
+const D = 'aliasable large string largestringlargestringlargestringlargestringlargestringlargestringlargestring!';
+""",
+"""
+var $$S_aliasable$20large$20stri_6c7cf169 = 'aliasable large string largestringlargestringlargestringlargestringlargestringlargestringlargestring!';
+const A = 'non aliasable string with length <= 100 characters';
+const B = 'non aliasable string with length <= 100 characters';
+const C = $$S_aliasable$20large$20stri_6c7cf169;
+const D = $$S_aliasable$20large$20stri_6c7cf169;
+""");
   }
 }

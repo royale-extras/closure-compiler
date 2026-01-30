@@ -27,64 +27,100 @@ public class Util {
    * Escapes the given string to a double quoted (") JavaScript/JSON string
    */
   static String escapeString(String s) {
-    return escapeString(s, '"',  "\\\"", "\'", "\\\\");
-  }
+    final char quote = '"';
+    final String doublequoteEscape = "\\\"";
+    final String singlequoteEscape = "\'";
+    final String backslashEscape = "\\\\";
 
-  /** Helper to escape JavaScript string as well as regular expression */
-  private static String escapeString(String s, char quote,
-                          String doublequoteEscape,
-                          String singlequoteEscape,
-                          String backslashEscape) {
     StringBuilder sb = new StringBuilder(s.length() + 2);
     sb.append(quote);
-    for (int i = 0; i < s.length(); i++) {
+
+    final class UnescapedRegion {
+      int unescapedRegionStart = 0;
+      int unescapedRegionEnd = 0;
+
+      void appendUnescaped() {
+        if (unescapedRegionStart != unescapedRegionEnd) {
+          // Note: we want to use the "append(String)" override
+          // for performance reasons and the ErrorProne suggestion
+          // to use the CharSequence override is inferior for that.
+          sb.append(s.substring(unescapedRegionStart, unescapedRegionEnd));
+        }
+        unescapedRegionStart = unescapedRegionEnd;
+      }
+
+      void incrementForNormalChar() {
+        unescapedRegionEnd++;
+      }
+
+      void incrementForEscapedChar() {
+        if (unescapedRegionStart != unescapedRegionEnd) {
+          throw new IllegalStateException();
+        }
+        unescapedRegionStart++;
+        unescapedRegionEnd++;
+      }
+
+      void appendForEscapedChar(String escaped) {
+        this.appendUnescaped();
+        this.incrementForEscapedChar();
+        sb.append(escaped);
+      }
+    }
+
+    UnescapedRegion region = new UnescapedRegion();
+
+    int length = s.length();
+    for (int i = 0; i < length; i++) {
       char c = s.charAt(i);
       switch (c) {
-        case '\n': sb.append("\\n"); break;
-        case '\r': sb.append("\\r"); break;
-        case '\t': sb.append("\\t"); break;
-        case '\\': sb.append(backslashEscape); break;
-        case '\"': sb.append(doublequoteEscape); break;
-        case '\'': sb.append(singlequoteEscape); break;
-        case '>':
+        case '\n' -> region.appendForEscapedChar("\\n");
+        case '\r' -> region.appendForEscapedChar("\\r");
+        case '\t' -> region.appendForEscapedChar("\\t");
+        case '\\' -> region.appendForEscapedChar(backslashEscape);
+        case '\"' -> region.appendForEscapedChar(doublequoteEscape);
+        case '\'' -> region.appendForEscapedChar(singlequoteEscape);
+        case '>' -> {
           // Unicode-escape the '>' in '-->' and ']]>'
           if (i >= 2
               && ((s.charAt(i - 1) == '-' && s.charAt(i - 2) == '-')
                   || (s.charAt(i - 1) == ']' && s.charAt(i - 2) == ']'))) {
-            sb.append("\\u003e");
+            region.appendForEscapedChar("\\u003e");
           } else {
-            sb.append(c);
+            region.incrementForNormalChar();
           }
-          break;
-        case '<':
+        }
+        case '<' -> {
           // Unicode-escape the '<' in '</script' and '<!--'
           final String END_SCRIPT = "/script";
           final String START_COMMENT = "!--";
 
-          if (s.regionMatches(true, i + 1, END_SCRIPT, 0,
-                              END_SCRIPT.length())) {
-            sb.append("\\u003c");
-          } else if (s.regionMatches(false, i + 1, START_COMMENT, 0,
-                                     START_COMMENT.length())) {
-            sb.append("\\u003c");
+          if (s.regionMatches(true, i + 1, END_SCRIPT, 0, END_SCRIPT.length())) {
+            region.appendForEscapedChar("\\u003c");
+          } else if (s.regionMatches(false, i + 1, START_COMMENT, 0, START_COMMENT.length())) {
+            region.appendForEscapedChar("\\u003c");
           } else {
-            sb.append(c);
+            region.incrementForNormalChar();
           }
-          break;
-        default:
+        }
+        default -> {
           // No charsetEncoder provided - pass straight Latin characters
           // through, and escape the rest.  Doing the explicit character
           // check is measurably faster than using the CharsetEncoder.
           if (c > 0x1f && c <= 0x7f) {
-            sb.append(c);
+            region.incrementForNormalChar();
           } else {
             // Other characters can be misinterpreted by some JS parsers,
             // or perhaps mangled by proxies along the way,
             // so we play it safe and Unicode escape them.
+            region.appendUnescaped();
+            region.incrementForEscapedChar();
             appendHexJavaScriptRepresentation(sb, c);
           }
+        }
       }
     }
+    region.appendUnescaped();
     sb.append(quote);
     return sb.toString();
   }

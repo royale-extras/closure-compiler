@@ -16,31 +16,25 @@
 package com.google.javascript.jscomp.lint;
 
 import com.google.javascript.jscomp.AbstractCompiler;
+import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
-import com.google.javascript.jscomp.HotSwapCompilerPass;
 import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.Node;
-
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * Check for duplicate case labels in a switch statement
- * Eg:
- *   switch (foo) {
- *     case 1:
- *     case 1:
- *   }
+ * Check for duplicate case labels in a switch statement Eg: switch (foo) { case 1: case 1: }
  *
- * This is normally an indication of a programmer error.
+ * <p>This is normally an indication of a programmer error.
  *
- * Inspired by ESLint (https://github.com/eslint/eslint/blob/master/lib/rules/no-duplicate-case.js)
+ * <p>Inspired by ESLint
+ * (https://github.com/eslint/eslint/blob/master/lib/rules/no-duplicate-case.js)
  */
-public final class CheckDuplicateCase extends AbstractPostOrderCallback
-    implements HotSwapCompilerPass {
-  public static final DiagnosticType DUPLICATE_CASE = DiagnosticType.warning(
-      "JSC_DUPLICATE_CASE", "Duplicate case in a switch statement.");
+public final class CheckDuplicateCase extends AbstractPostOrderCallback implements CompilerPass {
+  public static final DiagnosticType DUPLICATE_CASE =
+      DiagnosticType.warning("JSC_DUPLICATE_CASE", "Duplicate case in a switch statement.");
 
   private final AbstractCompiler compiler;
 
@@ -54,15 +48,11 @@ public final class CheckDuplicateCase extends AbstractPostOrderCallback
   }
 
   @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
-  }
-
-  @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     if (n.isSwitch()) {
-      Set<String> cases = new HashSet<>();
-      for (Node curr = n.getSecondChild(); curr != null; curr = curr.getNext()) {
+      Node switchBody = n.getSecondChild();
+      Set<String> cases = new LinkedHashSet<>();
+      for (Node curr = switchBody.getFirstChild(); curr != null; curr = curr.getNext()) {
         String source = compiler.toSource(curr.getFirstChild());
         if (!cases.add(source)) {
           t.report(curr, DUPLICATE_CASE);

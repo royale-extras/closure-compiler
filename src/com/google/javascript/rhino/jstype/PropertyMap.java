@@ -41,34 +41,37 @@ package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
-import com.google.common.collect.Sets;
 import com.google.javascript.rhino.jstype.Property.OwnedProperty;
-import java.io.Serializable;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Representation for a collection of properties on an object. */
-final class PropertyMap implements Serializable {
-  private static final long serialVersionUID = 1L;
-
-  private static final PropertyMap EMPTY_MAP = new PropertyMap(
-      ImmutableMap.<String, Property>of());
+final class PropertyMap {
+  private static final PropertyMap EMPTY_MAP =
+      new PropertyMap(
+          ImmutableMap.<String, Property>of(), ImmutableMap.<KnownSymbolType, Property>of());
 
   // A place to get the inheritance structure.
   // Because the extended interfaces are resolved dynamically, this gets
   // messy :(. If type-resolution was more well-defined, we could
   // just reference primary parents and secondary parents directly.
-  private ObjectType parentSource = null;
+  private @Nullable ObjectType parentSource = null;
 
   // The map of our own properties.
   private final Map<String, Property> properties;
+
+  private Map<KnownSymbolType, Property> knownSymbols; // lazily initialized
 
   /**
    * The set of keys for this map and its ancestors.
@@ -77,10 +80,20 @@ final class PropertyMap implements Serializable {
    * (e.g. structural type equality). Since the results don't change often, this cache eliminates
    * most of the cost.
    */
-  @Nullable private ImmutableSortedSet<String> cachedKeySet = null;
+  private @Nullable ImmutableSortedSet<String> cachedKeySet = null;
 
   /**
-   * A "timestamp" for map mutations to validate {@link #cachedKeySet}.
+   * The set of known symbols keys for this map and its ancestors.
+   *
+   * <p>Collecting the set of properties turns out to be expensive for some high volume callers
+   * (e.g. structural type equality). Since the results don't change often, this cache eliminates
+   * most of the cost.
+   */
+  private ImmutableSet<KnownSymbolType> cachedKnownSymbolsKeySet = null;
+
+  /**
+   * A "timestamp" for map mutations to validate {@link #cachedKeySet} and {@link
+   * #cachedKnownSymbolsKeySet}.
    *
    * <p>If this value is less than the counter in any ancestor map, the cache is invalid. The update
    * algorithm is similar to using a global counter, but uses a distributed approach that prevents
@@ -89,11 +102,13 @@ final class PropertyMap implements Serializable {
   private int cachedKeySetCounter = 0;
 
   PropertyMap() {
-    this(new TreeMap<>());
+    this(new TreeMap<>(), null);
   }
 
-  private PropertyMap(Map<String, Property> underlyingMap) {
+  private PropertyMap(
+      Map<String, Property> underlyingMap, Map<KnownSymbolType, Property> underlyingknownSymbols) {
     this.properties = underlyingMap;
+    this.knownSymbols = underlyingknownSymbols;
   }
 
   static PropertyMap immutableEmptyMap() {
@@ -109,8 +124,14 @@ final class PropertyMap implements Serializable {
     this.incrementCachedKeySetCounter();
   }
 
+  @VisibleForTesting
+  void setParentForTesting(PropertyMap parent) {
+    this.parentSource = parent.parentSource;
+    this.incrementCachedKeySetCounter();
+  }
+
   /** Returns the direct parent of this property map. */
-  PropertyMap getPrimaryParent() {
+  @Nullable PropertyMap getPrimaryParent() {
     if (parentSource == null) {
       return null;
     }
@@ -132,40 +153,14 @@ final class PropertyMap implements Serializable {
     return parentSource.getCtorExtendedInterfaces();
   }
 
-  OwnedProperty findTopMost(String name) {
-    // Check primary parents which always has precendence over secondary.
-    OwnedProperty found = null;
-    for (PropertyMap map = this; map != null; map = map.getPrimaryParent()) {
-      Property prop = map.properties.get(name);
-      if (prop != null) {
-        found = new OwnedProperty(map.parentSource, prop);
-      }
-    }
-    if (found != null) {
-      return found;
-    }
-
-    // Recurse into secondary parents. Note that there is no single top most definition with
-    // interfaces so we simple return the first result.
-    for (PropertyMap map = this; map != null; map = map.getPrimaryParent()) {
-      for (ObjectType o : map.getSecondaryParentObjects()) {
-        PropertyMap parent = o.getPropertyMap();
-        if (parent != null) {
-          OwnedProperty e = parent.findTopMost(name);
-          if (e != null) {
-            return e;
-          }
-        }
-      }
-    }
-
-    return null;
+  @Nullable OwnedProperty findClosest(String name) {
+    return findClosest(new Property.StringKey(name));
   }
 
-  OwnedProperty findClosest(String name) {
+  @Nullable OwnedProperty findClosest(Property.Key name) {
     // Check primary parents which always has precendence over secondary.
     for (PropertyMap map = this; map != null; map = map.getPrimaryParent()) {
-      Property prop = map.properties.get(name);
+      Property prop = map.getOwnProperty(name);
       if (prop != null) {
         return new OwnedProperty(map.parentSource, prop);
       }
@@ -191,21 +186,32 @@ final class PropertyMap implements Serializable {
     return properties.get(propertyName);
   }
 
+  @Nullable Property getOwnProperty(Property.Key propertyName) {
+    return switch (propertyName.kind()) {
+      case STRING -> getOwnProperty(propertyName.string());
+      case SYMBOL -> knownSymbols != null ? knownSymbols.get(propertyName.symbol()) : null;
+    };
+  }
+
   int getPropertiesCount() {
     PropertyMap primaryParent = getPrimaryParent();
     if (primaryParent == null) {
       return this.properties.size();
     }
 
-    return this.keySet().size();
+    return this.getAllKeys().stringKeys().size();
   }
 
   Set<String> getOwnPropertyNames() {
     return properties.keySet();
   }
 
-  ImmutableSortedSet<String> keySet() {
-    Set<PropertyMap> ancestors = Sets.newIdentityHashSet();
+  Set<KnownSymbolType> getOwnKnownSymbols() {
+    return knownSymbols != null ? knownSymbols.keySet() : ImmutableSet.of();
+  }
+
+  public AllKeys getAllKeys() {
+    LinkedHashSet<PropertyMap> ancestors = new LinkedHashSet<>();
     this.collectAllAncestors(ancestors);
 
     int maxAncestorCounter = 0;
@@ -215,14 +221,15 @@ final class PropertyMap implements Serializable {
       }
     }
 
-    /**
+    /*
      * If any counter is greater than this counter, there has been a mutation and the cache must be
      * rebuilt.
      */
     if (maxAncestorCounter != this.cachedKeySetCounter || this.cachedKeySet == null) {
       TreeSet<String> keys = new TreeSet<>();
+      Set<KnownSymbolType> knownSymbolsKeys = new LinkedHashSet<>();
       for (PropertyMap ancestor : ancestors) {
-        /**
+        /*
          * Update the counters in all ancestors.
          *
          * <p>This update scheme is convergent. As long as there are no mutations, calls {@link
@@ -230,16 +237,22 @@ final class PropertyMap implements Serializable {
          */
         ancestor.cachedKeySetCounter = maxAncestorCounter;
         ancestor.cachedKeySet = null;
+        ancestor.cachedKnownSymbolsKeySet = null;
 
         keys.addAll(ancestor.getOwnPropertyNames());
+        knownSymbolsKeys.addAll(ancestor.getOwnKnownSymbols());
       }
       this.cachedKeySet = ImmutableSortedSet.copyOfSorted(keys);
+      this.cachedKnownSymbolsKeySet = ImmutableSet.copyOf(knownSymbolsKeys);
     }
 
-    return this.cachedKeySet;
+    return new AllKeys(this.cachedKeySet, this.cachedKnownSymbolsKeySet);
   }
 
-  private void collectAllAncestors(Set<PropertyMap> ancestors) {
+  public record AllKeys(
+      ImmutableSortedSet<String> stringKeys, Set<KnownSymbolType> knownSymbolKeys) {}
+
+  private void collectAllAncestors(LinkedHashSet<PropertyMap> ancestors) {
     if (!ancestors.add(this)) {
       return;
     }
@@ -257,15 +270,6 @@ final class PropertyMap implements Serializable {
     }
   }
 
-  boolean removeProperty(String name) {
-    if (properties.remove(name) == null) {
-      return false;
-    }
-
-    this.incrementCachedKeySetCounter();
-    return true;
-  }
-
   void putProperty(String name, Property newProp) {
     Property oldProp = properties.get(name);
 
@@ -280,16 +284,42 @@ final class PropertyMap implements Serializable {
     properties.put(name, newProp);
   }
 
+  void putProperty(KnownSymbolType symbol, Property newProp) {
+    Property oldProp = knownSymbols != null ? knownSymbols.get(symbol) : null;
+
+    if (oldProp == null) {
+      // The cache is only invalidated if this is a new property name.
+      this.incrementCachedKeySetCounter();
+    }
+
+    if (knownSymbols == null) {
+      knownSymbols = new LinkedHashMap<>();
+    }
+    knownSymbols.put(symbol, newProp);
+  }
+
+  void putProperty(Property.Key name, Property newProp) {
+    switch (name.kind()) {
+      case STRING -> putProperty(name.string(), newProp);
+      case SYMBOL -> putProperty(name.symbol(), newProp);
+    }
+  }
+
   Iterable<Property> values() {
     return properties.values();
   }
 
   @Override
   public int hashCode() {
+    // We need to override hashCode so that JSType.hashCode is consistent. JSType uses the hashcode
+    // of its PropertyMap. Otherwise PropertyMap uses identity equality.
+    //
     // Calculate the hash just based on the property names, not their types.
     // Otherwise we can get into an infinite loop because the ObjectType hashCode
     // method calls this one.
-    return Objects.hashCode(properties.keySet());
+    return this.knownSymbols == null
+        ? Objects.hashCode(this.properties.keySet())
+        : Objects.hash(this.properties.keySet(), this.knownSymbols.keySet());
   }
 
   private void incrementCachedKeySetCounter() {

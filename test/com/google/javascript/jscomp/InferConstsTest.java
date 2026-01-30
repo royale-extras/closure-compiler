@@ -15,37 +15,24 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertWithMessage;
+import static java.util.Arrays.stream;
 
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for {@link InferConsts}.
- *
- * @author tbreisacher@google.com (Tyler Breisacher)
- */
+/** Tests for {@link InferConsts}. */
 @RunWith(JUnit4.class)
 public final class InferConstsTest extends CompilerTestCase {
   private FindConstants constFinder;
 
   private ImmutableList<String> names;
-
-  @Override
-  @Before
-  public void setUp() throws Exception {
-    super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
-  }
 
   @Override
   public CompilerPass getProcessor(final Compiler compiler) {
@@ -66,6 +53,7 @@ public final class InferConstsTest extends CompilerTestCase {
     assertConsts("var x = 3, y = 4;", inferred("x", "y"));
     assertConsts("var x = 3, y;", inferred("x"), notInferred("y"));
     assertConsts("var x = 3;  function f(){x;}", inferred("x"));
+    assertConsts("var x = 3, y; y ||= 4;", inferred("x"), notInferred("y"));
   }
 
   @Test
@@ -76,6 +64,7 @@ public final class InferConstsTest extends CompilerTestCase {
     assertConsts("let x = 3; let y = 4;", inferred("x", "y"));
     assertConsts("let x = 3, y = 4; x++;", inferred("y"));
     assertConsts("let x = 3;  function f(){let x = 4;}", inferred("x"));
+    assertConsts("let x; x ||= 0;", notInferred("x"));
     assertConsts("/** @const */ let x;", declared("x"), notInferred("x"));
     assertConsts("const x = 1;", declared("x"), inferred("x"));
   }
@@ -89,6 +78,7 @@ public final class InferConstsTest extends CompilerTestCase {
     assertConsts("function f() { Foo; } class Foo {}", inferred("Foo"));
     assertConsts("function f() { g; } function g() {}", inferred("g"));
     assertConsts("function f([y = () => x], x) {}", inferred("x"));
+    assertConsts("function f() { x ||= 1; } let x = 0;", notInferred("x"));
   }
 
   @Test
@@ -100,6 +90,8 @@ public final class InferConstsTest extends CompilerTestCase {
     assertNotConsts("let x = 3; x = 2;", "x", "y");
     assertNotConsts("/** @const */let x; let y;", "y");
     assertNotConsts("let x = 3;  function f() {let x = 4; x++;} x++;", "x");
+    assertNotConsts("var x = 2; x ||= 1;", "x");
+    assertNotConsts("let x = 3; x ||= 1;", "x");
   }
 
   @Test
@@ -187,8 +179,20 @@ public final class InferConstsTest extends CompilerTestCase {
     assertConsts("var [a, b, c] = [1, 2, 3];", inferred("a", "b", "c"));
     assertConsts("const [a, b, c] = [1, 2, 3];", inferred("a", "b", "c"));
     assertNotConsts("var [a, b, c] = obj;", "obj");
-    assertNotConsts("" + "var [a, b, c] = [1, 2, 3];" + "[a, b, c] = [1, 2, 3];", "a", "b", "c");
-    assertConsts("" + "var [a, b, c] = [1, 2, 3];" + "[a, b]= [1, 2];", inferred("c"));
+    assertNotConsts(
+        """
+        var [a, b, c] = [1, 2, 3];
+        [a, b, c] = [1, 2, 3];
+        """,
+        "a",
+        "b",
+        "c");
+    assertConsts(
+        """
+        var [a, b, c] = [1, 2, 3];
+        [a, b]= [1, 2];
+        """,
+        inferred("c"));
 
     assertNotConsts("var [a, b, c] = [1, 2, 3]; [a, b] = [1, 2];", "a", "b");
     assertConsts("var [a, b, c] = [1, 2, 3]; [a, b] = [1, 2];", inferred("c"));
@@ -199,8 +203,18 @@ public final class InferConstsTest extends CompilerTestCase {
     assertConsts("var obj = {a: 1}; var {a} = obj", inferred("a"));
 
     assertNotConsts(
-        "" + "var [{a: x} = {a: 'y'}] = [{a: 'x'}];" + "[{a: x} = {a: 'x'}] = {};", "x");
-    assertNotConsts("" + "let fg = '', bg = '';" + "({fg, bg} = pal[val - 1]);", "fg", "bg");
+        """
+        var [{a: x} = {a: 'y'}] = [{a: 'x'}];
+        [{a: x} = {a: 'x'}] = {};
+        """,
+        "x");
+    assertNotConsts(
+        """
+        let fg = '', bg = '';
+        ({fg, bg} = pal[val - 1]);
+        """,
+        "fg",
+        "bg");
 
     assertConsts("var [a, , b] = [1, 2, 3];", inferred("a", "b"));
     assertConsts("const [a, , b] = [1, 2, 3];", inferred("a", "b"));
@@ -226,13 +240,25 @@ public final class InferConstsTest extends CompilerTestCase {
   @Test
   public void testGeneratorFunctionVar() {
     assertNotConsts(
-        lines("function *gen() {", "  var x = 0; ", "  while (x < 3)", "    yield x++;", "}"), "x");
+        """
+        function *gen() {
+          var x = 0;
+          while (x < 3)
+            yield x++;
+        }
+        """,
+        "x");
   }
 
   @Test
   public void testGeneratorFunctionConst() {
     assertConsts(
-        lines("function *gen() {", "  var x = 0;", "  yield x;", "}"),
+        """
+        function *gen() {
+          var x = 0;
+          yield x;
+        }
+        """,
         notDeclared("x"),
         inferred("x"));
   }
@@ -248,7 +274,14 @@ public final class InferConstsTest extends CompilerTestCase {
     assertConsts("import x from './mod';", notInferred("x"));
     assertConsts("import {x as y, z} from './mod';", notInferred("y", "z"));
     assertConsts("import * as x from './mod';", notInferred("x"));
-    assertConsts("import * as CONST_NAME from './mod';", declared("CONST_NAME"));
+    assertNotConsts("import * as CONST_NAME from './mod';", "CONST_NAME");
+  }
+
+  @Test
+  public void testConstantByConventionButNotInPractice() {
+    assertNotConsts("let CONST_NAME = 0; CONST_NAME++;", "CONST_NAME");
+    assertNotConsts("var CONST_NAME = 0; CONST_NAME++;", "CONST_NAME");
+    assertConsts("var CONST_NAME = 0;", inferred("CONST_NAME"));
   }
 
   private void assertNotConsts(String js, String... names) {
@@ -257,10 +290,7 @@ public final class InferConstsTest extends CompilerTestCase {
 
   private void assertConsts(String js, Expectation... expectations) {
     names =
-        Arrays.stream(expectations)
-            .flatMap(e -> e.names.stream())
-            .collect(toImmutableSet())
-            .asList();
+        stream(expectations).flatMap(e -> e.names.stream()).distinct().collect(toImmutableList());
 
     testSame(js);
 
@@ -279,19 +309,19 @@ public final class InferConstsTest extends CompilerTestCase {
   }
 
   static Expectation declared(String... names) {
-    return new Expectation(/*isInferred=*/ false, /*isConst=*/ true, names);
+    return new Expectation(/* isInferred= */ false, /* isConst= */ true, names);
   }
 
   static Expectation inferred(String... names) {
-    return new Expectation(/*isInferred=*/ true, /*isConst=*/ true, names);
+    return new Expectation(/* isInferred= */ true, /* isConst= */ true, names);
   }
 
   static Expectation notInferred(String... names) {
-    return new Expectation(/*isInferred=*/ true, /*isConst=*/ false, names);
+    return new Expectation(/* isInferred= */ true, /* isConst= */ false, names);
   }
 
   static Expectation notDeclared(String... names) {
-    return new Expectation(/*isInferred=*/ false, /*isConst=*/ false, names);
+    return new Expectation(/* isInferred= */ false, /* isConst= */ false, names);
   }
 
   private static final class Expectation {

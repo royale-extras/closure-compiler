@@ -15,31 +15,33 @@
  */
 package com.google.javascript.jscomp;
 
+import com.google.common.collect.ImmutableSet;
+import com.google.javascript.jscomp.js.RuntimeJsLibManager;
 import com.google.javascript.rhino.Node;
 
 /**
- * Adds runtime libraries to the beginning of the AST. The libraries for runtime typechecking are
- * added, if needed, as well as any other libraries explicitly requested via the {@link
- * CompilerOptions#forceLibraryInjection} field.
+ * Adds runtime libraries to the beginning of the AST. Any libraries explicitly requested via the
+ * {@link CompilerOptions#forceLibraryInjection} field.
  *
  * <p>TODO(b/120486392): merge this pass with {@link InjectTranspilationRuntimeLibraries}.
  */
-class InjectRuntimeLibraries implements CompilerPass {
-  private final AbstractCompiler compiler;
+final class InjectRuntimeLibraries implements CompilerPass {
+  private final RuntimeJsLibManager runtimeLibs;
+  private final ImmutableSet<String> forceInjectedLibraries;
 
-  public InjectRuntimeLibraries(AbstractCompiler compiler) {
-    this.compiler = compiler;
+  InjectRuntimeLibraries(AbstractCompiler compiler, ImmutableSet<String> forceInjectedLibraries) {
+    this.runtimeLibs = compiler.getRuntimeJsLibManager();
+    this.forceInjectedLibraries = forceInjectedLibraries;
   }
 
   @Override
   public void process(Node externs, Node root) {
-    CompilerOptions options = compiler.getOptions();
-    if (options.runtimeTypeCheck) {
-      compiler.ensureLibraryInjected("runtime_type_check", true);
-    }
+    injectLibraries();
+  }
 
-    for (String forced : options.forceLibraryInjection) {
-      compiler.ensureLibraryInjected(forced, true);
+  private void injectLibraries() {
+    for (String forced : this.forceInjectedLibraries) {
+      runtimeLibs.ensureLibraryInjected(forced, true);
     }
   }
 }

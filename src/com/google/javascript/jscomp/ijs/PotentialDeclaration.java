@@ -17,6 +17,7 @@ package com.google.javascript.jscomp.ijs;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.NodeUtil;
@@ -24,21 +25,23 @@ import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.QualifiedName;
 import com.google.javascript.rhino.Token;
-import javax.annotation.Nullable;
+import java.util.ArrayList;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Encapsulates something that could be a declaration.
  *
- * This includes:
- *   var/let/const declarations,
- *   function/class declarations,
- *   method declarations,
- *   assignments,
- *   goog.define calls,
- *   and even valueless property accesses (e.g. `/** @type {number} * / Foo.prototype.bar`)
+ * <p>This includes: var/let/const declarations, function/class declarations, method declarations,
+ * assignments, goog.define calls, and even valueless property accesses (e.g. `/** @type {number} *
+ * / Foo.prototype.bar`)
  */
 abstract class PotentialDeclaration {
+  // The threshold for trunctating string enum items. Any string literal longer than this will get
+  // truncated in the generated IJS file. This value is decided by the length of the longest
+  // security-sensitive attribute name.
+  private static final int STRING_ENUM_RETAIN_CAP = 10;
   // The fully qualified name of the declaration.
   private final String fullyQualifiedName;
   // The LHS node of the declaration.
@@ -55,11 +58,19 @@ abstract class PotentialDeclaration {
   static PotentialDeclaration fromName(Node nameNode) {
     checkArgument(nameNode.isQualifiedName(), nameNode);
     Node rhs = NodeUtil.getRValueOfLValue(nameNode);
-    if (ClassUtil.isThisProp(nameNode)) {
-      String name = ClassUtil.getPrototypeNameOfThisProp(nameNode);
+    if (ClassUtil.isThisPropInsideClassWithName(nameNode)) {
+      String name = ClassUtil.getFullyQualifiedNameOfThisProp(nameNode);
       return new ThisPropDeclaration(name, nameNode, rhs);
     }
     return new NameDeclaration(nameNode.getQualifiedName(), nameNode, rhs);
+  }
+
+  static PotentialDeclaration fromMemberFieldDef(Node fieldNode) {
+    checkArgument(fieldNode.isMemberFieldDef());
+    Node rhs = NodeUtil.getRValueOfLValue(fieldNode);
+    String name = ClassUtil.getFullyQualifiedNameOfMemberFieldDef(fieldNode);
+    // lhs is MEMBER_FIELD_DEF  rhs is the value assigned to the field if any.
+    return new MemberFieldDeclaration(name, fieldNode, rhs);
   }
 
   static PotentialDeclaration fromMethod(Node functionNode) {
@@ -99,13 +110,11 @@ abstract class PotentialDeclaration {
     return lhs;
   }
 
-  @Nullable
-  Node getRhs() {
+  @Nullable Node getRhs() {
     return rhs;
   }
 
-  @Nullable
-  JSDocInfo getJsDoc() {
+  @Nullable JSDocInfo getJsDoc() {
     return NodeUtil.getBestJSDocInfo(lhs);
   }
 
@@ -123,8 +132,8 @@ abstract class PotentialDeclaration {
   }
 
   /**
-   * Remove this "potential declaration" completely.
-   * Usually, this is because the same symbol has already been declared in this file.
+   * Remove this "potential declaration" completely. Usually, this is because the same symbol has
+   * already been declared in this file.
    */
   final void remove(AbstractCompiler compiler) {
     if (isDetached()) {
@@ -136,18 +145,27 @@ abstract class PotentialDeclaration {
   }
 
   /**
-   * Simplify this declaration to only include what's necessary for typing.
-   * Usually, this means removing the RHS and leaving a type annotation.
+   * Simplify this declaration to only include what's necessary for typing. Usually, this means
+   * removing the RHS and leaving a type annotation.
    */
   abstract void simplify(AbstractCompiler compiler);
 
   /**
-   * A potential declaration that has a fully qualified name to describe it.
-   * This includes things like:
-   *   var/let/const/function/class declarations,
-   *   assignments to a fully qualified name,
-   *   and goog.module exports
-   * This is the most common type of potential declaration.
+   * Breaks down this declaration if it's a destructuring LHS by replacing it with a VAR node and
+   * removing the RHS.
+   *
+   * <p>TODO(lharker): can we merge this code into {@link #simplify(AbstractCompiler)}?
+   *
+   * @return true if the declaration is broken down. Otherwise, returns false.
+   */
+  boolean breakDownDestructure(AbstractCompiler compiler) {
+    return false;
+  }
+
+  /**
+   * A potential declaration that has a fully qualified name to describe it. This includes things
+   * like: var/let/const/function/class declarations, assignments to a fully qualified name, and
+   * goog.module exports This is the most common type of potential declaration.
    */
   private static class NameDeclaration extends PotentialDeclaration {
 
@@ -202,7 +220,7 @@ abstract class PotentialDeclaration {
       // Just completely remove the RHS, and replace with a getprop.
       Node newStatement =
           NodeUtil.newQNameDeclaration(compiler, nameNode.getQualifiedName(), null, jsdoc);
-      newStatement.useSourceInfoIfMissingFromForTree(nameNode);
+      newStatement.srcrefTreeIfMissing(nameNode);
       Node oldStatement = getRemovableNode();
       NodeUtil.deleteChildren(oldStatement, compiler);
       if (oldStatement.isExport()) {
@@ -211,6 +229,41 @@ abstract class PotentialDeclaration {
         oldStatement.replaceWith(newStatement);
       }
       compiler.reportChangeToEnclosingScope(newStatement);
+    }
+
+    @Override
+    boolean breakDownDestructure(AbstractCompiler compiler) {
+      if (!NodeUtil.isLhsByDestructuring(getLhs())) {
+        return false;
+      }
+
+      Node rootTarget = NodeUtil.getRootTarget(getLhs());
+
+      checkState(rootTarget.getParent().isDestructuringLhs());
+      if (!NodeUtil.isNameDeclaration(rootTarget.getGrandparent())) {
+        return false;
+      }
+
+      Node definitionNode = rootTarget.getGrandparent();
+
+      Node prev = null;
+
+      ArrayList<Node> lhsNodes = new ArrayList<>();
+      NodeUtil.visitLhsNodesInNode(rootTarget.getParent(), lhsNodes::add);
+      for (Node n : lhsNodes) {
+        n.detach();
+        Node temp = IR.var(n);
+        if (prev == null) {
+          definitionNode.replaceWith(temp);
+          compiler.reportChangeToEnclosingScope(temp);
+        } else {
+          temp.insertAfter(prev);
+          compiler.reportChangeToEnclosingScope(temp);
+          temp.srcrefTree(prev);
+        }
+        prev = temp;
+      }
+      return true;
     }
 
     private static void replaceRhsWithUnknown(Node rhs) {
@@ -259,9 +312,7 @@ abstract class PotentialDeclaration {
     }
   }
 
-  /**
-   * A declaration of a property on `this` inside a constructor.
-   */
+  /** A declaration of a property on `this` inside a constructor. */
   private static class ThisPropDeclaration extends PotentialDeclaration {
     private final Node insertionPoint;
 
@@ -279,10 +330,10 @@ abstract class PotentialDeclaration {
       // Just completely remove the RHS, if present, and replace with a getprop.
       Node newStatement =
           NodeUtil.newQNameDeclaration(compiler, getFullyQualifiedName(), null, getJsDoc());
-      newStatement.useSourceInfoIfMissingFromForTree(getLhs());
+      newStatement.srcrefTreeIfMissing(getLhs());
       NodeUtil.deleteNode(getRemovableNode(), compiler);
-      if (insertionPoint.getParent() != null) {
-        insertionPoint.getParent().addChildAfter(newStatement, insertionPoint);
+      if (insertionPoint.hasParent()) {
+        newStatement.insertAfter(insertionPoint);
         compiler.reportChangeToEnclosingScope(newStatement);
       }
     }
@@ -317,42 +368,42 @@ abstract class PotentialDeclaration {
       //   2. ASSIGN: a.b = goog.define('c', 2);
       //   3. NAME: var x = goog.define('d', 3);
       switch (callNode.getParent().getToken()) {
-        case EXPR_RESULT:
+        case EXPR_RESULT -> {
           return new DefineDeclaration(
               callNode.getSecondChild().getString(), callNode, callNode.getLastChild());
-        case ASSIGN:
+        }
+        case ASSIGN -> {
           Node previous = callNode.getPrevious();
           return new DefineDeclaration(
               previous.getQualifiedName(), previous, callNode.getLastChild());
-        case NAME:
+        }
+        case NAME -> {
           Node parent = callNode.getParent();
           return new DefineDeclaration(parent.getString(), parent, callNode.getLastChild());
-        default:
-          throw new IllegalStateException("Unexpected parent: " + callNode.getParent().getToken());
+        }
+        default ->
+            throw new IllegalStateException(
+                "Unexpected parent: " + callNode.getParent().getToken());
       }
     }
 
-    static Node makeEmptyValueNode(JSTypeExpression type) {
+    static @Nullable Node makeEmptyValueNode(JSTypeExpression type) {
       Node n = type.getRoot();
-      while (n != null && !n.isString() && !n.isName()) {
+      while (n != null && !n.isStringLit() && !n.isName()) {
         n = n.getFirstChild();
       }
-      switch (n != null ? n.getString() : "") {
-        case "boolean":
-          return new Node(Token.FALSE);
-        case "number":
-          return Node.newNumber(0);
-        case "string":
-          return Node.newString("");
-        default:
-          return null;
-      }
+      return switch (n != null ? n.getString() : "") {
+        case "boolean" -> new Node(Token.FALSE);
+        case "number" -> Node.newNumber(0);
+        case "string" -> Node.newString("");
+        default -> null;
+      };
     }
   }
 
   /**
-   * A declaration of a method defined using the ES6 method syntax or goog.defineClass. Note that
-   * a method defined as an assignment to a prototype property would be a NameDeclaration instead.
+   * A declaration of a method defined using the ES6 method syntax. Note that a method defined as an
+   * assignment to a prototype property would be a NameDeclaration instead.
    */
   private static class MethodDeclaration extends PotentialDeclaration {
     MethodDeclaration(String name, Node functionNode) {
@@ -361,6 +412,25 @@ abstract class PotentialDeclaration {
 
     @Override
     void simplify(AbstractCompiler compiler) {}
+
+    @Override
+    Node getRemovableNode() {
+      return getLhs();
+    }
+  }
+
+  private static class MemberFieldDeclaration extends PotentialDeclaration {
+    MemberFieldDeclaration(@Nullable String name, Node lhs, Node rhs) {
+      super(name, lhs, rhs);
+    }
+
+    @Override
+    void simplify(AbstractCompiler compiler) {
+      Node rhs = getRhs();
+      if (rhs != null) {
+        NodeUtil.deleteNode(rhs, compiler);
+      }
+    }
 
     @Override
     Node getRemovableNode() {
@@ -386,9 +456,7 @@ abstract class PotentialDeclaration {
       Node key = getLhs();
       removeStringKeyValue(key);
       compiler.reportChangeToEnclosingScope(key);
-      if (jsdoc == null
-          || !jsdoc.containsDeclaration()
-          || isConstToBeInferred()) {
+      if (jsdoc == null || !jsdoc.containsDeclaration() || isConstToBeInferred()) {
         key.setJSDocInfo(JsdocUtil.getUnusableTypeJSDoc(jsdoc));
       }
     }
@@ -415,7 +483,6 @@ abstract class PotentialDeclaration {
     Node getRemovableNode() {
       return getLhs();
     }
-
   }
 
   /**
@@ -432,7 +499,8 @@ abstract class PotentialDeclaration {
    *     foo: String,
    *     bar: {
    *       type: Number,
-   *       value: 123
+   *       value: 123,
+   *       readOnly: true
    *     }
    *   },
    *   baz: function() {}
@@ -458,17 +526,21 @@ abstract class PotentialDeclaration {
       if (!propertiesObject.isObjectLit() || !propertiesObject.hasChildren()) {
         return;
       }
-      for (Node propKey : propertiesObject.children()) {
+      for (Node propKey = propertiesObject.getFirstChild();
+          propKey != null;
+          propKey = propKey.getNext()) {
         Node propDef = propKey.getOnlyChild();
         // A property definition is either a function reference (e.g. String, Number), or another
-        // object literal. If it's an object literal, only the "type" sub-property matters for type
-        // checking, so we can delete everything else (which may include e.g. a "value" sub-property
-        // with a function expression).
+        // object literal. If it's an object literal, only the "type" and "readOnly" sub-properties
+        // matters for type checking, so we can delete everything else (which may include e.g. a
+        // "value" sub-property with a function expression).
         if (propDef.isObjectLit()) {
-          for (Node subProp : propDef.children()) {
-            if (!subProp.getString().equals("type")) {
+          for (Node subProp = propDef.getFirstChild(); subProp != null; ) {
+            final Node next = subProp.getNext();
+            if (!subProp.getString().equals("type") && !subProp.getString().equals("readOnly")) {
               NodeUtil.deleteNode(subProp, compiler);
             }
+            subProp = next;
           }
         }
       }
@@ -520,7 +592,7 @@ abstract class PotentialDeclaration {
     }
 
     @Override
-    boolean isDefiniteDeclaration() {
+    boolean isDefiniteDeclaration(AbstractCompiler compiler) {
       return true;
     }
 
@@ -533,16 +605,44 @@ abstract class PotentialDeclaration {
   /** Remove values from enums */
   private void simplifyEnumValues(AbstractCompiler compiler) {
     if (getRhs().isObjectLit() && getRhs().hasChildren()) {
-      for (Node key : getRhs().children()) {
-        removeStringKeyValue(key);
+      boolean changed = false;
+      for (Node key = getRhs().getFirstChild(); key != null; key = key.getNext()) {
+        Node value = key.getOnlyChild();
+        if (!value.isStringLit()) {
+          removeStringKeyValue(key);
+          changed = true;
+        } else {
+          String content = value.getString();
+          if (content.length() > STRING_ENUM_RETAIN_CAP) {
+            truncateStringKeyValue(key);
+            changed = true;
+          }
+        }
       }
-      compiler.reportChangeToEnclosingScope(getRhs());
+      if (changed) {
+        compiler.reportChangeToEnclosingScope(getRhs());
+      }
     }
   }
 
-  boolean isDefiniteDeclaration() {
+  boolean isDefiniteDeclaration(AbstractCompiler compiler) {
     Node parent = getLhs().getParent();
     switch (parent.getToken()) {
+      case DEFAULT_VALUE:
+        if (!parent.getParent().isStringKey()) {
+          return false;
+        }
+        // fall through
+      case COMPUTED_PROP:
+      case STRING_KEY:
+        if (NodeUtil.isLhsByDestructuring(getLhs())) {
+          Node rootTarget = NodeUtil.getRootTarget(getLhs());
+          checkState(rootTarget.getParent().isDestructuringLhs());
+          if (NodeUtil.isNameDeclaration(rootTarget.getGrandparent())) {
+            return true;
+          }
+        }
+        return false;
       case VAR:
       case LET:
       case CONST:
@@ -570,23 +670,25 @@ abstract class PotentialDeclaration {
         nameNode.getParent().isConst()
             || isExportLhs(nameNode)
             || (jsdoc != null && jsdoc.isConstant());
-    return isConst
-        && !JsdocUtil.hasAnnotatedType(jsdoc)
-        && !NodeUtil.isNamespaceDecl(nameNode);
+    return isConst && !JsdocUtil.hasAnnotatedType(jsdoc) && !NodeUtil.isNamespaceDecl(nameNode);
   }
+
+  private static final QualifiedName GOOG_ABSTRACTMETHOD = QualifiedName.of("goog.abstractMethod");
+  private static final QualifiedName GOOG_REQUIRE = QualifiedName.of("goog.require");
+  private static final QualifiedName GOOG_REQUIRETYPE = QualifiedName.of("goog.requireType");
+  private static final QualifiedName GOOG_FORWARDDECLARE = QualifiedName.of("goog.forwardDeclare");
+  private static final QualifiedName MODULE_EXPORTS = QualifiedName.of("module.exports");
 
   private static boolean isTypedRhs(Node rhs) {
     return rhs.isFunction()
         || rhs.isClass()
-        || NodeUtil.isCallTo(rhs, "goog.defineClass")
-        || (rhs.isQualifiedName() && rhs.matchesQualifiedName("goog.abstractMethod"))
-        || (rhs.isQualifiedName() && rhs.matchesQualifiedName("goog.nullFunction"));
+        || (rhs.isQualifiedName() && GOOG_ABSTRACTMETHOD.matches(rhs));
   }
 
   private static boolean isExportLhs(Node lhs) {
     return (lhs.isName() && lhs.matchesName("exports"))
         || (lhs.isGetProp() && lhs.getFirstChild().matchesName("exports"))
-        || lhs.matchesQualifiedName("module.exports");
+        || MODULE_EXPORTS.matches(lhs);
   }
 
   static boolean isImportRhs(@Nullable Node rhs) {
@@ -594,23 +696,58 @@ abstract class PotentialDeclaration {
       return false;
     }
     Node callee = rhs.getFirstChild();
-    return callee.matchesQualifiedName("goog.require")
-        || callee.matchesQualifiedName("goog.requireType")
-        || callee.matchesQualifiedName("goog.forwardDeclare")
+    return GOOG_REQUIRE.matches(callee)
+        || GOOG_REQUIRETYPE.matches(callee)
+        || GOOG_FORWARDDECLARE.matches(callee)
         || callee.matchesName("require");
   }
 
   static boolean isAliasDeclaration(Node lhs, @Nullable Node rhs) {
-    return !ClassUtil.isThisProp(lhs)
+    return !ClassUtil.isThisPropInsideClassWithName(lhs)
         && isConstToBeInferred(lhs)
         && rhs != null
-        && rhs.isQualifiedName();
+        && isQualifiedAliasExpression(rhs);
+  }
+
+  private static final QualifiedName GOOG_MODULE_GET = QualifiedName.of("goog.module.get");
+
+  /**
+   * Returns whether a node corresponds to a simple or a qualified name, such as <code>x</code> or
+   * <code>a.b.c</code> or <code>this.a</code>.
+   */
+  public static final boolean isQualifiedAliasExpression(Node n) {
+    switch (n.getToken()) {
+      case NAME:
+        return !n.getString().isEmpty();
+      case THIS:
+      case SUPER:
+        return true;
+      case GETPROP:
+        return isQualifiedAliasExpression(n.getFirstChild());
+      case CALL:
+        if (GOOG_MODULE_GET.matches(n.getFirstChild())) {
+          return true;
+        }
+        return false;
+
+      case MEMBER_FUNCTION_DEF:
+        // These are explicitly *not* qualified name components.
+      default:
+        return false;
+    }
   }
 
   private static void removeStringKeyValue(Node stringKey) {
     Node value = stringKey.getOnlyChild();
     Node replacementValue = IR.number(0).srcrefTree(value);
-    stringKey.replaceChild(value, replacementValue);
+    value.replaceWith(replacementValue);
   }
 
+  private static void truncateStringKeyValue(Node stringKey) {
+    Node value = stringKey.getOnlyChild();
+    Node replacementValue =
+        IR.string(value.getString().substring(0, STRING_ENUM_RETAIN_CAP - 2) + "..")
+            .srcrefTree(value);
+    value.replaceWith(replacementValue);
+  }
 }

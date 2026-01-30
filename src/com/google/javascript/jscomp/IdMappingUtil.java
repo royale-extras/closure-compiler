@@ -21,19 +21,14 @@ import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
-import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
-
-import java.util.Collections;
-import java.util.HashMap;
+import com.google.common.collect.ImmutableMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * A utility class for generating and parsing id mappings held by {@link ReplaceIdGenerators}.
- */
+/** A utility class for generating and parsing id mappings held by {@link ReplaceIdGenerators}. */
 public final class IdMappingUtil {
 
-  @VisibleForTesting
-  static final char NEW_LINE = '\n';
+  @VisibleForTesting static final char NEW_LINE = '\n';
 
   private static final Splitter LINE_SPLITTER = Splitter.on(NEW_LINE).omitEmptyStrings();
 
@@ -41,21 +36,15 @@ public final class IdMappingUtil {
   private IdMappingUtil() {}
 
   /**
-   * @return The serialize map of generators and their ids and their
-   *     replacements.
+   * @return The serialize map of generators and their ids and their replacements.
    */
   static String generateSerializedIdMappings(Map<String, Map<String, String>> idGeneratorMaps) {
     StringBuilder sb = new StringBuilder();
     for (Map.Entry<String, Map<String, String>> replacements : idGeneratorMaps.entrySet()) {
       if (!replacements.getValue().isEmpty()) {
-        sb.append('[')
-            .append(replacements.getKey())
-            .append(']')
-            .append(NEW_LINE)
-            .append(NEW_LINE);
+        sb.append('[').append(replacements.getKey()).append(']').append(NEW_LINE).append(NEW_LINE);
 
-        for (Map.Entry<String, String> replacement :
-            replacements.getValue().entrySet()) {
+        for (Map.Entry<String, String> replacement : replacements.getValue().entrySet()) {
           sb.append(replacement.getKey())
               .append(':')
               .append(replacement.getValue())
@@ -70,27 +59,23 @@ public final class IdMappingUtil {
   /**
    * The expected format looks like this:
    *
-   * <p>[generatorName1]
-   * someId1:someFile:theLine:theColumn
-   * ...
+   * <p>[generatorName1] someId1:someFile:theLine:theColumn ...
    *
-   * <p>[[generatorName2]
-   * someId2:someFile:theLine:theColumn]
-   * ...
+   * <p>[[generatorName2] someId2:someFile:theLine:theColumn] ...
    *
    * <p>The returned data is grouped by generator name (the map key). The inner map provides
-   * mappings from id to content (file, line and column info). In a glimpse, the structure is
-   * {@code Map<generator name, BiMap<id, value>>}.
+   * mappings from id to content (file, line and column info). In a glimpse, the structure is {@code
+   * Map<generator name, BiMap<id, value>>}.
    *
    * <p>@throws IllegalArgumentException malformed input where there it 1) has duplicate generator
-   *     name, or 2) the line has no ':' for id and its content.
+   * name, or 2) the line has no ':' for id and its content.
    */
   public static Map<String, BiMap<String, String>> parseSerializedIdMappings(String idMappings) {
     if (Strings.isNullOrEmpty(idMappings)) {
-      return Collections.emptyMap();
+      return ImmutableMap.of();
     }
 
-    Map<String, BiMap<String, String>> resultMap = new HashMap<>();
+    Map<String, BiMap<String, String>> resultMap = new LinkedHashMap<>();
     BiMap<String, String> currentSectionMap = null;
 
     int lineIndex = 0;
@@ -107,18 +92,20 @@ public final class IdMappingUtil {
           resultMap.put(currentSection, currentSectionMap);
         } else {
           throw new IllegalArgumentException(
-              SimpleFormat.format("Cannot parse id map: %s\n Line: $s, lineIndex: %s",
+              String.format(
+                  "Cannot parse id map: %s\n Line: %s, lineIndex: %d",
                   idMappings, line, lineIndex));
         }
       } else {
         int split = line.indexOf(':');
         if (split != -1) {
           String name = line.substring(0, split);
-          String location = line.substring(split + 1, line.length());
+          String location = line.substring(split + 1);
           currentSectionMap.put(name, location);
         } else {
           throw new IllegalArgumentException(
-              SimpleFormat.format("Cannot parse id map: %s\n Line: $s, lineIndex: %s",
+              String.format(
+                  "Cannot parse id map: %s\n Line: %s, lineIndex: %d",
                   idMappings, line, lineIndex));
         }
       }

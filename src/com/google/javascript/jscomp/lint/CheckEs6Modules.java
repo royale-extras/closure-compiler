@@ -20,13 +20,12 @@ import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.NodeTraversal;
-import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Miscellaneous checks for style in ES6 modules. */
-public final class CheckEs6Modules implements Callback, CompilerPass {
+public final class CheckEs6Modules implements NodeTraversal.Callback, CompilerPass {
 
   public static final DiagnosticType DUPLICATE_IMPORT =
       DiagnosticType.warning(
@@ -39,7 +38,7 @@ public final class CheckEs6Modules implements Callback, CompilerPass {
               + "imported.");
 
   private final AbstractCompiler compiler;
-  private final Map<String, Node> importSpecifiers = new HashMap<>();
+  private final Map<String, Node> importSpecifiers = new LinkedHashMap<>();
 
   public CheckEs6Modules(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -54,21 +53,19 @@ public final class CheckEs6Modules implements Callback, CompilerPass {
 
   @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
-    switch (n.getToken()) {
-      case ROOT:
-      case MODULE_BODY:
-        return true;
-      case SCRIPT:
-        return n.getBooleanProp(Node.ES6_MODULE);
-      case IMPORT:
+    return switch (n.getToken()) {
+      case ROOT, MODULE_BODY -> true;
+      case SCRIPT -> n.getBooleanProp(Node.ES6_MODULE);
+      case IMPORT -> {
         visitImport(t, n);
-        return false;
-      case EXPORT:
+        yield false;
+      }
+      case EXPORT -> {
         visitExport(t, n);
-        return false;
-      default:
-        return false;
-    }
+        yield false;
+      }
+      default -> false;
+    };
   }
 
   private void visitImport(NodeTraversal t, Node importNode) {

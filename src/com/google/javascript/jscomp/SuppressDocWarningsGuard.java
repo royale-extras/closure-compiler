@@ -16,10 +16,14 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
+import com.google.common.collect.ImmutableMap;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Filters warnings based on in-code {@code @suppress} annotations.
@@ -29,65 +33,47 @@ import java.util.Map;
  * object literal key) or a script. For this reason, it doesn't work for warnings without an
  * associated AST node, eg, the ones in parsing/IRFactory. They can be turned off with jscomp_off.
  */
-class SuppressDocWarningsGuard extends FileAwareWarningsGuard {
+class SuppressDocWarningsGuard extends WarningsGuard {
   private static final long serialVersionUID = 1L;
 
   /** Warnings guards for each suppressible warnings group, indexed by name. */
-  private final Map<String, DiagnosticGroupWarningsGuard> suppressors =
-       new HashMap<>();
+  private final ImmutableMap<String, DiagnosticGroup> suppressors;
+
+  private final AbstractCompiler compiler;
 
   /** The suppressible groups, indexed by name. */
-  SuppressDocWarningsGuard(
-      AbstractCompiler compiler, Map<String, DiagnosticGroup> suppressibleGroups) {
-    super(compiler);
-    for (Map.Entry<String, DiagnosticGroup> entry : suppressibleGroups.entrySet()) {
-      suppressors.put(
-          entry.getKey(),
-          new DiagnosticGroupWarningsGuard(
-              entry.getValue(),
-              CheckLevel.OFF));
-    }
+  SuppressDocWarningsGuard(AbstractCompiler compiler, Map<String, DiagnosticGroup> suppressors) {
+    this.compiler = compiler;
+    this.suppressors = createSuppressors(suppressors);
+  }
 
-    // Hack: Allow "@suppress {missingRequire}" to also cover strictMissingRequire,
-    // stricterMissingRequire and stricterMissingRequireType.
-    // TODO(tjgq): Delete this when all of these checks are unified under `missingRequire`.
-    suppressors.put(
-        "missingRequire",
-        new DiagnosticGroupWarningsGuard(
-            new DiagnosticGroup(
-                DiagnosticGroups.STRICT_MISSING_REQUIRE,
-                DiagnosticGroups.STRICTER_MISSING_REQUIRE,
-                DiagnosticGroups.STRICTER_MISSING_REQUIRE_TYPE,
-                DiagnosticGroups.STRICTER_MISSING_REQUIRE_IN_PROVIDES_FILE,
-                DiagnosticGroups.STRICTER_MISSING_REQUIRE_TYPE_IN_PROVIDES_FILE),
-            CheckLevel.OFF));
+  private static ImmutableMap<String, DiagnosticGroup> createSuppressors(
+      Map<String, DiagnosticGroup> suppressors) {
+    LinkedHashMap<String, DiagnosticGroup> builder = new LinkedHashMap<>(suppressors);
 
     // Hack: Allow "@suppress {missingProperties}" to mean
-    // "@suppress {strictmissingProperties}".
+    // "@suppress {strictMissingProperties}".
     // TODO(johnlenz): Delete this when it is enabled with missingProperties
-    suppressors.put(
+    builder.put(
         "missingProperties",
-        new DiagnosticGroupWarningsGuard(
-            new DiagnosticGroup(
-                DiagnosticGroups.MISSING_PROPERTIES,
-                DiagnosticGroups.STRICT_MISSING_PROPERTIES), CheckLevel.OFF));
+        new DiagnosticGroup(
+            DiagnosticGroups.MISSING_PROPERTIES, DiagnosticGroups.STRICT_MISSING_PROPERTIES));
 
     // Hack: Allow "@suppress {checkTypes}" to include
-    // "strictmissingProperties".
+    // "strictCheckTypes".
     // TODO(johnlenz): Delete this when it is enabled with missingProperties
-    suppressors.put(
+    builder.put(
         "checkTypes",
-        new DiagnosticGroupWarningsGuard(
-            new DiagnosticGroup(
-                DiagnosticGroups.CHECK_TYPES,
-                DiagnosticGroups.STRICT_CHECK_TYPES), CheckLevel.OFF));
+        new DiagnosticGroup(DiagnosticGroups.CHECK_TYPES, DiagnosticGroups.STRICT_CHECK_TYPES));
+
+    return ImmutableMap.copyOf(builder);
   }
 
   @Override
-  public CheckLevel level(JSError error) {
-    Node node = error.getNode();
+  public @Nullable CheckLevel level(JSError error) {
+    Node node = error.node();
     if (node == null) {
-      node = getScriptNodeForError(error);
+      node = getScriptNodeBySourceName(error);
     }
     if (node == null) {
       return null;
@@ -100,7 +86,7 @@ class SuppressDocWarningsGuard extends FileAwareWarningsGuard {
 
     // Some errors are on nodes that do not have the script as a parent.
     // Look up the script node by filename.
-    Node scriptNode = getScriptNodeForError(error);
+    Node scriptNode = getScriptNodeBySourceName(error);
     if (scriptNode != null) {
       JSDocInfo info = scriptNode.getJSDocInfo();
       if (info != null) {
@@ -117,7 +103,7 @@ class SuppressDocWarningsGuard extends FileAwareWarningsGuard {
    * <p>class & function declarations, variables, assignments, object literal keys, and the top
    * level script node.
    */
-  private CheckLevel getCheckLevelFromAncestors(JSError error, Node node) {
+  private @Nullable CheckLevel getCheckLevelFromAncestors(JSError error, Node node) {
     for (Node current = node; current != null; current = current.getParent()) {
       JSDocInfo info = null;
       if (current.isFunction() || current.isClass()) {
@@ -125,10 +111,11 @@ class SuppressDocWarningsGuard extends FileAwareWarningsGuard {
       } else if (current.isScript()) {
         info = current.getJSDocInfo();
       } else if (NodeUtil.isNameDeclaration(current)
-          || (NodeUtil.isAssignmentOp(current) && current.getParent().isExprResult())
-          || (current.isGetProp() && current.getParent().isExprResult())
           || NodeUtil.mayBeObjectLitKey(current)
-          || current.isComputedProp()) {
+          || current.isComputedProp()
+          || current.isMemberFieldDef()
+          || current.isComputedFieldDef()
+          || (current.hasParent() && current.getParent().isExprResult())) {
         info = NodeUtil.getBestJSDocInfo(current);
       }
 
@@ -144,20 +131,33 @@ class SuppressDocWarningsGuard extends FileAwareWarningsGuard {
   }
 
   /** If the given JSDocInfo has an @suppress for the given JSError, returns the new level. */
-  private CheckLevel getCheckLevelFromInfo(JSError error, JSDocInfo info) {
+  private @Nullable CheckLevel getCheckLevelFromInfo(JSError error, JSDocInfo info) {
     for (String suppressor : info.getSuppressions()) {
-      WarningsGuard guard = suppressors.get(suppressor);
+      DiagnosticGroup group = this.suppressors.get(suppressor);
+      if (group == null) {
+        continue; // Some @suppress tags are for other tools, and may not have a group.
+      }
 
-      // Some @suppress tags are for other tools, and
-      // may not have a warnings guard.
-      if (guard != null) {
-        CheckLevel newLevel = guard.level(error);
-        if (newLevel != null) {
-          return newLevel;
-        }
+      if (group.matches(error)) {
+        return CheckLevel.OFF;
       }
     }
+
     return null;
+  }
+
+  private final @Nullable Node getScriptNodeBySourceName(JSError error) {
+    if (error.sourceName() == null) {
+      return null;
+    }
+
+    Node scriptNode = this.compiler.getScriptNode(error.sourceName());
+    if (scriptNode == null) {
+      return null;
+    }
+
+    checkState(scriptNode.isScript());
+    return scriptNode;
   }
 
   @Override

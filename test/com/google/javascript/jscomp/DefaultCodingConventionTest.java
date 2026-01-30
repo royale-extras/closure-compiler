@@ -36,12 +36,8 @@ public final class DefaultCodingConventionTest {
 
   @Test
   public void testVarAndOptionalParams() {
-    Node args = IR.paramList(
-        IR.name("a"),
-        IR.name("b"));
-    Node optArgs = IR.paramList(
-        IR.name("opt_a"),
-        IR.name("opt_b"));
+    Node args = IR.paramList(IR.name("a"), IR.name("b"));
+    Node optArgs = IR.paramList(IR.name("opt_a"), IR.name("opt_b"));
     Node rest = IR.paramList(IR.iterRest(IR.name("more")));
 
     assertThat(conv.isVarArgsParameter(args.getFirstChild())).isFalse();
@@ -86,13 +82,6 @@ public final class DefaultCodingConventionTest {
     assertThat(conv.isExported("$super", false)).isFalse();
     assertThat(conv.isExported("$super", true)).isTrue();
     assertThat(conv.isExported("$super")).isTrue();
-  }
-
-  @Test
-  public void testPrivateName() {
-    assertThat(conv.isPrivate("a_")).isFalse();
-    assertThat(conv.isPrivate("a")).isFalse();
-    assertThat(conv.isPrivate("_a_")).isFalse();
   }
 
   @Test
@@ -149,11 +138,6 @@ public final class DefaultCodingConventionTest {
   @Test
   public void testInheritanceDetection9() {
     assertNotClassDefining("A.mixin(B.prototype);");
-  }
-
-  @Test
-  public void testInheritanceDetection10() {
-    assertNotClassDefining("goog.mixin(A.prototype, B.prototype);");
   }
 
   @Test
@@ -243,12 +227,12 @@ public final class DefaultCodingConventionTest {
 
   private void assertFunctionBind(String code) {
     Node n = parseTestCode(code);
-    assertThat(conv.describeFunctionBind(n.getFirstChild())).isNotNull();
+    assertThat(conv.describeFunctionBind(n.getFirstChild(), false)).isNotNull();
   }
 
   private void assertNotFunctionBind(String code) {
     Node n = parseTestCode(code);
-    assertThat(conv.describeFunctionBind(n.getFirstChild())).isNull();
+    assertThat(conv.describeFunctionBind(n.getFirstChild(), false)).isNull();
   }
 
   private void assertNotClassDefining(String code) {
@@ -256,11 +240,9 @@ public final class DefaultCodingConventionTest {
     assertThat(conv.getClassesDefinedByCall(n.getFirstChild())).isNull();
   }
 
-  private void assertDefinesClasses(String code, String subclassName,
-      String superclassName) {
+  private void assertDefinesClasses(String code, String subclassName, String superclassName) {
     Node n = parseTestCode(code);
-    SubclassRelationship classes =
-        conv.getClassesDefinedByCall(n.getFirstChild());
+    SubclassRelationship classes = conv.getClassesDefinedByCall(n.getFirstChild());
     assertThat(classes).isNotNull();
     assertThat(classes.subclassName).isEqualTo(subclassName);
     assertThat(classes.superclassName).isEqualTo(superclassName);

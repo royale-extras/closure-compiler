@@ -21,12 +21,19 @@ import static com.google.javascript.jscomp.lint.CheckEs6ModuleFileStructure.MUST
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.CompilerTestCase;
+import com.google.javascript.jscomp.deps.ModuleLoader;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public class CheckEs6ModuleFileStructureTest extends CompilerTestCase {
+
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    ignoreWarnings(ModuleLoader.INVALID_MODULE_PATH);
+  }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
@@ -73,10 +80,11 @@ public class CheckEs6ModuleFileStructureTest extends CompilerTestCase {
     testWarning("goog.require('bar'); import 'file';", MUST_COME_BEFORE);
 
     testSame(
-        lines(
-            "import 'file';",
-            "goog.declareModuleId('name');",
-            "const bar = goog.require('bar');",
-            "let rest;"));
+        """
+        import 'file';
+        goog.declareModuleId('name');
+        const bar = goog.require('bar');
+        let rest;
+        """);
   }
 }

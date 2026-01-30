@@ -38,18 +38,21 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
 
   private ImmutableMap<String, JSType> typeVars;
   private ImmutableMap<String, String> nameVars;
-  private static JSType recordTypeTest, nestedRecordTypeTest, asynchRecord;
+  private static JSType recordTypeTest;
+  private static JSType nestedRecordTypeTest;
+  private static JSType asynchRecord;
 
   static final String EXTRA_TYPE_DEFS =
-      lines(
-          "/** @type {number} */ Array.prototype.length;",
-          "/** @typedef {!Array<?>} */ var ArrayAlias;",
-          "",
-          "/** @constructor */",
-          "function Bar() {}",
-          "",
-          "/** @type {number} */",
-          "var n = 10;");
+      """
+      /** @type {number} */ Array.prototype.length;
+      /** @typedef {!Array<?>} */ var ArrayAlias;
+
+      /** @constructor */
+      function Bar() {}
+
+      /** @type {number} */
+      var n = 10;
+      """;
 
   @Override
   @Before
@@ -77,12 +80,13 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
             .put("REC", recordTypeTest)
             .put("NESTEDREC", nestedRecordTypeTest)
             .put("ASYNCH", asynchRecord)
-            .build();
-    nameVars = new ImmutableMap.Builder<String, String>()
-        .put("s", "string")
-        .put("n", "number")
-        .put("b", "boolean")
-        .build();
+            .buildOrThrow();
+    nameVars =
+        new ImmutableMap.Builder<String, String>()
+            .put("s", "string")
+            .put("n", "number")
+            .put("b", "boolean")
+            .buildOrThrow();
   }
 
   @Test
@@ -232,14 +236,14 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
   public void testTransformationWithNestedExpressionInBooleanFirstParam() {
     testTTL(
         getNativeStringType(),
-        "cond( eq( cond(eq(N, N), 'string', 'number'), 'string')," + "'string', " + "'number')");
+        "cond( eq( cond(eq(N, N), 'string', 'number'), 'string'),'string', 'number')");
   }
 
   @Test
   public void testTransformationWithNestedExpressionInBooleanSecondParam() {
     testTTL(
         getNativeStringType(),
-        "cond( eq( 'string', cond(eq(N, N), 'string', 'number'))," + "'string', " + "'number')");
+        "cond( eq( 'string', cond(eq(N, N), 'string', 'number')),'string', 'number')");
   }
 
   @Test
@@ -292,24 +296,28 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
   public void testTransformationWithNestedMapunionInMapFunctionBody() {
     testTTL(
         getNativeStringType(),
-        "mapunion(union(S, B),"
-            + "(x) => mapunion(union(S, N), "
-            + "(y) => cond(eq(x, y), x, BOT)))");
+        """
+        mapunion(union(S, B),
+        (x) => mapunion(union(S, N),
+        (y) => cond(eq(x, y), x, BOT)))
+        """);
   }
 
   @Test
   public void testTransformationWithObjectUseCase() {
     testTTL(
         getNativeObjectType(),
-        "mapunion("
-            + "union(S, N, B, NULL, UNDEF, ARR),"
-            + "(x) => "
-            + "cond(eq(x, S), SO,"
-            + "cond(eq(x, N), NO,"
-            + "cond(eq(x, B), BO,"
-            + "cond(eq(x, NULL), OBJ,"
-            + "cond(eq(x, UNDEF), OBJ,"
-            + "x ))))))");
+        """
+        mapunion(
+        union(S, N, B, NULL, UNDEF, ARR),
+        (x) =>
+        cond(eq(x, S), SO,
+        cond(eq(x, N), NO,
+        cond(eq(x, B), BO,
+        cond(eq(x, NULL), OBJ,
+        cond(eq(x, UNDEF), OBJ,
+        x ))))))
+        """);
   }
 
   // none() is evaluated to bottom in TTL expressions, but if the overall expression evaluates
@@ -526,9 +534,11 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
   public void testTransformationWithInvalidNestedMapunion() {
     testTTL(
         getNativeUnknownType(),
-        "mapunion(union(S, B),"
-            + "(x) => mapunion(union(S, N), "
-            + "(x) => cond(eq(x, x), x, BOT)))",
+        """
+        mapunion(union(S, B),
+        (x) => mapunion(union(S, N),
+        (x) => cond(eq(x, x), x, BOT)))
+        """,
         "The variable x is already defined");
   }
 
@@ -582,8 +592,9 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     testTTL(
         getNativeUnknownType(),
         "maprecord(REC, (k, v) => 'number')",
-        "The body of a maprecord function must evaluate to a record type "
-            + "or a no type, found number");
+        """
+        The body of a maprecord function must evaluate to a record type or a no type, found number\
+        """);
   }
 
   @Test
@@ -614,8 +625,7 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     testTTL(
         getNativeUnknownType(),
         "maprecord(union(record({n:N}), S), (k, v) => record({[k]:v}))",
-        "The first parameter of a maprecord must be a record type, "
-            + "found (string|{n: number})");
+        "The first parameter of a maprecord must be a record type, found (string|{n: number})");
   }
 
   @Test
@@ -623,8 +633,9 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     testTTL(
         getNativeUnknownType(),
         "maprecord(union(record({n:N}), record({s:S})),  (k, v) => record({[k]:v}))",
-        "The first parameter of a maprecord must be a record type, "
-            + "found ({n: number}|{s: string})");
+        """
+        The first parameter of a maprecord must be a record type, found ({n: number}|{s: string})\
+        """);
   }
 
   @Test
@@ -644,13 +655,14 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{b:boolean}}
     testTTL(
         record("r", record("b", getNativeBooleanType())),
-        lines(
-            "maprecord(NESTEDREC,",
-            "    (k1, v1) => ",
-            "        cond(sub(v1, 'Object'), ",
-            "            maprecord(v1, (k2, v2) => ",
-            "                cond(eq(v2, S), BOT, record({[k1]:record({[k2]:v2})}))),",
-            "            cond(eq(v1, S), BOT, record({[k1]:v1}))))"));
+        """
+        maprecord(NESTEDREC,
+            (k1, v1) =>
+                cond(sub(v1, 'Object'),
+                    maprecord(v1, (k2, v2) =>
+                        cond(eq(v2, S), BOT, record({[k1]:record({[k2]:v2})}))),
+                    cond(eq(v1, S), BOT, record({[k1]:v1}))))
+        """);
   }
 
   @Test
@@ -658,12 +670,13 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{n:number, s:string}}
     testTTL(
         record("r", record("b", getNativeBooleanType(), "s", getNativeStringType())),
-        lines(
-            "maprecord(record({r:record({b:B, s:S})}),",
-            "    (k1, v1) => ",
-            "        maprecord(v1, ",
-            "            (k2, v2) => ",
-            "                record({[k1]:record({[k2]:v2})})))"));
+        """
+        maprecord(record({r:record({b:B, s:S})}),
+            (k1, v1) =>
+                maprecord(v1,
+                    (k2, v2) =>
+                        record({[k1]:record({[k2]:v2})})))
+        """);
   }
 
   @Test
@@ -671,12 +684,13 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{n:number, s:string}}
     testTTL(
         record("r", record("b", getNativeBooleanType(), "s", getNativeStringType())),
-        lines(
-            "maprecord(record({r:record({b:B, s:S})}),",
-            "    (k1, v1) =>",
-            "        record({[k1]:",
-            "            maprecord(v1, ",
-            "                (k2, v2) => record({[k2]:v2}))}))"));
+        """
+        maprecord(record({r:record({b:B, s:S})}),
+            (k1, v1) =>
+                record({[k1]:
+                    maprecord(v1,
+                        (k2, v2) => record({[k2]:v2}))}))
+        """);
   }
 
   @Test
@@ -684,16 +698,17 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{r2:{n:number, s:string}}}
     testTTL(
         record("r", record("r2", record("n", getNativeNumberType(), "s", getNativeStringType()))),
-        lines(
-            "maprecord(record({r:record({r2:record({n:N, s:S})})}),",
-            "    (k1, v1) => ",
-            "        maprecord(v1, ",
-            "            (k2, v2) => ",
-            "                maprecord(v2, ",
-            "                    (k3, v3) =>",
-            "                        record({[k1]:",
-            "                            record({[k2]:",
-            "                                record({[k3]:v3})})}))))"));
+        """
+        maprecord(record({r:record({r2:record({n:N, s:S})})}),
+            (k1, v1) =>
+                maprecord(v1,
+                    (k2, v2) =>
+                        maprecord(v2,
+                            (k3, v3) =>
+                                record({[k1]:
+                                    record({[k2]:
+                                        record({[k3]:v3})})}))))
+        """);
   }
 
   @Test
@@ -701,16 +716,17 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{r2:{n:number, s:string}}}
     testTTL(
         record("r", record("r2", record("n", getNativeNumberType(), "s", getNativeStringType()))),
-        lines(
-            "maprecord(record({r:record({r2:record({n:N, s:S})})}),",
-            "    (k1, v1) => ",
-            "        record({[k1]:",
-            "            maprecord(v1, ",
-            "                (k2, v2) => ",
-            "                    record({[k2]:",
-            "                        maprecord(v2, ",
-            "                            (k3, v3) =>",
-            "                                record({[k3]:v3}))}))}))"));
+        """
+        maprecord(record({r:record({r2:record({n:N, s:S})})}),
+            (k1, v1) =>
+                record({[k1]:
+                    maprecord(v1,
+                        (k2, v2) =>
+                            record({[k2]:
+                                maprecord(v2,
+                                    (k3, v3) =>
+                                        record({[k3]:v3}))}))}))
+        """);
   }
 
   @Test
@@ -722,19 +738,20 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
             record(
                 "r2",
                 record("r3", record("n", getNativeNumberType(), "s", getNativeStringType())))),
-        lines(
-            "maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),",
-            "    (k1, v1) => ",
-            "        maprecord(v1, ",
-            "            (k2, v2) => ",
-            "                maprecord(v2, ",
-            "                    (k3, v3) =>",
-            "                        maprecord(v3,",
-            "                            (k4, v4) =>",
-            "                                record({[k1]:",
-            "                                    record({[k2]:",
-            "                                        record({[k3]:",
-            "                                            record({[k4]:v4})})})})))))"));
+        """
+        maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),
+            (k1, v1) =>
+                maprecord(v1,
+                    (k2, v2) =>
+                        maprecord(v2,
+                            (k3, v3) =>
+                                maprecord(v3,
+                                    (k4, v4) =>
+                                        record({[k1]:
+                                            record({[k2]:
+                                                record({[k3]:
+                                                    record({[k4]:v4})})})})))))
+        """);
   }
 
   @Test
@@ -746,19 +763,20 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
             record(
                 "r2",
                 record("r3", record("n", getNativeNumberType(), "s", getNativeStringType())))),
-        lines(
-            "maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),",
-            "    (k1, v1) => ",
-            "        record({[k1]:",
-            "            maprecord(v1, ",
-            "                (k2, v2) => ",
-            "                    record({[k2]:",
-            "                        maprecord(v2, ",
-            "                            (k3, v3) =>",
-            "                                record({[k3]:",
-            "                                    maprecord(v3,",
-            "                                        (k4, v4) =>",
-            "                                            record({[k4]:v4}))}))}))}))"));
+        """
+        maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),
+            (k1, v1) =>
+                record({[k1]:
+                    maprecord(v1,
+                        (k2, v2) =>
+                            record({[k2]:
+                                maprecord(v2,
+                                    (k3, v3) =>
+                                        record({[k3]:
+                                            maprecord(v3,
+                                                (k4, v4) =>
+                                                    record({[k4]:v4}))}))}))}))
+        """);
   }
 
   @Test
@@ -768,17 +786,18 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{n:number, s:string}}
     testTTL(
         record("r", record("n", getNativeNumberType(), "s", getNativeStringType())),
-        lines(
-            "maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),",
-            "    (k1, v1) => ",
-            "        maprecord(v1, ",
-            "            (k2, v2) => ",
-            "                maprecord(v2, ",
-            "                    (k3, v3) =>",
-            "                        maprecord(v3,",
-            "                            (k4, v4) =>",
-            "                                record({[k1]:",
-            "                                    record({[k4]:v4})})))))"));
+        """
+        maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),
+            (k1, v1) =>
+                maprecord(v1,
+                    (k2, v2) =>
+                        maprecord(v2,
+                            (k3, v3) =>
+                                maprecord(v3,
+                                    (k4, v4) =>
+                                        record({[k1]:
+                                            record({[k4]:v4})})))))
+        """);
   }
 
   @Test
@@ -788,17 +807,18 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {r:{n:number, s:string}}
     testTTL(
         record("r", record("n", getNativeNumberType(), "s", getNativeStringType())),
-        lines(
-            "maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),",
-            "    (k1, v1) => ",
-            "        record({[k1]:",
-            "            maprecord(v1, ",
-            "                (k2, v2) => ",
-            "                    maprecord(v2, ",
-            "                        (k3, v3) =>",
-            "                            maprecord(v3,",
-            "                                (k4, v4) =>",
-            "                                    record({[k4]:v4}))))}))"));
+        """
+        maprecord(record({r:record({r2:record({r3:record({n:N, s:S})})})}),
+            (k1, v1) =>
+                record({[k1]:
+                    maprecord(v1,
+                        (k2, v2) =>
+                            maprecord(v2,
+                                (k3, v3) =>
+                                    maprecord(v3,
+                                        (k4, v4) =>
+                                            record({[k4]:v4}))))}))
+        """);
   }
 
   @Test
@@ -846,10 +866,11 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
                 getNativeArrayType(),
                 "r",
                 record("x", getNativeNumberType(), "y", getNativeNumberType()))),
-        lines(
-            "maprecord(",
-            "    record({a:record({n:N, r:record({x:N})}), b:record({s:ARR, r:record({y:N})})}),",
-            "    (k, v) => record({foo:v}))"));
+        """
+        maprecord(
+            record({a:record({n:N, r:record({x:N})}), b:record({s:ARR, r:record({y:N})})}),
+            (k, v) => record({foo:v}))
+        """);
   }
 
   @Test
@@ -860,17 +881,18 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     // {service:number}
     testTTL(
         record("service", getNativeNumberType()),
-        lines(
-            "cond(",
-            "    sub(ASYNCH, 'Object'),",
-            "    maprecord(",
-            "        ASYNCH,",
-            "        (k, v) =>",
-            "            cond(",
-            "                eq(rawTypeOf(v), 'Array'),",
-            "                record({[k]:templateTypeOf(v, 0)}),",
-            "                record({[k]:'undefined'}))),",
-            "    ASYNCH)"));
+        """
+        cond(
+            sub(ASYNCH, 'Object'),
+            maprecord(
+                ASYNCH,
+                (k, v) =>
+                    cond(
+                        eq(rawTypeOf(v), 'Array'),
+                        record({[k]:templateTypeOf(v, 0)}),
+                        record({[k]:'undefined'}))),
+            ASYNCH)
+        """);
   }
 
   @Test
@@ -885,8 +907,10 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
   public void testTransformationWithMaprecordAndStringEquivalence() {
     testTTL(
         record("bool", getNativeNumberType(), "str", getNativeStringType()),
-        "maprecord(record({bool:B, str:S}),"
-            + "(k, v) => record({[k]:cond(streq(k, 'bool'), N, v)}))");
+        """
+        maprecord(record({bool:B, str:S}),
+        (k, v) => record({[k]:cond(streq(k, 'bool'), N, v)}))
+        """);
   }
 
   @Test
@@ -1089,7 +1113,7 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
   public void testTransformationInstanceObjectToRecord2() {
     // TODO(bradfordcsmith): Define Array.prototype.length using externs instead.
     getNativeArrayType()
-        .defineDeclaredProperty("length", getNativeNumberType(), /* propertyNode */ null);
+        .defineDeclaredProperty("length", getNativeNumberType(), /* propertyNode= */ null);
     testTTL(record("length", getNativeNumberType()), "record(type(ARR, N))");
   }
 
@@ -1138,8 +1162,7 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     return record(ImmutableMap.<String, JSType>of(p1, t1, p2, t2));
   }
 
-  private JSType record(String p1, JSType t1, String p2, JSType t2,
-      String p3, JSType t3) {
+  private JSType record(String p1, JSType t1, String p2, JSType t2, String p3, JSType t3) {
     return record(ImmutableMap.<String, JSType>of(p1, t1, p2, t2, p3, t3));
   }
 
@@ -1151,27 +1174,26 @@ public final class TypeTransformationTest extends CompilerTypeTestCase {
     return builder.build();
   }
 
-  private void testTTL(JSType expectedType, String ttlExp,
-      String... expectedWarnings) {
+  private void testTTL(JSType expectedType, String ttlExp, String... expectedWarnings) {
     try (JSTypeResolver.Closer closer =
         compiler.getTypeRegistry().getResolver().openForDefinition()) {
-    TypeTransformationParser ttlParser = new TypeTransformationParser(ttlExp,
-        SourceFile.fromCode("[testcode]", ttlExp), errorReporter, 0, 0);
-    // Run the test if the parsing was successful
-    if (ttlParser.parseTypeTransformation()) {
-      Node ast = ttlParser.getTypeTransformationAst();
-      // Create the scope using the extra definitions
-      Node extraTypeDefs = compiler.parseTestCode(EXTRA_TYPE_DEFS);
-      TypedScope scope =
-          new TypedScopeCreator(compiler)
-              .createScope(IR.root(IR.root(), IR.root(extraTypeDefs)), null);
-      // Evaluate the type transformation
-      TypeTransformation typeTransformation =
-          new TypeTransformation(compiler, scope);
-      JSType resultType = typeTransformation.eval(ast, typeVars, nameVars);
-      checkReportedWarningsHelper(expectedWarnings);
-      assertTypeEquals(expectedType, resultType);
-    }
+      TypeTransformationParser ttlParser =
+          new TypeTransformationParser(
+              ttlExp, SourceFile.fromCode("[testcode]", ttlExp), errorReporter, 0, 0);
+      // Run the test if the parsing was successful
+      if (ttlParser.parseTypeTransformation()) {
+        Node ast = ttlParser.getTypeTransformationAst();
+        // Create the scope using the extra definitions
+        Node extraTypeDefs = compiler.parseTestCode(EXTRA_TYPE_DEFS);
+        TypedScope scope =
+            new TypedScopeCreator(compiler)
+                .createScope(IR.root(IR.root(), IR.root(extraTypeDefs)), null);
+        // Evaluate the type transformation
+        TypeTransformation typeTransformation = new TypeTransformation(compiler, scope);
+        JSType resultType = typeTransformation.eval(ast, typeVars, nameVars);
+        checkReportedWarningsHelper(expectedWarnings);
+        assertTypeEquals(expectedType, resultType);
+      }
     }
   }
 }

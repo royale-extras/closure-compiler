@@ -21,9 +21,9 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.javascript.jscomp.ControlFlowGraph.Branch;
-import com.google.javascript.jscomp.DataFlowAnalysis.FlowState;
+import com.google.javascript.jscomp.DataFlowAnalysis.LinearFlowState;
 import com.google.javascript.jscomp.LiveVariablesAnalysis.LiveVariableLattice;
-import com.google.javascript.jscomp.NodeTraversal.AbstractScopedCallback;
+import com.google.javascript.jscomp.NodeUtil.AllVarsDeclaredInFunction;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
@@ -37,7 +37,7 @@ import java.util.Map;
  * after this assignment, we know that the current content of {@code x} will not be read and this
  * assignment is useless.
  */
-class DeadAssignmentsElimination extends AbstractScopedCallback implements CompilerPass {
+class DeadAssignmentsElimination extends NodeTraversal.AbstractCfgCallback implements CompilerPass {
 
   private final AbstractCompiler compiler;
   private LiveVariablesAnalysis liveness;
@@ -74,14 +74,14 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
   }
 
   @Override
-  public void enterScope(NodeTraversal t) {
+  public void enterScopeWithCfg(NodeTraversal t) {
     if (t.inFunctionBlockScope()) {
       functionStack.addFirst(new BailoutInformation());
     }
   }
 
   @Override
-  public void exitScope(NodeTraversal t) {
+  public void exitScopeWithCfg(NodeTraversal t) {
     if (t.inFunctionBlockScope()) {
       eliminateDeadAssignments(t);
       functionStack.removeFirst();
@@ -119,10 +119,13 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
     }
 
     // Computes liveness information first.
-    ControlFlowGraph<Node> cfg = t.getControlFlowGraph();
+    ControlFlowGraph<Node> cfg = getControlFlowGraph(compiler);
+    SyntacticScopeCreator scopeCreator = new SyntacticScopeCreator(compiler);
+    AllVarsDeclaredInFunction allVarsDeclaredInFunction =
+        NodeUtil.getAllVarsDeclaredInFunction(compiler, scopeCreator, functionScope);
     liveness =
         new LiveVariablesAnalysis(
-            cfg, functionScope, blockScope, compiler, new SyntacticScopeCreator(compiler));
+            cfg, functionScope, blockScope, compiler, scopeCreator, allVarsDeclaredInFunction);
     liveness.analyze();
     Map<String, Var> allVarsInFn = liveness.getAllVariables();
     tryRemoveDeadAssignments(t, cfg, allVarsInFn);
@@ -151,59 +154,58 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
     Iterable<? extends DiGraphNode<Node, Branch>> nodes = cfg.getNodes();
 
     for (DiGraphNode<Node, Branch> cfgNode : nodes) {
-      FlowState<LiveVariableLattice> state =
-          cfgNode.getAnnotation();
+      LinearFlowState<LiveVariableLattice> state = cfgNode.getAnnotation();
       Node n = cfgNode.getValue();
       if (n == null) {
         continue;
       }
       switch (n.getToken()) {
-        case IF:
-        case WHILE:
-        case DO:
+        case IF, WHILE, DO -> {
           tryRemoveAssignment(t, NodeUtil.getConditionExpression(n), state, allVarsInFn);
           continue;
-        case FOR:
-        case FOR_IN:
-        case FOR_OF:
-        case FOR_AWAIT_OF:
+        }
+        case FOR, FOR_IN, FOR_OF, FOR_AWAIT_OF -> {
           if (n.isVanillaFor()) {
             tryRemoveAssignment(t, NodeUtil.getConditionExpression(n), state, allVarsInFn);
           }
           continue;
-        case SWITCH:
-        case CASE:
-        case RETURN:
+        }
+        case SWITCH, CASE, RETURN -> {
           if (n.hasChildren()) {
             tryRemoveAssignment(t, n.getFirstChild(), state, allVarsInFn);
           }
           continue;
           // TODO(user): case VAR: Remove var a=1;a=2;.....
-        default:
-          break;
+        }
+        default -> {}
       }
 
       tryRemoveAssignment(t, n, state, allVarsInFn);
     }
   }
 
-  private void tryRemoveAssignment(NodeTraversal t, Node n,
-      FlowState<LiveVariableLattice> state, Map<String, Var> allVarsInFn) {
+  private void tryRemoveAssignment(
+      NodeTraversal t,
+      Node n,
+      LinearFlowState<LiveVariableLattice> state,
+      Map<String, Var> allVarsInFn) {
     tryRemoveAssignment(t, n, n, state, allVarsInFn);
   }
 
   /**
-   * Determines if any local variables are dead after the instruction {@code n}
-   * and are assigned within the subtree of {@code n}. Removes those assignments
-   * if there are any.
+   * Determines if any local variables are dead after the instruction {@code n} and are assigned
+   * within the subtree of {@code n}. Removes those assignments if there are any.
    *
    * @param n Target instruction.
-   * @param exprRoot The CFG node where the liveness information in state is
-   *     still correct.
+   * @param exprRoot The CFG node where the liveness information in state is still correct.
    * @param state The liveness information at {@code n}.
    */
-  private void tryRemoveAssignment(NodeTraversal t, Node n, Node exprRoot,
-      FlowState<LiveVariableLattice> state, Map<String, Var> allVarsInFn) {
+  private void tryRemoveAssignment(
+      NodeTraversal t,
+      Node n,
+      Node exprRoot,
+      LinearFlowState<LiveVariableLattice> state,
+      Map<String, Var> allVarsInFn) {
 
     Node parent = n.getParent();
     boolean isDeclarationNode = NodeUtil.isNameDeclaration(parent);
@@ -257,7 +259,7 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
       // regardless of what the liveness results because it
       // does not change the result afterward.
       if (rhs != null && rhs.isName() && rhs.getString().equals(var.getName()) && n.isAssign()) {
-        n.removeChild(rhs);
+        rhs.detach();
         n.replaceWith(rhs);
         compiler.reportChangeToEnclosingScope(rhs);
         return;
@@ -284,30 +286,29 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
       }
 
       if (n.isAssign()) {
-        n.removeChild(rhs);
+        rhs.detach();
         n.replaceWith(rhs);
       } else if (NodeUtil.isAssignmentOp(n)) {
-        n.removeChild(rhs);
-        n.removeChild(lhs);
+        rhs.detach();
+        lhs.detach();
         Node op = new Node(NodeUtil.getOpFromAssignmentOp(n), lhs, rhs);
-        parent.replaceChild(n, op);
+        n.replaceWith(op);
       } else if (n.isInc() || n.isDec()) {
         if (parent.isExprResult()) {
-          parent.replaceChild(n,
-              IR.voidNode(IR.number(0).srcref(n)));
+          n.replaceWith(IR.voidNode(IR.number(0).srcref(n)));
         } else if (n.isComma() && n != parent.getLastChild()) {
-          parent.removeChild(n);
+          n.detach();
         } else if (parent.isVanillaFor() && NodeUtil.getConditionExpression(parent) != n) {
-          parent.replaceChild(n, IR.empty());
+          n.replaceWith(IR.empty());
         } else {
           // Cannot replace x = a++ with x = a because that's not valid
           // when a is not a number.
           return;
         }
       } else if (isDeclarationNode) {
-        lhs.removeChild(rhs);
-        parent.getParent().addChildAfter(IR.exprResult(rhs), parent);
-        rhs.getParent().useSourceInfoFrom(rhs);
+        rhs.detach();
+        IR.exprResult(rhs).insertAfter(parent);
+        rhs.getParent().srcref(rhs);
       } else {
         // Not reachable.
         throw new IllegalStateException("Unknown statement");
@@ -347,39 +348,33 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
     while (n != exprRoot) {
       VariableLiveness state = VariableLiveness.MAYBE_LIVE;
       switch (n.getParent().getToken()) {
-        case OR:
-        case AND:
-        case COALESCE:
+        case OR, AND, COALESCE -> {
           // If the currently node is the first child of
           // AND/OR, be conservative only consider the READs
           // of the second operand.
           if (n.getNext() != null) {
-            state = isVariableReadBeforeKill(
-                n.getNext(), variable);
+            state = isVariableReadBeforeKill(n.getNext(), variable);
             if (state == VariableLiveness.KILL) {
               state = VariableLiveness.MAYBE_LIVE;
             }
           }
-          break;
-
-        case HOOK:
+        }
+        case HOOK -> {
           // If current node is the condition, check each following
           // branch, otherwise it is a conditional branch and the
           // other branch can be ignored.
           if (n.getNext() != null && n.getNext().getNext() != null) {
-            state = checkHookBranchReadBeforeKill(
-                n.getNext(), n.getNext().getNext(), variable);
+            state = checkHookBranchReadBeforeKill(n.getNext(), n.getNext().getNext(), variable);
           }
-          break;
-
-        default:
-          for (Node sibling = n.getNext(); sibling != null;
-               sibling = sibling.getNext()) {
+        }
+        default -> {
+          for (Node sibling = n.getNext(); sibling != null; sibling = sibling.getNext()) {
             state = isVariableReadBeforeKill(sibling, variable);
             if (state != VariableLiveness.MAYBE_LIVE) {
               break;
             }
           }
+        }
       }
 
       // If we see a READ or KILL there is no need to continue.
@@ -429,14 +424,10 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
     }
 
     switch (n.getToken()) {
-      // Conditionals
-      case OR:
-      case AND:
-      case COALESCE:
-        VariableLiveness v1 = isVariableReadBeforeKill(
-          n.getFirstChild(), variable);
-        VariableLiveness v2 = isVariableReadBeforeKill(
-          n.getLastChild(), variable);
+      case OR, AND, COALESCE -> {
+        // Conditionals
+        VariableLiveness v1 = isVariableReadBeforeKill(n.getFirstChild(), variable);
+        VariableLiveness v2 = isVariableReadBeforeKill(n.getLastChild(), variable);
         // With a AND/OR/COALESCE the first branch always runs, but the second is
         // may not.
         if (v1 != VariableLiveness.MAYBE_LIVE) {
@@ -446,24 +437,23 @@ class DeadAssignmentsElimination extends AbstractScopedCallback implements Compi
         } else {
           return VariableLiveness.MAYBE_LIVE;
         }
-      case HOOK:
-        VariableLiveness first = isVariableReadBeforeKill(
-            n.getFirstChild(), variable);
+      }
+      case HOOK -> {
+        VariableLiveness first = isVariableReadBeforeKill(n.getFirstChild(), variable);
         if (first != VariableLiveness.MAYBE_LIVE) {
           return first;
         }
-        return checkHookBranchReadBeforeKill(
-            n.getSecondChild(), n.getLastChild(), variable);
-
-      default:
+        return checkHookBranchReadBeforeKill(n.getSecondChild(), n.getLastChild(), variable);
+      }
+      default -> {
         // Expressions are evaluated left-right, depth first.
-        for (Node child = n.getFirstChild();
-            child != null; child = child.getNext()) {
+        for (Node child = n.getFirstChild(); child != null; child = child.getNext()) {
           VariableLiveness state = isVariableReadBeforeKill(child, variable);
           if (state != VariableLiveness.MAYBE_LIVE) {
             return state;
           }
         }
+      }
     }
 
     return VariableLiveness.MAYBE_LIVE;

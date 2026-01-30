@@ -42,6 +42,7 @@ package com.google.javascript.rhino.jstype;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The bottom Object type, representing the subclass of all objects.
@@ -59,8 +60,6 @@ import com.google.javascript.rhino.Node;
  * @see <a href="http://en.wikipedia.org/wiki/Bottom_type">Bottom types</a>
  */
 public class NoObjectType extends FunctionType {
-  private static final long serialVersionUID = 1L;
-
   NoObjectType(JSTypeRegistry registry) {
     super(
         FunctionType.builder(registry)
@@ -76,7 +75,7 @@ public class NoObjectType extends FunctionType {
   }
 
   @Override
-  public final FunctionType toMaybeFunctionType() {
+  public final @Nullable FunctionType toMaybeFunctionType() {
     return null;
   }
 
@@ -86,7 +85,7 @@ public class NoObjectType extends FunctionType {
   }
 
   @Override
-  public final ObjectType getImplicitPrototype() {
+  public final @Nullable ObjectType getImplicitPrototype() {
     return null;
   }
 
@@ -120,19 +119,14 @@ public class NoObjectType extends FunctionType {
   }
 
   @Override
-  final boolean defineProperty(String propertyName, JSType type,
-      boolean inferred, Node propertyNode) {
+  final boolean defineProperty(
+      Property.Key propertyName, JSType type, boolean inferred, Node propertyNode) {
     // nothing, all properties are defined
     return true;
   }
 
   @Override
-  public final boolean removeProperty(String name) {
-    return false;
-  }
-
-  @Override
-  public final void setPropertyJSDocInfo(String propertyName, JSDocInfo info) {
+  public final void setPropertyJSDocInfo(Property.Key propertyName, JSDocInfo info) {
     // Do nothing, specific properties do not have JSDocInfo.
   }
 
@@ -151,7 +145,7 @@ public class NoObjectType extends FunctionType {
   }
 
   @Override
-  public final FunctionType getConstructor() {
+  public final @Nullable FunctionType getConstructor() {
     return null;
   }
 

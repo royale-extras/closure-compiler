@@ -42,12 +42,13 @@ package com.google.javascript.rhino.testing;
 import static com.google.common.truth.Truth.assertAbout;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.primitives.Ints;
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.Subject;
+import com.google.errorprone.annotations.CheckReturnValue;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.TemplateType;
 import com.google.javascript.rhino.jstype.TemplateTypeMap;
-import javax.annotation.CheckReturnValue;
 
 /** A Truth Subject for {@link TemplateTypeMap}s. */
 public final class TemplateTypeMapSubject extends Subject {
@@ -71,5 +72,11 @@ public final class TemplateTypeMapSubject extends Subject {
       ImmutableList<TemplateType> keys, ImmutableList<? extends JSType> values) {
     check("getTemplateKeys()").that(actual.getTemplateKeys()).isEqualTo(keys);
     check("getTemplateValues()").that(actual.getTemplateValues()).isEqualTo(values);
+  }
+
+  public void hasSubmapsAt(int... indices) {
+    check("getIndicesOfSubmapsForTesting()")
+        .that(actual.getIndicesOfSubmapsForTesting())
+        .containsExactlyElementsIn(Ints.asList(indices));
   }
 }

@@ -25,24 +25,18 @@ import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile;
 
 /**
- * Compiler pass that collects visibility annotations in {@code @fileoverview}
- * blocks. Used by {@link CheckAccessControls}.
+ * Compiler pass that collects visibility annotations in {@code @fileoverview} blocks. Used by
+ * {@link CheckAccessControls}.
  */
-class CollectFileOverviewVisibility implements HotSwapCompilerPass {
+class CollectFileOverviewVisibility implements CompilerPass {
 
-  private final AbstractCompiler compiler;
-  private final ImmutableMap.Builder<StaticSourceFile, Visibility> builder =
-      ImmutableMap.builder();
+  private final ImmutableMap.Builder<StaticSourceFile, Visibility> builder = ImmutableMap.builder();
 
-  CollectFileOverviewVisibility(AbstractCompiler compiler) {
-    this.compiler = compiler;
-  }
+  CollectFileOverviewVisibility(AbstractCompiler compiler) {}
 
   @Override
   public void process(Node externs, Node root) {
-    for (Node script = root.getFirstChild();
-        script != null;
-        script = script.getNext()) {
+    for (Node script = root.getFirstChild(); script != null; script = script.getNext()) {
       checkState(script.isScript());
       visit(script);
     }
@@ -61,13 +55,6 @@ class CollectFileOverviewVisibility implements HotSwapCompilerPass {
   }
 
   ImmutableMap<StaticSourceFile, Visibility> getFileOverviewVisibilityMap() {
-    return builder.build();
+    return builder.buildOrThrow();
   }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    compiler.process(this);
-  }
-
 }
-

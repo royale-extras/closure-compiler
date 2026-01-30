@@ -18,20 +18,22 @@ package com.google.javascript.jscomp.testing;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Strings;
-import com.google.javascript.jscomp.JSModule;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import com.google.javascript.jscomp.JSChunk;
 import com.google.javascript.jscomp.SourceFile;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 
-/** Utility to create various input {@link com.google.javascript.jscomp.JSModule} graphs */
+/** Utility to create various input {@link com.google.javascript.jscomp.JSChunk} graphs */
 public final class JSChunkGraphBuilder {
 
   private enum GraphType {
     // each chunk depends on the chunk immediately before
     CHAIN() {
       @Override
-      void addDependencyEdges(JSModule[] chunks) {
+      void addDependencyEdges(JSChunk[] chunks) {
         for (int i = 1; i < chunks.length; i++) {
           chunks[i].addDependency(chunks[i - 1]);
         }
@@ -40,7 +42,7 @@ public final class JSChunkGraphBuilder {
     // each chunk depends on the fist chunk
     STAR() {
       @Override
-      void addDependencyEdges(JSModule[] chunks) {
+      void addDependencyEdges(JSChunk[] chunks) {
         for (int i = 1; i < chunks.length; i++) {
           chunks[i].addDependency(chunks[0]);
         }
@@ -51,7 +53,7 @@ public final class JSChunkGraphBuilder {
     // chunk 2 depends on chunk 1, and all others depend on chunk 2
     BUSH() {
       @Override
-      void addDependencyEdges(JSModule[] chunks) {
+      void addDependencyEdges(JSChunk[] chunks) {
         checkState(chunks.length > 2, "BUSHes need at least three graph nodes");
         for (int i = 1; i < chunks.length; i++) {
           chunks[i].addDependency(chunks[i == 1 ? 0 : 1]);
@@ -61,18 +63,21 @@ public final class JSChunkGraphBuilder {
     // binary tree
     TREE() {
       @Override
-      void addDependencyEdges(JSModule[] chunks) {
+      void addDependencyEdges(JSChunk[] chunks) {
         for (int i = 1; i < chunks.length; i++) {
           chunks[i].addDependency(chunks[(i - 1) / 2]);
         }
       }
     };
 
-    void addDependencyEdges(JSModule[] chunks) {}
+    void addDependencyEdges(JSChunk[] chunks) {}
   }
 
   private final GraphType graphType;
   private final ArrayList<String> chunks = new ArrayList<>();
+  // correspondances between chunk indices in `chunks` and specified names. if no name is specified
+  // defaults to "m{i}"
+  private final LinkedHashMap<Integer, String> chunkNames = new LinkedHashMap<>();
   private String filenameFormat = "i%s.js";
 
   private JSChunkGraphBuilder(GraphType graphType) {
@@ -119,11 +124,20 @@ public final class JSChunkGraphBuilder {
     return new JSChunkGraphBuilder(GraphType.DISJOINT);
   }
 
+  @CanIgnoreReturnValue
   public JSChunkGraphBuilder addChunk(String input) {
     this.chunks.add(input);
     return this;
   }
 
+  @CanIgnoreReturnValue
+  public JSChunkGraphBuilder addChunkWithName(String input, String chunkName) {
+    this.chunkNames.put(this.chunks.size(), chunkName);
+    this.chunks.add(input);
+    return this;
+  }
+
+  @CanIgnoreReturnValue
   public JSChunkGraphBuilder addChunks(List<String> inputs) {
     this.chunks.addAll(inputs);
     return this;
@@ -139,15 +153,18 @@ public final class JSChunkGraphBuilder {
    * <p>String must contain one substitution, the index of the file. e.g. "i%s.js" will produce
    * i0.js, i1.js, etc.
    */
+  @CanIgnoreReturnValue
   public JSChunkGraphBuilder setFilenameFormat(String filenameFormat) {
     this.filenameFormat = filenameFormat;
     return this;
   }
 
-  public JSModule[] build() {
-    JSModule[] chunks = new JSModule[this.chunks.size()];
+  public JSChunk[] build() {
+    JSChunk[] chunks = new JSChunk[this.chunks.size()];
     for (int i = 0; i < this.chunks.size(); i++) {
-      JSModule chunk = chunks[i] = new JSModule("m" + i);
+      String chunkName = this.chunkNames.getOrDefault(i, "m" + i);
+      JSChunk chunk = chunks[i] = new JSChunk(chunkName);
+
       chunk.add(
           SourceFile.fromCode(Strings.lenientFormat(this.filenameFormat, i), this.chunks.get(i)));
     }

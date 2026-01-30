@@ -82,7 +82,13 @@ jasmine.Clock.prototype.tick = function(ms) {};
 jasmine.Clock.prototype.mockDate = function(date) {};
 
 
-/** @constructor */
+/**
+ * @constructor
+ * @template T, U
+ * (Template args here are unused, but added to align with
+ * google3/third_party/javascript/typings/jasmine 's definition of
+ * AsyncMatchers.)
+ */
 jasmine.AsyncMatchers = function() {};
 
 
@@ -99,6 +105,15 @@ jasmine.AsyncMatchers.prototype.toBeRejected = function() {};
  * @return {!Promise<void>}
  */
 jasmine.AsyncMatchers.prototype.toBeRejectedWith = function(value) {};
+
+
+/**
+ * @param {function(new:Error, ...)|string|!RegExp=} errorOrMessage
+ * @param {string|!RegExp=} message
+ * @return {!Promise<void>}
+ */
+jasmine.AsyncMatchers.prototype.toBeRejectedWithError = function(
+    errorOrMessage, message) {};
 
 
 /** @return {!Promise<void>} */
@@ -190,6 +205,7 @@ jasmine.Matchers.prototype.toBeLessThanOrEqual = function(
 
 /**
  * @param {*} value
+ * @param {*=} precision
  * @param {*=} expectationFailOutput
  */
 jasmine.Matchers.prototype.toBeCloseTo = function(
@@ -340,6 +356,7 @@ jasmine.Spec.prototype.getFullName;
 /**
  * @constructor
  * @extends {Function}
+ * @template T
  */
 jasmine.Spy = function() {};
 
@@ -356,6 +373,13 @@ jasmine.Spy.prototype.reset = function() {};
 
 /** @type {!jasmine.CallTracker} */
 jasmine.Spy.prototype.calls;
+
+
+/**
+ * @param {...*} var_args
+ * @return {!jasmine.Spy}
+ */
+jasmine.Spy.prototype.withArgs = function(...var_args) {};
 
 
 
@@ -675,6 +699,15 @@ function afterAll(handler, timeout = undefined) {}
  * @param {function(this:jasmine.Suite)} handler
  */
 function describe(description, handler) {}
+
+
+/**
+ * @param {?=} message Reason for the failure. NOTE: the type should
+ *     be (string|!Error=), however closure's goog.testing.asserts.fail is
+ *     aliased as a global and sometimes conflicts, and is typed with an
+ *     unknown parameter type.
+ */
+function fail(message) {}
 
 
 /**

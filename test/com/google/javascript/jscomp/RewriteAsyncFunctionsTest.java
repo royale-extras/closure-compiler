@@ -15,21 +15,19 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.jscomp.testing.CodeSubTree.findClassDefinition;
 import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.NodeUtil.Visitor;
-import com.google.javascript.jscomp.parsing.parser.FeatureSet;
-import com.google.javascript.jscomp.testing.NoninjectingCompiler;
+import com.google.javascript.jscomp.colors.Color;
+import com.google.javascript.jscomp.colors.ColorId;
+import com.google.javascript.jscomp.colors.StandardColors;
+import com.google.javascript.jscomp.testing.CodeSubTree;
 import com.google.javascript.jscomp.testing.TestExternsBuilder;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.FunctionType;
-import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.ObjectType;
-import java.util.function.Predicate;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -38,684 +36,470 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class RewriteAsyncFunctionsTest extends CompilerTestCase {
 
-  @Override
+  private static final String EXTERNS_BASE =
+      new TestExternsBuilder().addArguments().addJSCompLibraries().build();
+
+  private static final ImmutableMap<String, String> REPLACEMENTS_MAP =
+      ImmutableMap.of(
+          "ASYNC_THIS",
+          "$jscomp$async$this$",
+          "ASYNC_ARGUMENTS",
+          "$jscomp$async$arguments$",
+          "ASYNC_SUPER_GET",
+          "$jscomp$async$super$get$");
+
+  public RewriteAsyncFunctionsTest() {
+    super(EXTERNS_BASE);
+  }
+
   @Before
-  public void setUp() throws Exception {
-    super.setUp();
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT);
+  public void customSetUp() throws Exception {
     setLanguageOut(LanguageMode.ECMASCRIPT3);
     enableTypeCheck();
+    enableNormalize();
     enableTypeInfoValidation();
+    replaceTypesWithColors();
+    enableMultistageCompilation();
+    setGenericNameReplacements(REPLACEMENTS_MAP);
   }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new RewriteAsyncFunctions.Builder(compiler)
-        .rewriteSuperPropertyReferencesWithoutSuper(
-            !compiler.getOptions().needsTranspilationFrom(FeatureSet.ES6))
-        .build();
+    return RewriteAsyncFunctions.create(compiler);
   }
 
-  // Don't let the compiler actually inject any code.
-  // It just makes the expected output hard to read and write.
-  @Override
-  protected Compiler createCompiler() {
-    return new NoninjectingCompiler();
+  private final Color getGlobalColor(ColorId colorId) {
+    return getLastCompiler().getColorRegistry().get(colorId);
   }
 
-  @Override
-  protected NoninjectingCompiler getLastCompiler() {
-    return (NoninjectingCompiler) super.getLastCompiler();
-  }
-
-  /** Represents a subtree of the output from a compilation. */
-  private static class CodeSubTree {
-    private final Node rootNode;
-
-    private CodeSubTree(Node rootNode) {
-      this.rootNode = rootNode;
-    }
-
-    /** Returns the SubTree rooted at the first class definition found with the given name. */
-    private CodeSubTree findClassDefinition(String wantedClassName) {
-      Node classNode =
-          findFirstNode(
-              rootNode, (node) -> node.isClass() && wantedClassName.equals(NodeUtil.getName(node)));
-      return new CodeSubTree(classNode);
-    }
-
-    /** Returns the first class method definiton found with the given name. */
-    private CodeSubTree findMethodDefinition(String wantedMethodName) {
-      Node methodDefinitionNode =
-          findFirstNode(
-              rootNode,
-              (node) -> node.isMemberFunctionDef() && wantedMethodName.equals(node.getString()));
-
-      return new CodeSubTree(methodDefinitionNode);
-    }
-
-    /** Executes an action for every instance of a given qualified name. */
-    private ImmutableList<Node> findMatchingQNameReferences(final String wantedQName) {
-      return findNodesAllowEmpty(rootNode, (node) -> node.matchesQualifiedName(wantedQName));
-    }
-  }
-
-  /**
-   * Returns a CodeSubTree for the first definition of the given class name in the output from the
-   * last compile.
-   */
-  private CodeSubTree findClassDefinition(String wantedClassName) {
-    return new CodeSubTree(getLastCompiler().getRoot().getSecondChild())
-        .findClassDefinition(wantedClassName);
-  }
-
-  /** Return a list of all Nodes matching the given predicate starting at the given root. */
-  private static ImmutableList<Node> findNodesAllowEmpty(Node rootNode, Predicate<Node> predicate) {
-    ImmutableList.Builder<Node> listBuilder = ImmutableList.builder();
-    NodeUtil.visitPreOrder(
-        rootNode,
-        new Visitor() {
-          @Override
-          public void visit(Node node) {
-            if (predicate.test(node)) {
-              listBuilder.add(node);
-            }
-          }
-        });
-    return listBuilder.build();
-  }
-
-  /** Return a list of all Nodes matching the given predicate starting at the given root. */
-  private static ImmutableList<Node> findNodesNonEmpty(Node rootNode, Predicate<Node> predicate) {
-    ImmutableList<Node> results = findNodesAllowEmpty(rootNode, predicate);
-    checkState(!results.isEmpty(), "no nodes found");
-    return results;
-  }
-
-  /**
-   * Return the shallowest and earliest of all Nodes matching the given predicate starting at the
-   * given root.
-   *
-   * <p>Throws an exception if none found.
-   */
-  private static Node findFirstNode(Node rootNode, Predicate<Node> predicate) {
-    ImmutableList<Node> allMatchingNodes = findNodesNonEmpty(rootNode, predicate);
-    return allMatchingNodes.get(0);
-  }
-
-  private final JSType getGlobalJSType(String globalTypeName) {
-    return getLastCompiler().getTypeRegistry().getGlobalType(globalTypeName);
-  }
-
-  private final ObjectType getGlobalObjectType(String globalTypeName) {
-    return getGlobalJSType(globalTypeName).assertObjectType();
+  private final Color getGlobalInstanceColor(String globalClassName) {
+    return Color.createUnion(
+        findClassDefinition(getLastCompiler(), globalClassName)
+            .getRootNode()
+            .getColor()
+            .getInstanceColors());
   }
 
   @Test
   public void testDefaultParameterUsingThis() {
     test(
-        lines(
-            "class X {",
-            "  /**",
-            "   * @param {number} a",
-            "   */",
-            "  constructor(a) {",
-            "    /** @const */ this.a = a;",
-            "  }",
-            "  /**",
-            "   * @param {number} b",
-            "   * @return {!Promise<number>}",
-            "   */",
-            "  async m(b = this.a) {",
-            "      return this.a + b;",
-            "  }",
-            "}"),
-        lines(
-            "class X {",
-            "  /**",
-            "   * @param {number} a",
-            "   */",
-            "  constructor(a) {",
-            "    /** @const */ this.a = a;",
-            "  }",
-            "  /**",
-            "   * @param {number} b",
-            "   * @return {!Promise<number>}",
-            "   */",
-            "  m(b = this.a) {", // this in parameter default value doesn't get changed
-            "    const $jscomp$async$this = this;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "            return $jscomp$async$this.a + b;",
-            "        });",
-            "  }",
-            "}"));
+        """
+        class X {
+          /**
+           * @param {number} a
+           */
+          constructor(a) {
+            /** @const */ this.a = a;
+          }
+          /**
+           * @param {number} b
+           * @return {!Promise<number>}
+           */
+          async m(b = this.a) {
+              return this.a + b;
+          }
+        }
+        """,
+        """
+        class X {
+          constructor(a) {
+            /** @const */ this.a = a;
+          }
+          m(b = this.a) { // this in parameter default value doesn't get changed
+            const ASYNC_THIS$3 = this;
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                    return ASYNC_THIS$3.a + b;
+                });
+          }
+        }
+        """);
 
-    ObjectType classXInstanceType = getGlobalObjectType("X");
+    Color classXInstanceType = getGlobalInstanceColor("X");
 
     ImmutableList<Node> thisAliasNameReferences =
-        findClassDefinition("X")
+        findClassDefinition(getLastCompiler(), "X")
             .findMethodDefinition("m")
-            .findMatchingQNameReferences("$jscomp$async$this");
+            .findMatchingQNameReferences("$jscomp$async$this$m1146332801$3");
     assertThat(thisAliasNameReferences).hasSize(2);
 
-    // const $jscomp$async$this = this;
-    // confirm that `this` and `$jscomp$async$this` nodes have the right types in declaration
+    // const ASYNC_THIS$3 = this;
+    // confirm that `this` and `ASYNC_THIS$3` nodes have the right types in
+    // declaration
     Node aliasDeclarationReference = thisAliasNameReferences.get(0);
-    assertNode(aliasDeclarationReference).hasJSTypeThat().isEqualTo(classXInstanceType);
+    assertNode(aliasDeclarationReference).hasColorThat().isEqualTo(classXInstanceType);
     Node thisNode = aliasDeclarationReference.getOnlyChild();
-    assertNode(thisNode).isThis().hasJSTypeThat().isEqualTo(classXInstanceType);
+    assertNode(thisNode).isThis().hasColorThat().isEqualTo(classXInstanceType);
 
-    // make sure the single reference to $jscomp$async$this has the right type
-    assertNode(thisAliasNameReferences.get(1)).hasJSTypeThat().isEqualTo(classXInstanceType);
+    // make sure the single reference to ASYNC_THIS$3 has the right type
+    assertNode(thisAliasNameReferences.get(1)).hasColorThat().isEqualTo(classXInstanceType);
   }
 
   @Test
   public void testInnerArrowFunctionUsingThis() {
     test(
-        lines(
-            "class X {",
-            "  async m() {",
-            "    return new Promise((resolve, reject) => {",
-            "      return this;",
-            "    });",
-            "  }",
-            "}"),
-        lines(
-            "class X {",
-            "  m() {",
-            "    const $jscomp$async$this = this;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return new Promise((resolve, reject) => {",
-            "            return $jscomp$async$this;",
-            "          });",
-            "        });",
-            "  }",
-            "}"));
+        """
+        class X {
+          async m() {
+            return new Promise((resolve, reject) => {
+              return this;
+            });
+          }
+        }
+        """,
+        """
+        class X {
+          m() {
+            const ASYNC_THIS$1 = this;
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return new Promise((resolve, reject) => {
+                    return ASYNC_THIS$1;
+                  });
+                });
+          }
+        }
+        """);
 
-    ObjectType classXInstanceType = getGlobalObjectType("X");
+    Color classXInstanceType = getGlobalInstanceColor("X");
 
     ImmutableList<Node> thisAliasNameReferences =
-        findClassDefinition("X")
+        findClassDefinition(getLastCompiler(), "X")
             .findMethodDefinition("m")
-            .findMatchingQNameReferences("$jscomp$async$this");
+            .findMatchingQNameReferences("$jscomp$async$this$m1146332801$1");
     assertThat(thisAliasNameReferences).hasSize(2);
 
-    // const $jscomp$async$this = this;
-    // confirm that `this` and `$jscomp$async$this` nodes have the right types in declaration
+    // const ASYNC_THIS$1 = this;
+    // confirm that `this` and `ASYNC_THIS$1` nodes have the right types in
+    // declaration
     Node aliasDeclarationReference = thisAliasNameReferences.get(0);
-    assertNode(aliasDeclarationReference).hasJSTypeThat().isEqualTo(classXInstanceType);
+    assertNode(aliasDeclarationReference).hasColorThat().isEqualTo(classXInstanceType);
     Node thisNode = aliasDeclarationReference.getOnlyChild();
-    assertNode(thisNode).isThis().hasJSTypeThat().isEqualTo(classXInstanceType);
+    assertNode(thisNode).isThis().hasColorThat().isEqualTo(classXInstanceType);
 
-    // make sure the single reference to $jscomp$async$this has the right type
-    assertNode(thisAliasNameReferences.get(1)).hasJSTypeThat().isEqualTo(classXInstanceType);
+    // make sure the single reference to ASYNC_THIS$1 has the right type
+    assertNode(thisAliasNameReferences.get(1)).hasColorThat().isEqualTo(classXInstanceType);
   }
 
   @Test
   public void testInnerSuperCall() {
     test(
-        externs(new TestExternsBuilder().addPromise().build()),
+        externs(new TestExternsBuilder().addPromise().addJSCompLibraries().build()),
         srcs(
-            lines(
-                "class A {",
-                "  m() {",
-                "    return Promise.resolve(this);",
-                "  }",
-                "}",
-                "class X extends A {",
-                "  async m() {",
-                "    return super.m();",
-                "  }",
-                "}")),
+            """
+            class A {
+              m() {
+                return Promise.resolve(this);
+              }
+            }
+            class X extends A {
+              async m() {
+                return super.m();
+              }
+            }
+            """),
         expected(
-            lines(
-                "class A {",
-                "  m() {",
-                "    return Promise.resolve(this);",
-                "  }",
-                "}",
-                "class X extends A {",
-                "  m() {",
-                "    const $jscomp$async$this = this;",
-                "    const $jscomp$async$super$get$m = () => super.m;",
-                "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "        function* () {",
-                "          return $jscomp$async$super$get$m().call($jscomp$async$this);",
-                "        });",
-                "  }",
-                "}")));
+            """
+            class A {
+              m() {
+                return Promise.resolve(this);
+              }
+            }
+            class X extends A {
+              m() {
+                const ASYNC_THIS$3 = this;
+                const ASYNC_SUPER_GET$5$m = () => {
+                  return super.m;
+                };
+                return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                    function* () {
+                      return ASYNC_SUPER_GET$5$m().call(ASYNC_THIS$3);
+                    });
+              }
+            }
+            """));
 
-    ObjectType classAInstanceType = getGlobalObjectType("A");
+    Color classAInstanceType = getGlobalInstanceColor("A");
     // type of A.prototype.m
-    FunctionType classAPropertyMType = classAInstanceType.getPropertyType("m").assertFunctionType();
+    Color classAPropertyMType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("m")
+            .getRootNode()
+            .getColor();
 
-    CodeSubTree classXMethodMDefinition = findClassDefinition("X").findMethodDefinition("m");
+    CodeSubTree classXMethodMDefinition =
+        findClassDefinition(getLastCompiler(), "X").findMethodDefinition("m");
 
     // Check type information on wrapper function for `super.m`
     ImmutableList<Node> superMethodWrapperNameNodes =
-        classXMethodMDefinition.findMatchingQNameReferences("$jscomp$async$super$get$m");
+        classXMethodMDefinition.findMatchingQNameReferences(
+            "$jscomp$async$super$get$m1146332801$5$m");
     // one declaration and one reference
     assertThat(superMethodWrapperNameNodes).hasSize(2);
 
     // first name node is declaration
-    // const $jscomp$async$super$get$m = () => super.m;
+    // const ASYNC_SUPER_GET$m = () => super.m;
     Node wrapperDeclarationNameNode = superMethodWrapperNameNodes.get(0);
-    // arrow function has a JSType representing a function that returns type type of `super.m`
     Node wrapperArrowFunction = wrapperDeclarationNameNode.getOnlyChild();
+    // optimization colors don't track function signatures
     assertNode(wrapperArrowFunction)
         .isArrowFunction()
-        .hasJSTypeThat()
-        .isFunctionTypeThat()
-        .hasReturnTypeThat()
-        .isEqualTo(classAPropertyMType);
+        .hasColorThat()
+        .isEqualTo(StandardColors.TOP_OBJECT);
     // wrapper function variable has type matching the function itself
-    JSType wrapperArrowFunctionType = wrapperArrowFunction.getJSType();
-    assertNode(wrapperDeclarationNameNode).hasJSTypeThat().isEqualTo(wrapperArrowFunctionType);
+    Color wrapperArrowColor = wrapperArrowFunction.getColor();
+    assertNode(wrapperDeclarationNameNode).hasColorThat().isEqualTo(wrapperArrowColor);
 
     // get `super.m` from `() => `super.m`
-    Node superDotM = wrapperArrowFunction.getLastChild();
+    Node superDotM = wrapperArrowFunction.getLastChild().getFirstFirstChild();
     assertNode(superDotM)
         .matchesQualifiedName("super.m")
-        .hasJSTypeThat()
+        .hasColorThat()
         .isEqualTo(classAPropertyMType);
     Node superNode = superDotM.getFirstChild();
-    assertNode(superNode).isSuper().hasJSTypeThat().isEqualTo(classAInstanceType);
+    assertNode(superNode).isSuper().hasColorThat().isEqualTo(classAInstanceType);
 
     // second name node is reference
-    // return $jscomp$async$super$get$m().call($jscomp$async$this);
+    // return ASYNC_SUPER_GET$m().call(ASYNC_THIS$1);
     Node wrapperReferenceNameNode = superMethodWrapperNameNodes.get(1);
-    // TODO(bradfordcsmith): The name type should be equal to the arrowFunctionType, but it
-    //     somehow isn't
-    assertNode(wrapperReferenceNameNode)
-        .hasJSTypeThat()
-        .isFunctionTypeThat()
-        .hasReturnTypeThat()
-        .isEqualTo(classAPropertyMType);
-    // `$jscomp$async$super$get$m()`
+    // optimization colors don't track function signatures
+    assertNode(wrapperArrowFunction).hasColorThat().isEqualTo(StandardColors.TOP_OBJECT);
+    // `ASYNC_SUPER_GET$m()`
     Node wrapperCallNode = wrapperReferenceNameNode.getParent();
-    assertNode(wrapperCallNode).isCall().hasJSTypeThat().isEqualTo(classAPropertyMType);
+    assertNode(wrapperCallNode).isCall().hasColorThat().isEqualTo(classAPropertyMType);
 
-    // `$jscomp$async$super$get$m().call($jscomp$async$this)`
+    // `ASYNC_SUPER_GET$m().call(ASYNC_THIS$1)`
     Node methodCallNode = wrapperCallNode.getGrandparent();
-    // the .call() we created returns the same type as calling the original method directly
-    assertNode(methodCallNode)
-        .isCall()
-        .hasJSTypeThat()
-        .isEqualTo(classAPropertyMType.getReturnType());
+    // optimization colors don't track .call types
+    assertNode(methodCallNode).isCall().hasColorThat().isEqualTo(StandardColors.UNKNOWN);
   }
 
   @Test
   public void testInnerSuperReference() {
     test(
-        externs(new TestExternsBuilder().addFunction().build()),
+        externs(new TestExternsBuilder().addFunction().addJSCompLibraries().build()),
         srcs(
-            lines(
-                "class A {",
-                "  m() {",
-                "    return this;",
-                "  }",
-                "}",
-                "class X extends A {",
-                "  async m() {",
-                "    const tmp = super.m;",
-                "    return tmp.call(null);",
-                "  }",
-                "}")),
+            """
+            class A {
+              m() {
+                return this;
+              }
+            }
+            class X extends A {
+              async m() {
+                const tmp = super.m;
+                return tmp.call(null);
+              }
+            }
+            """),
         expected(
-            lines(
-                "class A {",
-                "  m() {",
-                "    return this;",
-                "  }",
-                "}",
-                "class X extends A {",
-                "  m() {",
-                "    const $jscomp$async$super$get$m = () => super.m;",
-                "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "        function* () {",
-                "          const tmp = $jscomp$async$super$get$m();",
-                // type of tmp will indicate it requires `this` be provided, but will allow null.
-                "          return tmp.call(null);",
-                "        });",
-                "  }",
-                "}")));
+            """
+            class A {
+              m() {
+                return this;
+              }
+            }
+            class X extends A {
+              m() {
+                const ASYNC_SUPER_GET$5$m = () => {
+                  return super.m;
+                };
+                return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                    function* () {
+                      const tmp = ASYNC_SUPER_GET$5$m();
+            // type of tmp will indicate it requires `this` be provided, but will allow null.
+                      return tmp.call(null);
+                    });
+              }
+            }
+            """));
 
-    ObjectType classAInstanceType = getGlobalObjectType("A");
     // type of A.prototype.m
-    FunctionType classAPropertyMType = classAInstanceType.getPropertyType("m").assertFunctionType();
+    Color classAPropertyMType =
+        findClassDefinition(getLastCompiler(), "A")
+            .findMethodDefinition("m")
+            .getRootNode()
+            .getColor();
+    Color classAInstanceType = getGlobalInstanceColor("A");
 
-    CodeSubTree classXMethodMDefinition = findClassDefinition("X").findMethodDefinition("m");
+    CodeSubTree classXMethodMDefinition =
+        findClassDefinition(getLastCompiler(), "X").findMethodDefinition("m");
 
     // Check type information on wrapper function for `super.m`
     ImmutableList<Node> superMethodWrapperNameNodes =
-        classXMethodMDefinition.findMatchingQNameReferences("$jscomp$async$super$get$m");
+        classXMethodMDefinition.findMatchingQNameReferences(
+            "$jscomp$async$super$get$m1146332801$5$m");
     // one declaration and one reference
     assertThat(superMethodWrapperNameNodes).hasSize(2);
 
     // first name node is declaration
-    // const $jscomp$async$super$get$m = () => super.m;
+    // const ASYNC_SUPER_GET$m = () => super.m;
     Node wrapperDeclarationNameNode = superMethodWrapperNameNodes.get(0);
-    // arrow function has a JSType representing a function that returns type type of `super.m`
+    // arrow function has a Color representing a object
     Node wrapperArrowFunction = wrapperDeclarationNameNode.getOnlyChild();
     assertNode(wrapperArrowFunction)
         .isArrowFunction()
-        .hasJSTypeThat()
-        .isFunctionTypeThat()
-        .hasReturnTypeThat()
-        .isEqualTo(classAPropertyMType);
+        .hasColorThat()
+        .isEqualTo(StandardColors.TOP_OBJECT);
     // wrapper function variable has type matching the function itself
-    JSType wrapperArrowFunctionType = wrapperArrowFunction.getJSType();
-    assertNode(wrapperDeclarationNameNode).hasJSTypeThat().isEqualTo(wrapperArrowFunctionType);
+    Color wrapperArrowColor = wrapperArrowFunction.getColor();
+    assertNode(wrapperDeclarationNameNode).hasColorThat().isEqualTo(wrapperArrowColor);
 
     // get `super.m` from `() => `super.m`
-    Node superDotM = wrapperArrowFunction.getLastChild();
+    Node superDotM = wrapperArrowFunction.getLastChild().getFirstFirstChild();
     assertNode(superDotM)
         .matchesQualifiedName("super.m")
-        .hasJSTypeThat()
+        .hasColorThat()
         .isEqualTo(classAPropertyMType);
     Node superNode = superDotM.getFirstChild();
-    assertNode(superNode).hasJSTypeThat().isEqualTo(classAInstanceType);
+    assertNode(superNode).hasColorThat().isEqualTo(classAInstanceType);
 
     // second name node is reference
-    // const tmp = $jscomp$async$super$get$m();
+    // const tmp = ASYNC_SUPER_GET$m();
     Node wrapperReferenceNameNode = superMethodWrapperNameNodes.get(1);
-    // TODO(bradfordcsmith): The name type should be equal to the arrowFunctionType, but it
-    //     somehow isn't
-    assertNode(wrapperReferenceNameNode)
-        .hasJSTypeThat()
-        .isFunctionTypeThat()
-        .hasReturnTypeThat()
-        .isEqualTo(classAPropertyMType);
-    // `$jscomp$async$super$get$m()`
+    // optimization colors don't track function signatures
+    assertNode(wrapperReferenceNameNode).hasColorThat().isEqualTo(StandardColors.TOP_OBJECT);
+    // `ASYNC_SUPER_GET$m()`
     Node wrapperCallNode = wrapperReferenceNameNode.getParent();
-    assertNode(wrapperCallNode).isCall().hasJSTypeThat().isEqualTo(classAPropertyMType);
+    assertNode(wrapperCallNode).isCall().hasColorThat().isEqualTo(classAPropertyMType);
   }
 
   @Test
-  public void testInnerSuperCallEs2015Out() {
-    setLanguageOut(LanguageMode.ECMASCRIPT_2015);
+  public void testMultipleSuperAccessesInAsyncFunction_havingNonIdenticalUnknownTypes() {
     test(
-        lines(
-            "class A {",
-            "  m() {",
-            "    return this;",
-            "  }",
-            "}",
-            "class X extends A {",
-            "  async m() {",
-            "    return super.m();",
-            "  }",
-            "}"),
-        lines(
-            "class A {",
-            "  m() {",
-            "    return this;",
-            "  }",
-            "}",
-            "class X extends A {",
-            "  m() {",
-            "    const $jscomp$async$this = this;",
-            "    const $jscomp$async$super$get$m =",
-            "        () => Object.getPrototypeOf(Object.getPrototypeOf(this)).m;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return $jscomp$async$super$get$m().call($jscomp$async$this);",
-            "        });",
-            "  }",
-            "}"));
+        """
+        class UpdatingElement {
+          getUpdateComplete() {
+          }
+        }
 
-    ObjectType classAInstanceType = getGlobalObjectType("A");
-    // type of A.prototype.m
-    FunctionType classAPropertyMType = classAInstanceType.getPropertyType("m").assertFunctionType();
-
-    CodeSubTree classXMethodMDefinition = findClassDefinition("X").findMethodDefinition("m");
-
-    // Check type information on wrapper function for `super.m`
-    ImmutableList<Node> superMethodWrapperNameNodes =
-        classXMethodMDefinition.findMatchingQNameReferences("$jscomp$async$super$get$m");
-    // one declaration and one reference
-    assertThat(superMethodWrapperNameNodes).hasSize(2);
-
-    // first name node is declaration
-    // const $jscomp$async$super$get$m = () => super.m;
-    Node wrapperDeclarationNameNode = superMethodWrapperNameNodes.get(0);
-    // arrow function has a JSType representing a function that returns type type of `super.m`
-    Node wrapperArrowFunction = wrapperDeclarationNameNode.getOnlyChild();
-    assertNode(wrapperArrowFunction)
-        .isArrowFunction()
-        .hasJSTypeThat()
-        .isFunctionTypeThat()
-        .hasReturnTypeThat()
-        .isEqualTo(classAPropertyMType);
-    // wrapper function variable has type matching the function itself
-    JSType wrapperArrowFunctionType = wrapperArrowFunction.getJSType();
-    assertNode(wrapperDeclarationNameNode).hasJSTypeThat().isEqualTo(wrapperArrowFunctionType);
-
-    // get `Object.getPrototypeOf(...).m` from `() => `Object.getPrototypeOf(...).m`
-    Node fakeSuperDotM = wrapperArrowFunction.getLastChild();
-    assertNode(fakeSuperDotM).hasJSTypeThat().isEqualTo(classAPropertyMType);
-    Node fakeSuperNode = fakeSuperDotM.getFirstChild();
-    assertNode(fakeSuperNode).isCall().hasJSTypeThat().isEqualTo(classAInstanceType);
-    assertNode(fakeSuperNode.getFirstChild()).matchesQualifiedName("Object.getPrototypeOf");
-  }
-
-  @Test
-  public void testInnerSuperCallStaticEs2015Out() {
-    setLanguageOut(LanguageMode.ECMASCRIPT_2015);
-    test(
-        lines(
-            "class A {",
-            "  /**",
-            "   * @return {number}",
-            "   */",
-            "  static m() {",
-            "    return this.someNumber;",
-            "  }",
-            "}",
-            "/** @const {number} */",
-            "A.someNumber = 3;",
-            "",
-            "class X extends A {",
-            "  /**",
-            "   * @return {!Promise<number>}",
-            "   */",
-            "  static async asyncM() {",
-            "    return super.m();",
-            "  }",
-            "}"),
-        lines(
-            "class A {",
-            "  /**",
-            "   * @return {number}",
-            "   */",
-            "  static m() {",
-            "    return this.someNumber;",
-            "  }",
-            "}",
-            "/** @const {number} */",
-            "A.someNumber = 3;",
-            "",
-            "class X extends A {",
-            "  /**",
-            "   * @return {!Promise<number>}",
-            "   */",
-            "  static asyncM() {",
-            "    const $jscomp$async$this = this;",
-            "    const $jscomp$async$super$get$m = () => Object.getPrototypeOf(this).m;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return $jscomp$async$super$get$m().call($jscomp$async$this);",
-            "        });",
-            "  }",
-            "}"));
-
-    ObjectType classAInstanceType = getGlobalObjectType("A");
-    // type of A.prototype.m
-    FunctionType classAConstructorType = classAInstanceType.getConstructor();
-    FunctionType classAPropertyMType =
-        classAConstructorType.getPropertyType("m").assertFunctionType();
-
-    CodeSubTree classXMethodDefinition = findClassDefinition("X").findMethodDefinition("asyncM");
-
-    // Check type information on wrapper function for `super.m`
-    ImmutableList<Node> superMethodWrapperNameNodes =
-        classXMethodDefinition.findMatchingQNameReferences("$jscomp$async$super$get$m");
-    // one declaration and one reference
-    assertThat(superMethodWrapperNameNodes).hasSize(2);
-
-    // first name node is declaration
-    // const $jscomp$async$super$get$m = () => super.m;
-    Node wrapperDeclarationNameNode = superMethodWrapperNameNodes.get(0);
-    // arrow function has a JSType representing a function that returns type type of `super.m`
-    Node wrapperArrowFunction = wrapperDeclarationNameNode.getOnlyChild();
-    assertNode(wrapperArrowFunction)
-        .isArrowFunction()
-        .hasJSTypeThat()
-        .isFunctionTypeThat()
-        .hasReturnTypeThat()
-        .isEqualTo(classAPropertyMType);
-    // wrapper function variable has type matching the function itself
-    JSType wrapperArrowFunctionType = wrapperArrowFunction.getJSType();
-    assertNode(wrapperDeclarationNameNode).hasJSTypeThat().isEqualTo(wrapperArrowFunctionType);
-
-    // get `Object.getPrototypeOf(...).m` from `() => `Object.getPrototypeOf(...).m`
-    Node fakeSuperDotM = wrapperArrowFunction.getLastChild();
-    assertNode(fakeSuperDotM).hasJSTypeThat().isEqualTo(classAPropertyMType);
-    Node fakeSuperNode = fakeSuperDotM.getFirstChild();
-    assertNode(fakeSuperNode).isCall().hasJSTypeThat().toStringIsEqualTo("(typeof A)");
-    assertNode(fakeSuperNode.getFirstChild()).matchesQualifiedName("Object.getPrototypeOf");
+        class TextFieldBase extends UpdatingElement {
+          async _getUpdateComplete() {
+            if (super.getUpdateComplete) { // `?` type
+              await super.getUpdateComplete(); // `??` type
+            }
+          }
+        }
+        """,
+        """
+        class UpdatingElement {
+          getUpdateComplete() {
+          }
+        }
+        class TextFieldBase extends UpdatingElement {
+          _getUpdateComplete() {
+            const ASYNC_THIS$3 = this;
+            const ASYNC_SUPER_GET$5$getUpdateComplete = () => {
+              return super.getUpdateComplete;
+            };
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(function*() {
+              if (ASYNC_SUPER_GET$5$getUpdateComplete()) {
+                yield ASYNC_SUPER_GET$5$getUpdateComplete().call(ASYNC_THIS$3);
+              }
+            });
+          }
+        }
+        """);
   }
 
   @Test
   public void testNestedArrowFunctionUsingThis() {
     test(
-        lines(
-            "class X {",
-            "  m() {",
-            "    return async () => (() => this);",
-            "  }",
-            "}"),
-        lines(
-            "class X {",
-            "  m() {",
-            "    return () => {",
-            "      const $jscomp$async$this = this;",
-            "      return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "          function* () {",
-            "            return () => $jscomp$async$this;",
-            "          })",
-            "    }",
-            "  }",
-            "}"));
+        """
+        class X {
+          m() {
+            return async () => (() => this);
+          }
+        }
+        """,
+        """
+        class X {
+          m() {
+            return () => {
+              const ASYNC_THIS$3 = this;
+              return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                  function* () {
+                    return () => {
+                      return ASYNC_THIS$3;
+                    };
+                  })
+            }
+          }
+        }
+        """);
   }
 
   @Test
   public void testInnerArrowFunctionUsingArguments() {
     test(
-        externs(new TestExternsBuilder().addArguments().build()),
+        externs(new TestExternsBuilder().addArguments().addJSCompLibraries().build()),
         srcs(
-            lines(
-                "class X {",
-                "  async m() {",
-                "    return new Promise((resolve, reject) => {",
-                "      return arguments;",
-                "    });",
-                "  }",
-                "}")),
+            """
+            class X {
+              async m() {
+                return new Promise((resolve, reject) => {
+                  return arguments;
+                });
+              }
+            }
+            """),
         expected(
-            lines(
-                "class X {",
-                "  m() {",
-                "    const $jscomp$async$arguments = arguments;",
-                "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "        function* () {",
-                "          return new Promise((resolve, reject) => {",
-                "            return $jscomp$async$arguments",
-                "          });",
-                "        });",
-                "  }",
-                "}")));
+            """
+            class X {
+              m() {
+                const ASYNC_ARGUMENTS$1 = arguments;
+                return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                    function* () {
+                      return new Promise((resolve, reject) => {
+                        return ASYNC_ARGUMENTS$1
+                      });
+                    });
+              }
+            }
+            """));
 
     ImmutableList<Node> argumentsAliasRefs =
-        findClassDefinition("X")
+        findClassDefinition(getLastCompiler(), "X")
             .findMethodDefinition("m")
-            .findMatchingQNameReferences("$jscomp$async$arguments");
+            .findMatchingQNameReferences("$jscomp$async$arguments$m1146332801$1");
     assertThat(argumentsAliasRefs).hasSize(2); // one declaration and 1 use
 
-    JSType argumentsJsType = getGlobalJSType("Arguments");
+    Color argumentsColor = getGlobalColor(StandardColors.ARGUMENTS_ID);
 
     // declaration reference
-    // const $jscomp$async$arguments = arguments;
+    // const ASYNC_ARGUMENTS$1 = arguments;
     Node argumentsAliasDeclaration = argumentsAliasRefs.get(0);
     Node argumentsValue = argumentsAliasDeclaration.getOnlyChild();
     assertNode(argumentsValue)
         .matchesQualifiedName("arguments")
-        .hasJSTypeThat()
-        .isEqualTo(argumentsJsType);
+        .hasColorThat()
+        .isEqualTo(argumentsColor);
     assertNode(argumentsAliasDeclaration)
-        .matchesQualifiedName("$jscomp$async$arguments")
-        .hasJSTypeThat()
-        .isEqualTo(argumentsJsType);
+        .matchesQualifiedName("$jscomp$async$arguments$m1146332801$1")
+        .hasColorThat()
+        .isEqualTo(argumentsColor);
 
     // usage reference
-    // return $jscomp$async$arguments;
+    // return ASYNC_ARGUMENTS$1;
     Node argumentsAliasUsage = argumentsAliasRefs.get(1);
     assertNode(argumentsAliasUsage)
-        .matchesQualifiedName("$jscomp$async$arguments")
-        .hasJSTypeThat()
-        .isEqualTo(argumentsJsType);
+        .matchesQualifiedName("$jscomp$async$arguments$m1146332801$1")
+        .hasColorThat()
+        .isEqualTo(argumentsColor);
   }
 
   @Test
   public void testAwaitReplacement() {
     test(
         "async function foo(promise) { return await promise; }",
-        lines(
-            "function foo(promise) {",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return yield promise;",
-            "        });",
-            "}"));
-  }
-
-  @Test
-  public void testAsyncFunctionInExterns() {
-    testExternChanges(
-        lines(
-            "/**",
-            " * @param {!Promise<?>} promise",
-            " * @return {?}",
-            " */",
-            "async function foo(promise) {}"),
-        "",
-        lines(
-            "/**",
-            " * @param {!Promise<?>} promise",
-            " * @return {?}",
-            " */",
-            "function foo(promise) {}"));
-  }
-
-  @Test
-  public void testAsyncFunctionInExternsWithNonemptyBody() {
-    testExternChanges(
-        lines(
-            "/**",
-            " * @param {!Promise<?>} promise",
-            " * @return {?}",
-            " */",
-            // TODO(b/119685646): Maybe we should report an error for non-empty function in externs?
-            "async function foo(promise) { return await promise; }"),
-        "",
-        lines(
-            "/**",
-            " * @param {!Promise<?>} promise",
-            " * @return {?}",
-            " */",
-            "function foo(promise) {}"));
+        """
+        function foo(promise) {
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return yield promise;
+                });
+        }
+        """);
   }
 
   @Test
@@ -732,224 +516,249 @@ public class RewriteAsyncFunctionsTest extends CompilerTestCase {
   public void testArgumentsReplacement_asyncFunction() {
     test(
         "async function f(a, b, ...rest) { return arguments.length; }",
-        lines(
-            "function f(a, b, ...rest) {",
-            "  const $jscomp$async$arguments = arguments;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return $jscomp$async$arguments.length;", // arguments replaced
-            "        });",
-            "}"));
+        """
+        function f(a, b, ...rest) {
+          const ASYNC_ARGUMENTS$1 = arguments;
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return ASYNC_ARGUMENTS$1.length; // arguments replaced
+                });
+        }
+        """);
   }
 
   @Test
   public void testArgumentsReplacement_asyncClosure() {
     test(
-        lines(
-            "function outer() {",
-            "  /**",
-            "   * @param {...?} var_args",
-            "   * @return {!Promise<number>}",
-            "   */",
-            "  async function f(var_args) { return arguments.length; }",
-            "  return f(arguments)",
-            "}"),
-        lines(
-            "function outer() {",
-            "  /**",
-            "   * @param {...?} var_args",
-            "   * @return {!Promise<number>}",
-            "   */",
-            "  function f(var_args) {",
-            "    const $jscomp$async$arguments = arguments;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return $jscomp$async$arguments.length;", // arguments replaced
-            "        });",
-            "  }",
-            "  return f(arguments)", // unchanged
-            "}"));
+        """
+        function outer() {
+          /**
+           * @param {...?} varArgs
+           * @return {!Promise<number>}
+           */
+          async function f(varArgs) { return arguments.length; }
+          return f(arguments)
+        }
+        """,
+        """
+        function outer() {
+          function f(varArgs) {
+            const ASYNC_ARGUMENTS$3 = arguments;
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return ASYNC_ARGUMENTS$3.length; // arguments replaced
+                });
+          }
+          return f(arguments) // unchanged
+        }
+        """);
   }
 
   @Test
   public void testArgumentsReplacement_normalClosureInAsync() {
     test(
-        externs(new TestExternsBuilder().addFunction().build()),
+        externs(new TestExternsBuilder().addFunction().addJSCompLibraries().build()),
         srcs(
-            lines(
-                "async function a() {",
-                "  function inner() {",
-                "    return arguments.length;",
-                "  }",
-                "  return inner.apply(undefined, arguments);", // this should get replaced
-                "}")),
+            """
+            async function a() {
+              function inner() {
+                return arguments.length;
+              }
+              return inner.apply(undefined, arguments); // this should get replaced
+            }
+            """),
         expected(
-            lines(
-                "function a() {",
-                "  const $jscomp$async$arguments = arguments;",
-                "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "        function* () {",
-                "          function inner() {",
-                "            return arguments.length;", // unchanged
-                "          }",
-                "          return inner.apply(undefined, $jscomp$async$arguments);",
-                "        });",
-                "}")));
+            """
+            function a() {
+              const ASYNC_ARGUMENTS$1 = arguments;
+                return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                    function* () {
+                      function inner() {
+                        return arguments.length; // unchanged
+                      }
+                      return inner.apply(undefined, ASYNC_ARGUMENTS$1);
+                    });
+            }
+            """));
   }
 
   @Test
   public void testClassMethod() {
     test(
-        lines(
-            "class A {",
-            "  /**",
-            "   * @param {number} x",
-            "   */",
-            "  constructor(x) {",
-            "    /** @type {number} */ this.x = x;",
-            "  }",
-            "  async f() {",
-            "    return this.x;",
-            "  }",
-            "}"),
-        lines(
-            "class A {",
-            "  /**",
-            "   * @param {number} x",
-            "   */",
-            "  constructor(x) {",
-            "    /** @type {number} */ this.x = x;",
-            "  }",
-            "  f() {",
-            "    const $jscomp$async$this = this;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function *() {",
-            "          return $jscomp$async$this.x;", // this replaced
-            "        });",
-            "  }",
-            "}"));
+        """
+        class A {
+          /**
+           * @param {number} x
+           */
+          constructor(x) {
+            /** @type {number} */ this.x = x;
+          }
+          async f() {
+            return this.x;
+          }
+        }
+        """,
+        """
+        class A {
+          constructor(x) {
+            this.x = x;
+          }
+          f() {
+            const ASYNC_THIS$3 = this;
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function *() {
+                  return ASYNC_THIS$3.x; // this replaced
+                });
+          }
+        }
+        """);
   }
 
   @Test
   public void testAsyncClassMethodWithAsyncArrow() {
     test(
-        externs(new TestExternsBuilder().addConsole().build()),
+        externs(new TestExternsBuilder().addConsole().addJSCompLibraries().build()),
         srcs(
-            lines(
-                "class A {",
-                "  async f() {",
-                "    let g = async () => { console.log(this, arguments); };",
-                "    g();",
-                "  }",
-                "}")),
+            """
+            class A {
+              async f() {
+                let g = async () => { console.log(this, arguments); };
+                g();
+              }
+            }
+            """),
         expected(
-            lines(
-                "class A {",
-                "  f() {",
-                "    const $jscomp$async$this = this;",
-                "    const $jscomp$async$arguments = arguments;",
-                "      return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "          function *() {",
-                "            let g = () => {",
-                "              return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "                  function *() {",
-                "                    console.log($jscomp$async$this, $jscomp$async$arguments);",
-                "                  });",
-                "            };",
-                "            g();",
-                "          });",
-                "  }",
-                "}")));
+            """
+            class A {
+              f() {
+                const ASYNC_THIS$1 = this;
+                const ASYNC_ARGUMENTS$1 = arguments;
+                  return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                      function *() {
+                        let g = () => {
+                          return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                              function *() {
+                                console.log(ASYNC_THIS$1, ASYNC_ARGUMENTS$1);
+                              });
+                        };
+                        g();
+                      });
+              }
+            }
+            """));
   }
 
   @Test
   public void testNonAsyncClassMethodWithAsyncArrow() {
     test(
-        externs(new TestExternsBuilder().addConsole().build()),
+        externs(new TestExternsBuilder().addConsole().addJSCompLibraries().build()),
         srcs(
-            lines(
-                "class A {",
-                "  f() {",
-                "    let g = async () => { console.log(this, arguments); };",
-                "    g();",
-                "  }",
-                "}")),
+            """
+            class A {
+              f() {
+                let g = async () => { console.log(this, arguments); };
+                g();
+              }
+            }
+            """),
         expected(
-            lines(
-                "class A {",
-                "  f() {",
-                "    let g = () => {",
-                "      const $jscomp$async$this = this;",
-                "      const $jscomp$async$arguments = arguments;",
-                "      return $jscomp.asyncExecutePromiseGeneratorFunction(",
-                "          function *() {",
-                "            console.log($jscomp$async$this, $jscomp$async$arguments);",
-                "          });",
-                "    };",
-                "    g();",
-                "  }",
-                "}")));
+            """
+            class A {
+              f() {
+                let g = () => {
+                  const ASYNC_THIS$3 = this;
+                  const ASYNC_ARGUMENTS$3 = arguments;
+                  return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                      function *() {
+                        console.log(ASYNC_THIS$3, ASYNC_ARGUMENTS$3);
+                      });
+                };
+                g();
+              }
+            }
+            """));
   }
 
   @Test
   public void testArrowFunctionExpressionBody() {
     test(
         "let f = async () => 1;",
-        lines(
-            "let f = () => {",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return 1;",
-            "        });",
-            "}"));
+        """
+        let f = () => {
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return 1;
+                });
+        }
+        """);
   }
 
   @Test
   public void testGlobalScopeArrowFunctionRefersToThis() {
     test(
         "let f = async () => this;",
-        lines(
-            "let f = () => {",
-            "    const $jscomp$async$this = this;",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return $jscomp$async$this;",
-            "        });",
-            "}"));
+        """
+        let f = () => {
+            const ASYNC_THIS$1 = this;
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return ASYNC_THIS$1;
+                });
+        }
+        """);
   }
 
   @Test
   public void testGlobalScopeAsyncArrowFunctionDefaultParamValueRefersToThis() {
     test(
         "let f = async (t = this) => t;",
-        lines(
-            "let f = (t = this) => {",
-            "    return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "        function* () {",
-            "          return t;",
-            "        });",
-            "}"));
+        """
+        let f = (t = this) => {
+            return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                function* () {
+                  return t;
+                });
+        }
+        """);
   }
 
   @Test
   public void testNestedAsyncArrowFunctionDefaultParamValueRefersToThis() {
     test(
-        lines("let f = async function(outerT = this) {", "  return async (t = this) => t;", "};"),
-        lines(
-            // `this` is not aliased here
-            "let f = function(outerT = this) {",
-            "  const $jscomp$async$this = this;",
-            "  return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "      function* () {",
-            // `this` is aliased here
-            "        return (t = $jscomp$async$this) => {",
-            "          return $jscomp.asyncExecutePromiseGeneratorFunction(",
-            "              function* () {",
-            "                return t;",
-            "              });",
-            "        };",
-            "      });",
-            "};",
-            ""));
+        """
+        let f = async function(outerT = this) {
+          return async (t = this) => t;
+        };
+        """,
+        """
+        let f = function(outerT = this) {
+          const ASYNC_THIS$1 = this;
+          return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+              function* () {
+        // `this` is aliased here
+                return (t = ASYNC_THIS$1) => {
+                  return (0, $jscomp.asyncExecutePromiseGeneratorFunction)(
+                      function* () {
+                        return t;
+                      });
+                };
+              });
+        };
+        """);
+  }
+
+  @Test
+  public void testSuperPropAssignment() {
+    testError(
+        """
+        class A {}
+        class B extends A {
+          async f() {
+            super.x = 5;
+          }
+        }
+        """,
+        TranspilationUtil.CANNOT_CONVERT_YET,
+        "Transpilation of 'assignment to super property' is not yet implemented.");
   }
 }

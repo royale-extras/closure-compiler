@@ -18,18 +18,31 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import org.jspecify.annotations.Nullable;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** @author johnlenz@google.com (John Lenz) */
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 @RunWith(JUnit4.class)
 public final class CheckRegExpTest extends CompilerTestCase {
-  CheckRegExp last = null;
+  private @Nullable CheckRegExp last = null;
+  private boolean reportErrors;
+  private boolean assumeAllGlobalRegexpUsagesVisible;
 
   public CheckRegExpTest() {
     super("var RegExp;");
+  }
+
+  @Before
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    this.reportErrors = true;
+    this.assumeAllGlobalRegexpUsagesVisible = true;
   }
 
   @Override
@@ -41,12 +54,12 @@ public final class CheckRegExpTest extends CompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    last = new CheckRegExp(compiler);
+    last = new CheckRegExp(compiler, assumeAllGlobalRegexpUsagesVisible, reportErrors);
     return last;
   }
 
   private void testReference(String code, boolean expected) {
-    if (expected) {
+    if (expected && reportErrors) {
       testWarning(code, CheckRegExp.REGEXP_REFERENCE);
     } else {
       testSame(code);
@@ -96,7 +109,6 @@ public final class CheckRegExpTest extends CompilerTestCase {
     testReference("f(RegExp);", true);
     testReference("new f(RegExp);", true);
     testReference("var x = RegExp; x.test()", true);
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     testReference("let x = RegExp;", true);
     testReference("const x = RegExp;", true);
 
@@ -112,19 +124,50 @@ public final class CheckRegExpTest extends CompilerTestCase {
     testReference("var x = {RegExp: {}}; x.RegExp.$1;", false);
 
     // Class property is also OK.
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
-    testReference(lines(
-        "class x {",
-        "  constructor() {this.RegExp = {};}",
-        "  method() {",
-        "    this.RegExp.$1;",
-        "    this.RegExp.test();",
-        "  }",
-        "}"), false);
+    testReference(
+        """
+        class x {
+          constructor() {this.RegExp = {};}
+          method() {
+            this.RegExp.$1;
+            this.RegExp.test();
+          }
+        }
+        """,
+        false);
+  }
+
+  @Test
+  public void testDisableErrorReporting() {
+    this.reportErrors = true;
+
+    testWarning("RegExp.$1;", CheckRegExp.REGEXP_REFERENCE);
+
+    this.reportErrors = false;
+
+    testNoWarning("RegExp.$1;");
   }
 
   @Test
   public void testInvalidRange() {
     this.testWarning("\"asdf\".match(/[z-a]/)", CheckRegExp.MALFORMED_REGEXP);
+  }
+
+  @Test
+  public void testCanAssumeAllGlobalRegexpUsagesVisible() {
+    this.assumeAllGlobalRegexpUsagesVisible = true;
+
+    testSame("");
+
+    assertThat(last.isGlobalRegExpPropertiesUsed()).isFalse();
+  }
+
+  @Test
+  public void testCannotAssumeAllGlobalRegexpUsagesVisible() {
+    this.assumeAllGlobalRegexpUsagesVisible = false;
+
+    testSame("");
+
+    assertThat(last.isGlobalRegExpPropertiesUsed()).isTrue();
   }
 }

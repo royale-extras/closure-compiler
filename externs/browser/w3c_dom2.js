@@ -39,8 +39,8 @@ Document.prototype.getElementById = function(s) {};
  * @return {!Element}
  * @see https://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/core.html#ID-DocCrElNS
  */
-Document.prototype.createElementNS =
-    function(namespaceURI, qualifiedName, opt_typeExtension) {};
+Document.prototype.createElementNS = function(
+    namespaceURI, qualifiedName, opt_typeExtension) {};
 
 /**
  * @param {?string} namespaceURI
@@ -48,8 +48,7 @@ Document.prototype.createElementNS =
  * @return {!Attr}
  * @see https://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/core.html#ID-DocCrElNS
  */
-Document.prototype.createAttributeNS =
-    function(namespaceURI, qualifiedName) {};
+Document.prototype.createAttributeNS = function(namespaceURI, qualifiedName) {};
 
 /**
  * @param {Node} root
@@ -104,6 +103,9 @@ Document.prototype.importNode = function(externalNode, deep) {};
  */
 function HTMLCollection() {}
 
+/** @override */
+HTMLCollection.prototype[Symbol.iterator] = function() {};
+
 /**
  * @type {number}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-40057551
@@ -132,6 +134,9 @@ HTMLCollection.prototype.namedItem = function(name) {};
  * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#htmloptionscollection
  */
 function HTMLOptionsCollection() {}
+
+/** @override */
+HTMLOptionsCollection.prototype[Symbol.iterator] = function() {};
 
 /**
  * @type {number}
@@ -245,7 +250,8 @@ HTMLDocument.prototype.cookie;
  * @return {undefined}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-72161170
  * Even though official spec says "no parameters" some old browsers might take
- * optional parameters: https://msdn.microsoft.com/en-us/library/ms536652(v=vs.85).aspx
+ * optional parameters:
+ * https://msdn.microsoft.com/en-us/library/ms536652(v=vs.85).aspx
  * @override
  */
 HTMLDocument.prototype.open = function(opt_mimeType, opt_replace) {};
@@ -259,16 +265,19 @@ HTMLDocument.prototype.open = function(opt_mimeType, opt_replace) {};
 HTMLDocument.prototype.getElementsByName = function(elementName) {};
 
 
-/** @typedef {{
-  createNodeIterator: function(Node, number=, NodeFilter=, boolean=) : NodeIterator,
-  createTreeWalker: function(Node, number=, NodeFilter=, boolean=) : TreeWalker
-}} */
+/**
+@typedef {{
+  createNodeIterator: function(Node, number=, NodeFilter=, boolean=) :
+NodeIterator, createTreeWalker: function(Node, number=, NodeFilter=, boolean=) :
+TreeWalker
+}}
+*/
 var TraversalDocument;
 
 /**
  * @record
  * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-NodeFilter
-*/
+ */
 function NodeFilter() {}
 
 /* Constants for whatToShow */
@@ -295,13 +304,13 @@ function NodeFilter() {}
  * @param {Node} n
  * @return {number} Any of NodeFilter.FILTER_* constants.
  * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-NodeFilter-acceptNode
-*/
+ */
 NodeFilter.prototype.acceptNode = function(n) {};
 
 /**
  * @interface
  * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-NodeIterator
-*/
+ */
 function NodeIterator() {}
 
 /**
@@ -323,10 +332,25 @@ NodeIterator.prototype.nextNode = function() {};
  */
 NodeIterator.prototype.previousNode = function() {};
 
+/** @type {NodeFilter} */
+NodeIterator.prototype.filter;
+
+/** @type {boolean} */
+NodeIterator.prototype.pointerBeforeReferenceNode;
+
+/** @type {Node} */
+NodeIterator.prototype.referenceNode;
+
+/** @type {Node} */
+NodeIterator.prototype.root;
+
+/** @type {number} */
+NodeIterator.prototype.whatToShow;
+
 /**
  * @interface
  * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-TreeWalker
-*/
+ */
 function TreeWalker() {}
 
 /**
@@ -405,6 +429,18 @@ function HTMLElement() {}
 
 /**
  * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/accessKeyLabel
+ */
+HTMLElement.prototype.accessKeyLabel;
+
+/**
+ * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/writingSuggestions
+ */
+HTMLElement.prototype.writingSuggestions;
+
+/**
+ * @type {string}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-78276800
  */
 HTMLElement.prototype.title;
@@ -433,6 +469,44 @@ HTMLElement.prototype.dir;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-95362176
  */
 HTMLElement.prototype.className;
+
+/**
+ * @return {undefined}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/click
+ * @override
+ */
+HTMLElement.prototype.click = function() {};
+
+/**
+ * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/outerText
+ */
+HTMLElement.prototype.outerText;
+
+/**
+ * @type {string|null}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/popover
+ */
+HTMLElement.prototype.popover;
+
+/**
+ * @return {undefined}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/hidePopover
+ */
+HTMLElement.prototype.hidePopover = function() {};
+
+/**
+ * @return {undefined}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/showPopover
+ */
+HTMLElement.prototype.showPopover = function() {};
+
+/**
+ * @param {boolean=} force
+ * @return {boolean}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/togglePopover
+ */
+HTMLElement.prototype.togglePopover = function(force) {};
 
 /**
  * @type {number}
@@ -479,6 +553,12 @@ function HTMLLinkElement() {}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-87355129
  */
 HTMLLinkElement.prototype.disabled;
+
+/**
+ * @type {string}
+ * @see https://developer.mozilla.org/docs/Web/API/HTMLLinkElement/fetchPriority
+ */
+HTMLLinkElement.prototype.fetchPriority;
 
 /**
  * @type {string}
@@ -531,6 +611,12 @@ HTMLLinkElement.prototype.type;
 
 /** @type {StyleSheet} */
 HTMLLinkElement.prototype.sheet;
+
+/**
+ * @type {!DOMTokenList}
+ * @see https://github.com/WICG/webpackage/blob/master/explainers/subresource-loading.md
+ */
+HTMLLinkElement.prototype.resources;
 
 /**
  * @constructor
@@ -696,6 +782,9 @@ HTMLBodyElement.prototype.vLink;
  * @see https://html.spec.whatwg.org/multipage/infrastructure.html#the-htmlformcontrolscollection-interface
  */
 function HTMLFormControlsCollection() {}
+
+/** @override */
+HTMLFormControlsCollection.prototype[Symbol.iterator] = function() {};
 
 /**
  * @param {string} name
@@ -1106,6 +1195,16 @@ HTMLInputElement.prototype.focus = function() {};
 HTMLInputElement.prototype.select = function() {};
 
 /**
+ * @type {string}
+ */
+HTMLInputElement.prototype.popoverTargetAction;
+
+/**
+ * @type {?Element}
+ */
+HTMLInputElement.prototype.popoverTargetElement;
+
+/**
  * @constructor
  * @extends {HTMLElement}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-24874179
@@ -1200,6 +1299,17 @@ HTMLTextAreaElement.prototype.focus = function() {};
 HTMLTextAreaElement.prototype.select = function() {};
 
 /**
+ * @type {string}
+ * @see https://developer.mozilla.org/docs/Web/API/HTMLTextAreaElement/wrap
+ */
+HTMLTextAreaElement.prototype.wrap;
+
+/**
+ * @type {string}
+ */
+HTMLTextAreaElement.prototype.dirName;
+
+/**
  * @constructor
  * @extends {HTMLElement}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-34812697
@@ -1247,6 +1357,16 @@ HTMLButtonElement.prototype.type;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-72856782
  */
 HTMLButtonElement.prototype.value;
+
+/**
+ * @type {string}
+ */
+HTMLButtonElement.prototype.popoverTargetAction;
+
+/**
+ * @type {?Element}
+ */
+HTMLButtonElement.prototype.popoverTargetElement;
 
 /**
  * @constructor
@@ -1360,6 +1480,9 @@ HTMLOListElement.prototype.start;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-40971103
  */
 HTMLOListElement.prototype.type;
+
+/** @type {boolean} */
+HTMLOListElement.prototype.reversed;
 
 /**
  * @constructor
@@ -1694,6 +1817,34 @@ HTMLAnchorElement.prototype.blur = function() {};
 HTMLAnchorElement.prototype.focus = function() {};
 
 /**
+ * @type {string}
+ * @implicitCast
+ * @see https://wicg.github.io/attribution-reporting-api/#idl-index
+ */
+HTMLAnchorElement.prototype.attributionSrc;
+
+/**
+ * @constructor
+ * @implements {IArrayLike<!Element>}
+ */
+function HTMLAllCollection() {}
+
+/** @type {number} */
+HTMLAllCollection.prototype.length;
+
+/**
+ * @param {string} nameOrIndex
+ * @return {!HTMLCollection | !Element | null}
+ */
+HTMLAllCollection.prototype.item = function(nameOrIndex) {};
+
+/**
+ * @param {string} name
+ * @return {!HTMLCollection | !Element | null}
+ */
+HTMLAllCollection.prototype.namedItem = function(name) {};
+
+/**
  * @constructor
  * @extends {HTMLElement}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-17701901
@@ -1719,6 +1870,12 @@ HTMLImageElement.prototype.alt;
 HTMLImageElement.prototype.border;
 
 /**
+ * @type {string}
+ * @see https://developer.mozilla.org/docs/Web/API/HTMLImageElement/fetchPriority
+ */
+HTMLImageElement.prototype.fetchPriority;
+
+/**
  * @type {number}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-91561496
  */
@@ -1735,6 +1892,12 @@ HTMLImageElement.prototype.hspace;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-58983880
  */
 HTMLImageElement.prototype.isMap;
+
+/**
+ * @type {string}
+ * @see https://html.spec.whatwg.org/multipage/embedded-content.html#dom-img-loading
+ */
+HTMLImageElement.prototype.loading;
 
 /**
  * @type {string}
@@ -1778,6 +1941,13 @@ HTMLImageElement.prototype.vspace;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-13839076
  */
 HTMLImageElement.prototype.width;
+
+/**
+ * @type {string}
+ * @implicitCast
+ * @see https://wicg.github.io/attribution-reporting-api/#idl-index
+ */
+HTMLImageElement.prototype.attributionSrc;
 
 /**
  * @constructor
@@ -1903,6 +2073,12 @@ HTMLObjectElement.prototype.vspace;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-38538620
  */
 HTMLObjectElement.prototype.width;
+
+/**
+ * @return {?Document}
+ * @see https://developer.mozilla.org/docs/Web/API/HTMLObjectElement/getSVGDocument
+ */
+HTMLObjectElement.prototype.getSVGDocument = function() {};
 
 /**
  * @constructor
@@ -2112,6 +2288,12 @@ HTMLScriptElement.prototype.event;
 
 /**
  * @type {string}
+ * @see https://developer.mozilla.org/docs/Web/API/HTMLScriptElement/fetchPriority
+ */
+HTMLScriptElement.prototype.fetchPriority;
+
+/**
+ * @type {string}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-66979266
  */
 HTMLScriptElement.prototype.htmlFor;
@@ -2140,6 +2322,13 @@ HTMLScriptElement.prototype.text;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-30534818
  */
 HTMLScriptElement.prototype.type;
+
+/**
+ * @type {string}
+ * @implicitCast
+ * @see https://wicg.github.io/attribution-reporting-api/#idl-index
+ */
+HTMLScriptElement.prototype.attributionSrc;
 
 /**
  * @constructor
@@ -2282,6 +2471,12 @@ HTMLTableElement.prototype.deleteTHead = function() {};
  * @see https://www.w3.org/TR/html5/tabular-data.html#htmltableelement
  */
 HTMLTableElement.prototype.insertRow = function(opt_index) {};
+
+/**
+ * @return {!HTMLTableSectionElement}
+ * @see https://developer.mozilla.org/docs/Web/API/HTMLTableElement/createTBody
+ */
+HTMLTableElement.prototype.createTBody = function() {};
 
 /**
  * @constructor
@@ -2455,7 +2650,7 @@ HTMLTableRowElement.prototype.deleteCell = function(index) {};
 
 /**
  * @param {number} index
- * @return {HTMLElement}
+ * @return {!HTMLElement}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-68927016
  */
 HTMLTableRowElement.prototype.insertCell = function(index) {};
@@ -2674,6 +2869,12 @@ HTMLIFrameElement.prototype.height;
 
 /**
  * @type {string}
+ * @see https://html.spec.whatwg.org/multipage/iframe-embed-object.html#dom-iframe-loading
+ */
+HTMLIFrameElement.prototype.loading;
+
+/**
+ * @type {string}
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-70472105
  */
 HTMLIFrameElement.prototype.longDesc;
@@ -2805,7 +3006,7 @@ Window.prototype.location;
 Window.prototype.name;
 
 /**
- * @type {Navigator}
+ * @type {!Navigator}
  * @see https://developer.mozilla.org/en/DOM/window.navigator
  */
 Window.prototype.navigator;
@@ -2944,15 +3145,20 @@ Window.prototype.print = function() {};
  */
 Window.prototype.stop = function() {};
 
+/** @typedef {boolean|!AttributionSourceParams} */
+var BoolOrAttributionSourceParams;
+
 /**
- * @param {*=} url
+ * @param {!URL|string=} url
  * @param {string=} windowName
  * @param {string=} windowFeatures
- * @param {boolean=} replace
+ * @param {!BoolOrAttributionSourceParams=} replaceOrAttributionParams
  * @return {Window}
+ * @see https://github.com/WICG/conversion-measurement-api
  * @see http://msdn.microsoft.com/en-us/library/ms536651(VS.85).aspx
  */
-Window.prototype.open = function(url, windowName, windowFeatures, replace) {};
+Window.prototype.open = function(
+    url, windowName, windowFeatures, replaceOrAttributionParams) {};
 
 /**
  * @type {string}
@@ -2968,3 +3174,134 @@ Element.prototype.innerHTML;
  */
 Element.prototype.outerHTML;
 
+/**
+ * AttributionSourceParams is a dictionary which contains the same attributes
+ * used by attribution source anchor tags as seen in the link below.
+ * NOTE: Ideally this record would be defined in a separate file, because this
+ * API is not official yet, however, part of the proposed change is a
+ * modification to the `Window.prototype.open` method to allow it to accept one
+ * of these objects.
+ * @record
+ * @see https://github.com/WICG/conversion-measurement-api/tree/main#registering-attribution-sources-for-windowopen-navigations
+ */
+function AttributionSourceParams() {}
+
+/**
+ * A DOMString encoding a 64-bit unsigned integer which represents the
+ * event-level data associated with this source. This will be limited to 64 bits
+ * of information but the value can vary for browsers that want a higher level
+ * of privacy.
+ * @type {string}
+ * @see https://github.com/WICG/conversion-measurement-api/tree/main#registering-attribution-sources-for-windowopen-navigations
+ */
+AttributionSourceParams.prototype.attributionSourceEventId;
+
+/**
+ * An origin whose eTLD+1 is where attribution will be triggered for this
+ * source.
+ * @type {string}
+ * @see https://github.com/WICG/conversion-measurement-api/tree/main#registering-attribution-sources-for-windowopen-navigations
+ */
+AttributionSourceParams.prototype.attributionDestination;
+
+/**
+ * The desired endpoint that the attribution report for this source should go
+ * to. Default is the top level origin of the page.
+ * @type {string|undefined}
+ * @see https://github.com/WICG/conversion-measurement-api/tree/main#registering-attribution-sources-for-windowopen-navigations
+ */
+AttributionSourceParams.prototype.attributionReportTo;
+
+/**
+ * Expiry in milliseconds for when the source should be deleted. Default is 30
+ * days, with a maximum value of 30 days. The maximum expiry can also vary
+ * between browsers.
+ * @type {number|undefined}
+ * @see https://github.com/WICG/conversion-measurement-api/tree/main#registering-attribution-sources-for-windowopen-navigations
+ */
+AttributionSourceParams.prototype.attributionExpiry;
+
+/**
+ * @constructor
+ * @deprecated
+ * @extends {HTMLElement}
+ */
+function HTMLMarqueeElement() {}
+
+/**
+ * @type {string}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.behavior;
+
+/**
+ * @type {string}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.bgColor;
+
+/**
+ * @type {string}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.direction;
+
+/**
+ * @type {string}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.height;
+
+/**
+ * @type {number}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.hspace;
+
+/**
+ * @type {number}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.loop;
+
+/**
+ * @type {number}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.scrollAmount;
+
+/**
+ * @type {number}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.scrollDelay;
+
+/**
+ * @type {boolean}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.trueSpeed;
+
+/**
+ * @type {number}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.vspace;
+
+/**
+ * @type {string}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.width;
+
+/**
+ * @return {undefined}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.start = function() {};
+
+/**
+ * @return {undefined}
+ * @deprecated
+ */
+HTMLMarqueeElement.prototype.stop = function() {};

@@ -64,14 +64,22 @@ class CheckRegExp extends AbstractPostOrderCallback implements CompilerPass {
           "source");
 
   private final AbstractCompiler compiler;
+  private final boolean reportErrors;
   private boolean globalRegExpPropertiesUsed = false;
+  private final boolean assumeAllGlobalRegexpUsagesVisible;
 
   public boolean isGlobalRegExpPropertiesUsed() {
-    return globalRegExpPropertiesUsed;
+    if (assumeAllGlobalRegexpUsagesVisible) {
+      return globalRegExpPropertiesUsed;
+    }
+    return true;
   }
 
-  public CheckRegExp(AbstractCompiler compiler) {
+  public CheckRegExp(
+      AbstractCompiler compiler, boolean assumeAllGlobalRegexpUsagesVisible, boolean reportErrors) {
     this.compiler = compiler;
+    this.assumeAllGlobalRegexpUsagesVisible = assumeAllGlobalRegexpUsagesVisible;
+    this.reportErrors = reportErrors;
   }
 
   @Override
@@ -96,14 +104,16 @@ class CheckRegExp extends AbstractPostOrderCallback implements CompilerPass {
             || parentType == Token.CASE
             || (parentType == Token.GETPROP
                 && first
-                && !REGEXP_PROPERTY_SKIPLIST.contains(parent.getLastChild().getString())))) {
-          t.report(n, REGEXP_REFERENCE);
+                && !REGEXP_PROPERTY_SKIPLIST.contains(parent.getString())))) {
+          if (reportErrors) {
+            t.report(n, REGEXP_REFERENCE);
+          }
           globalRegExpPropertiesUsed = true;
         }
       }
 
-    // Check the syntax of regular expression patterns.
-    } else if (n.isRegExp()) {
+      // Check the syntax of regular expression patterns.
+    } else if (reportErrors && n.isRegExp()) {
       String pattern = n.getFirstChild().getString();
       String flags = n.hasTwoChildren() ? n.getLastChild().getString() : "";
       try {

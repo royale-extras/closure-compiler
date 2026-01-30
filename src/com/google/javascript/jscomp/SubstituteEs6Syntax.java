@@ -19,15 +19,15 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 
-/**
- * An optimization that does peephole optimizations of ES6 code.
- */
-class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCompilerPass {
+/** An optimization that does peephole optimizations of ES6 code. */
+class SubstituteEs6Syntax extends AbstractPostOrderCallback implements CompilerPass {
 
   private final AbstractCompiler compiler;
+  private boolean objectLiteralShorthandWasAdded = false;
 
   public SubstituteEs6Syntax(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -35,29 +35,30 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
 
   @Override
   public void process(Node externs, Node root) {
-    hotSwapScript(root, null);
-  }
-
-  @Override
-  public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
-      case FUNCTION:
+      case FUNCTION -> {
         if (n.isArrowFunction()) {
           maybeSimplifyArrowFunctionBody(n, n.getLastChild());
         }
-        break;
-      case STRING_KEY:
+      }
+      case STRING_KEY -> {
         if (n.getFirstChild().isName() && n.getFirstChild().getString().equals(n.getString())) {
           n.setShorthandProperty(true);
+          objectLiteralShorthandWasAdded = true;
         }
-        break;
-      default:
-        break;
+      }
+      case SCRIPT -> {
+        if (objectLiteralShorthandWasAdded) {
+          NodeUtil.addFeatureToScript(n, Feature.SHORTHAND_OBJECT_PROPERTIES, compiler);
+          objectLiteralShorthandWasAdded = false; // false for the next script
+        }
+      }
+      default -> {}
     }
   }
 
@@ -71,7 +72,7 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
     }
     Node returnValue = body.getFirstChild().removeFirstChild();
     Node replacement = returnValue != null ? returnValue : IR.name("undefined");
-    arrowFunction.replaceChild(body, replacement);
+    body.replaceWith(replacement);
     compiler.reportChangeToEnclosingScope(replacement);
   }
 }

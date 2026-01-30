@@ -73,6 +73,20 @@ URLSearchParams.prototype.delete = function(name) {};
 URLSearchParams.prototype.entries = function() {};
 
 /**
+ * @return {!IteratorIterable<!Array<string>>}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams/keys
+ * @override
+ */
+URLSearchParams.prototype[Symbol.iterator] = function() {};
+
+/**
+ * @param {function(string, string)} callback
+ * @return {undefined}
+ */
+URLSearchParams.prototype.forEach = function(callback) {};
+
+/**
  * @param {string} name
  * @return {?string}
  */
@@ -91,6 +105,12 @@ URLSearchParams.prototype.getAll = function(name) {};
 URLSearchParams.prototype.has = function(name) {};
 
 /**
+ * @return {!IteratorIterable<string>}
+ */
+URLSearchParams.prototype.keys = function() {};
+
+
+/**
  * @param {string} name
  * @param {string} value
  * @return {undefined}
@@ -103,10 +123,15 @@ URLSearchParams.prototype.set = function(name, value) {};
 URLSearchParams.prototype.sort = function() {};
 
 /**
+ * @return {!IteratorIterable<string>}
+ */
+URLSearchParams.prototype.values = function() {};
+
+/**
  * @see https://url.spec.whatwg.org
  * @constructor
- * @param {string} url
- * @param {(string|!URL)=} base
+ * @param {!URL|string} url
+ * @param {(!URL|string)=} base
  */
 function URL(url, base) {}
 
@@ -170,8 +195,16 @@ URL.domainToUnicode = function(domain) {};
 URL.createObjectURL = function(obj) {};
 
 /**
+ * @see https://url.spec.whatwg.org
+ * @param {!URL|string} url
+ * @param {(!URL|string)=} base
+ * @return {boolean}
+ */
+URL.canParse = function(url, base) {};
+
+/**
  * @see http://www.w3.org/TR/FileAPI/#dfn-revokeObjectURL
- * @param {string} url
+ * @param {!URL|string} url
  * @return {undefined}
  */
 URL.revokeObjectURL = function(url) {};

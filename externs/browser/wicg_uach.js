@@ -56,6 +56,15 @@ UADataValues.prototype.model;
 /** @type {string} */
 UADataValues.prototype.uaFullVersion;
 
+/** @type {string} */
+UADataValues.prototype.bitness;
+
+/** @type {boolean|undefined} */
+UADataValues.prototype.wow64;
+
+/** @type {!Array<!NavigatorUABrandVersion>|undefined} */
+UADataValues.prototype.fullVersionList;
+
 /**
  * @see https://wicg.github.io/ua-client-hints/#navigatoruadata
  * @record
@@ -63,14 +72,20 @@ UADataValues.prototype.uaFullVersion;
  */
 function NavigatorUAData() {}
 
-/** @type {!Array<string>} */
+/** @type {!Array<!NavigatorUABrandVersion>} */
 NavigatorUAData.prototype.brands;
 
 /** @type {boolean} */
 NavigatorUAData.prototype.mobile;
 
-/** @type {function(!Array<string>) : !Promise<!UADataValues>} */
-NavigatorUAData.prototype.getHighEntropyValues;
+/** @type {string} */
+NavigatorUAData.prototype.platform;
+
+/**
+ * @param {!Array<string>} hints
+ * @return {!Promise<!UADataValues>}
+ */
+NavigatorUAData.prototype.getHighEntropyValues = function(hints) {};
 
 /**
  * @type {?NavigatorUAData}

@@ -16,7 +16,7 @@
 
 /**
  * @fileoverview Definitions for W3C's Trusted Types specification.
- * @see https://github.com/WICG/trusted-types
+ * @see https://w3c.github.io/webappsec-trusted-types/dist/spec/
  * @externs
  */
 
@@ -24,33 +24,39 @@
 /** @constructor */
 function TrustedHTML() {}
 
-/** @constructor */
-function TrustedScript() {}
+// function TrustedScript() was moved to `es3.js` so that is could be used by
+// `eval()`.
 
 /** @constructor */
 function TrustedScriptURL() {}
 
 
-/** @constructor */
+/**
+ * @template Options
+ * @constructor
+ */
 function TrustedTypePolicy() {}
 
 /**
  * @param {string} s
+ * @param {...*} args
  * @return {!TrustedHTML}
  */
-TrustedTypePolicy.prototype.createHTML = function(s) {};
+TrustedTypePolicy.prototype.createHTML = function(s, args) {};
 
 /**
  * @param {string} s
+ * @param {...*} args
  * @return {!TrustedScript}
  */
-TrustedTypePolicy.prototype.createScript = function(s) {};
+TrustedTypePolicy.prototype.createScript = function(s, args) {};
 
 /**
  * @param {string} s
+ * @param {...*} args
  * @return {!TrustedScriptURL}
  */
-TrustedTypePolicy.prototype.createScriptURL = function(s) {};
+TrustedTypePolicy.prototype.createScriptURL = function(s, args) {};
 
 
 /** @constructor */
@@ -108,6 +114,28 @@ TrustedTypePolicyFactory.prototype.emptyHTML;
 
 /** @type {!TrustedScript} */
 TrustedTypePolicyFactory.prototype.emptyScript;
+
+/**
+ * @param {string} tagName
+ * @param {string} attribute
+ * @param {string=} elementNs
+ * @param {string=} attrNs
+ * @return {?string}
+ */
+TrustedTypePolicyFactory.prototype.getAttributeType = function(
+    tagName, attribute, elementNs, attrNs) {};
+
+/**
+ * @param {string} tagName
+ * @param {string} property
+ * @param {string=} elementNs
+ * @return {?string}
+ */
+TrustedTypePolicyFactory.prototype.getPropertyType = function(
+    tagName, property, elementNs) {};
+
+/** @type {?TrustedTypePolicy} */
+TrustedTypePolicyFactory.prototype.defaultPolicy;
 
 
 /** @type {!TrustedTypePolicyFactory} */

@@ -19,31 +19,36 @@ package com.google.debugging.sourcemap;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.reflect.TypeToken;
 import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 import com.google.gson.Gson;
+import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.DiagnosticGroups;
+import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.Result;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.SourceMap;
 import com.google.javascript.jscomp.SourceMap.DetailLevel;
+import com.google.javascript.jscomp.WarningsGuard;
+import com.google.javascript.jscomp.testing.TestErrorManager;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import org.junit.Before;
 
-/** @author johnlenz@google.com (John Lenz) */
+/**
+ * @author johnlenz@google.com (John Lenz)
+ */
 public abstract class SourceMapTestCase {
 
   private static final Gson GSON = new Gson();
+
   private static final Type JSON_MAP_TYPE = (new TypeToken<Map<String, ?>>() {}).getType();
 
   private boolean validateColumns = true;
@@ -55,14 +60,8 @@ public abstract class SourceMapTestCase {
   static final ImmutableList<SourceFile> EXTERNS =
       ImmutableList.of(SourceFile.fromCode("externs", ""));
 
-  protected DetailLevel detailLevel = SourceMap.DetailLevel.ALL;
+  protected DetailLevel detailLevel = DetailLevel.ALL;
   protected boolean sourceMapIncludeSourcesContent = false;
-
-  private static final Joiner LINE_JOINER = Joiner.on('\n');
-
-  public static final String lines(String... lines) {
-    return LINE_JOINER.join(lines);
-  }
 
   protected static class RunResult {
     public String generatedSource;
@@ -71,19 +70,20 @@ public abstract class SourceMapTestCase {
   }
 
   protected static class Token {
-      final String tokenName;
-      final String inputName;
-      final FilePosition position;
-      Token(String tokenName, String inputName, FilePosition position) {
-        this.tokenName = tokenName;
-        this.inputName = inputName;
-        this.position = position;
-      }
+    final String tokenName;
+    final String inputName;
+    final FilePosition position;
+
+    Token(String tokenName, String inputName, FilePosition position) {
+      this.tokenName = tokenName;
+      this.inputName = inputName;
+      this.position = position;
     }
+  }
 
   @Before
   public void setUp() {
-    detailLevel = SourceMap.DetailLevel.ALL;
+    detailLevel = DetailLevel.ALL;
   }
 
   /**
@@ -168,9 +168,8 @@ public abstract class SourceMapTestCase {
 
         if (tokenName.length() > 0) {
           int currentPosition = i - positionOffset;
-          Token token = new Token(
-              tokenName, inputName,
-              new FilePosition(currentLine, currentPosition));
+          Token token =
+              new Token(tokenName, inputName, new FilePosition(currentLine, currentPosition));
           tokens.put(tokenName, token);
         }
 
@@ -191,23 +190,22 @@ public abstract class SourceMapTestCase {
     check(inputName, js, result.generatedSource, result.sourceMapFileContent);
   }
 
-  protected void check(
-      String inputName, String input, String output,
-      String sourceMapFileContent) {
+  protected void check(String inputName, String input, String output, String sourceMapFileContent) {
     Map<String, String> inputMap = new LinkedHashMap<>();
     inputMap.put(inputName, input);
     check(inputMap, output, sourceMapFileContent);
   }
 
   protected void check(
-      Map<String, String> originalInputs, String generatedSource,
-      String sourceMapFileContent) {
+      Map<String, String> originalInputs, String generatedSource, String sourceMapFileContent) {
     check(originalInputs, generatedSource, sourceMapFileContent, null);
   }
 
   protected void check(
-      Map<String, String> originalInputs, String generatedSource,
-      String sourceMapFileContent, SourceMapSupplier supplier) {
+      Map<String, String> originalInputs,
+      String generatedSource,
+      String sourceMapFileContent,
+      SourceMapSupplier supplier) {
     // Find all instances of the __XXX__ pattern in the original
     // source code.
     Map<String, Token> originalTokens = findTokens(originalInputs);
@@ -232,9 +230,8 @@ public abstract class SourceMapTestCase {
     // Map the tokens from the generated source back to the
     // input source and ensure that the map is correct.
     for (Token token : resultTokens.values()) {
-      OriginalMapping mapping = reader.getMappingForLine(
-          token.position.getLine() + 1,
-          token.position.getColumn() + 1);
+      OriginalMapping mapping =
+          reader.getMappingForLine(token.position.getLine() + 1, token.position.getColumn() + 1);
 
       assertThat(mapping).isNotNull();
 
@@ -281,12 +278,12 @@ public abstract class SourceMapTestCase {
   }
 
   protected RunResult compile(String js1, String fileName1, String js2, String fileName2) {
-    Compiler compiler = new Compiler();
+    Compiler compiler = new Compiler(new TestErrorManager());
     CompilerOptions options = getCompilerOptions();
 
     options.setChecksOnly(true);
 
-    List<SourceFile> inputs = ImmutableList.of(SourceFile.fromCode(fileName1, js1));
+    ImmutableList<SourceFile> inputs = ImmutableList.of(SourceFile.fromCode(fileName1, js1));
 
     if (js2 != null && fileName2 != null) {
       inputs =
@@ -296,7 +293,14 @@ public abstract class SourceMapTestCase {
 
     Result result = compiler.compile(EXTERNS, inputs, options);
 
-    assertWithMessage("compilation failed").that(result.success).isTrue();
+    assertWithMessage("compilation failed with errors")
+        .that(result.errors)
+        .isEqualTo(ImmutableList.of());
+    assertWithMessage("compilation failed with warnings")
+        .that(result.warnings)
+        .isEqualTo(ImmutableList.of());
+
+    assertWithMessage("compilation failed (other reason)").that(result.success).isTrue();
     String source = compiler.toSource();
 
     StringBuilder sb = new StringBuilder();
@@ -316,11 +320,21 @@ public abstract class SourceMapTestCase {
 
   protected CompilerOptions getCompilerOptions() {
     CompilerOptions options = new CompilerOptions();
-    options.setLanguageIn(LanguageMode.ECMASCRIPT_2018);
     options.setSourceMapOutputPath("testcode_source_map.out");
     options.setSourceMapFormat(getSourceMapFormat());
     options.setSourceMapDetailLevel(detailLevel);
     options.setSourceMapIncludeSourcesContent(sourceMapIncludeSourcesContent);
+    options.addWarningsGuard(
+        new WarningsGuard() {
+
+          @Override
+          public CheckLevel level(JSError error) {
+            if (DiagnosticGroups.CHECK_USELESS_CODE.matches(error)) {
+              return CheckLevel.OFF;
+            }
+            return null;
+          }
+        });
     return options;
   }
 }

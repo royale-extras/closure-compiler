@@ -39,42 +39,90 @@
 
 package com.google.javascript.rhino.jstype;
 
-import static com.google.javascript.rhino.jstype.TernaryValue.FALSE;
-import static com.google.javascript.rhino.jstype.TernaryValue.TRUE;
+import static com.google.javascript.jscomp.base.Tri.FALSE;
+import static com.google.javascript.jscomp.base.Tri.TRUE;
 
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import com.google.javascript.jscomp.base.Tri;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
- * An enum type representing a branded collection of elements. Each element
- * is referenced by its name, and has an {@link EnumElementType} type.
+ * An enum type representing a branded collection of elements. Each element is referenced by its
+ * name, and has an {@link EnumElementType} type.
+ *
  */
-public class EnumType extends PrototypeObjectType {
-  private static final long serialVersionUID = 1L;
-
+public final class EnumType extends PrototypeObjectType implements JSType.WithSourceRef {
   private static final JSTypeClass TYPE_CLASS = JSTypeClass.ENUM;
 
   // the type of the individual elements
-  private EnumElementType elementsType;
+  private EnumElementType elementType;
   // the elements' names (they all have the same type)
-  private final Set<String> elements = new HashSet<>();
+  private final Set<String> elements = new LinkedHashSet<>();
   // the node representing rhs of the enum
   private final Node source;
+  private final String googModuleId;
 
-  /**
-   * Creates an enum type.
-   *
-   * @param name the enum's name
-   * @param source the object literal that creates the enum, a reference to another enum, or null.
-   * @param elementsType the base type of the individual elements
-   */
-  EnumType(JSTypeRegistry registry, String name, Node source, JSType elementsType) {
-    super(PrototypeObjectType.builder(registry).setName("enum{" + name + "}"));
-    this.elementsType = new EnumElementType(registry, elementsType, name, this);
-    this.source = source;
+  public static Builder builder(JSTypeRegistry registry) {
+    return new Builder(registry);
+  }
+
+  /** Builder */
+  public static final class Builder extends PrototypeObjectType.Builder<Builder> {
+
+    private String elementName;
+    private Node source;
+    private String googModuleId;
+    private JSType elementType;
+
+    private Builder(JSTypeRegistry registry) {
+      super(registry);
+    }
+
+    @Override
+    public Builder setName(String x) {
+      super.setName("enum{" + x + "}");
+      this.elementName = x;
+      return this;
+    }
+
+    /** The object literal that creates the enum, a reference to another enum, or null. */
+    @CanIgnoreReturnValue
+    public Builder setSource(Node x) {
+      this.source = x;
+      return this;
+    }
+
+    /** The ID of the goog.module in which this enum was declared. */
+    @CanIgnoreReturnValue
+    public Builder setGoogModuleId(String x) {
+      this.googModuleId = x;
+      return this;
+    }
+
+    /** The base type of the individual elements. */
+    @CanIgnoreReturnValue
+    public Builder setElementType(JSType x) {
+      this.elementType = x;
+      return this;
+    }
+
+    @Override
+    public EnumType build() {
+      return new EnumType(this);
+    }
+  }
+
+  private EnumType(Builder builder) {
+    super(builder);
+    this.elementType =
+        new EnumElementType(builder.registry, builder.elementType, builder.elementName, this);
+    this.source = builder.source;
+    this.googModuleId = builder.googModuleId;
 
     registry.getResolver().resolveIfClosed(this, TYPE_CLASS);
   }
@@ -96,8 +144,8 @@ public class EnumType extends PrototypeObjectType {
 
   /**
    * Gets the elements defined on this enum.
-   * @return the elements' names defined on this enum. The returned set is
-   *         immutable.
+   *
+   * @return the elements' names defined on this enum. The returned set is immutable.
    */
   public Set<String> getElements() {
     return Collections.unmodifiableSet(elements);
@@ -105,29 +153,30 @@ public class EnumType extends PrototypeObjectType {
 
   /**
    * Defines a new element on this enum.
+   *
    * @param name the name of the new element
    * @param definingNode the {@code Node} that defines this new element
    * @return true iff the new element is added successfully
    */
   public boolean defineElement(String name, Node definingNode) {
     elements.add(name);
-    return defineDeclaredProperty(name, elementsType, definingNode);
+    return defineDeclaredProperty(name, elementType, definingNode);
   }
 
   /** Gets the elements' type, which is a subtype of the enumerated type. */
   public EnumElementType getElementsType() {
-    return elementsType;
+    return elementType;
   }
 
   /** Gets the enumerated type. */
   @Override
   public JSType getEnumeratedTypeOfEnumObject() {
-    return elementsType.getPrimitiveType();
+    return elementType.getPrimitiveType();
   }
 
   @Override
-  public TernaryValue testForEquality(JSType that) {
-    TernaryValue result = super.testForEquality(that);
+  public Tri testForEquality(JSType that) {
+    Tri result = super.testForEquality(that);
     if (result != null) {
       return result;
     }
@@ -141,7 +190,7 @@ public class EnumType extends PrototypeObjectType {
 
   @Override
   public String getDisplayName() {
-    return elementsType.getDisplayName();
+    return elementType.getDisplayName();
   }
 
   @Override
@@ -149,12 +198,13 @@ public class EnumType extends PrototypeObjectType {
     return visitor.caseObjectType(this);
   }
 
-  @Override <T> T visit(RelationshipVisitor<T> visitor, JSType that) {
+  @Override
+  <T> T visit(RelationshipVisitor<T> visitor, JSType that) {
     return visitor.caseObjectType(this, that);
   }
 
   @Override
-  public FunctionType getConstructor() {
+  public @Nullable FunctionType getConstructor() {
     return null;
   }
 
@@ -174,8 +224,18 @@ public class EnumType extends PrototypeObjectType {
   }
 
   @Override
+  public final Node getSource() {
+    return source;
+  }
+
+  @Override
+  public @Nullable String getGoogModuleId() {
+    return this.googModuleId;
+  }
+
+  @Override
   JSType resolveInternal(ErrorReporter reporter) {
-    elementsType = (EnumElementType) elementsType.resolve(reporter);
+    elementType = (EnumElementType) elementType.resolve(reporter);
     return super.resolveInternal(reporter);
   }
 }

@@ -17,23 +17,19 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
-import com.google.auto.value.AutoValue;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
-import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.deps.ModuleLoader.ModulePath;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Rewrites an ES6 module to a CommonJS-like module for the sake of per-file transpilation +
@@ -46,27 +42,25 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
   private static final String REQUIRE = "$$require";
 
   private final AbstractCompiler compiler;
-  private final String pragma;
 
   public Es6RewriteModulesToCommonJsModules(AbstractCompiler compiler) {
-    this(compiler, "use strict");
-  }
-
-  @VisibleForTesting
-  Es6RewriteModulesToCommonJsModules(AbstractCompiler compiler, String pragma) {
     this.compiler = compiler;
-    this.pragma = pragma;
   }
 
   @Override
   public void process(Node externs, Node root) {
-    for (Node script : root.children()) {
+    for (Node script = root.getFirstChild(); script != null; script = script.getNext()) {
       if (Es6RewriteModules.isEs6ModuleRoot(script)) {
         NodeTraversal.traverse(compiler, script, new Rewriter(compiler, script));
-        script.putBooleanProp(Node.TRANSPILED, true);
       }
     }
-    compiler.setFeatureSet(compiler.getFeatureSet().without(Feature.MODULES));
+    // It is unusual to call this NodeUtil method instead of the TranspilationPasses one. This
+    // pass is included in the {@code dependency_resolution} BUILD target and does not have access
+    // to {@code TranspilationPasses}. Adding that dep produces a cycle in the BUILD dep graph.
+    // Regular transpiler passes must use the {@code
+    // TranspilationPasses.maybeMarkFeaturesAsTranspiledAway}
+    NodeUtil.removeFeatureFromAllScripts(root, Feature.MODULES, compiler);
+    GatherGetterAndSetterProperties.update(this.compiler, externs, root);
   }
 
   private static class LocalQName {
@@ -113,15 +107,14 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
     return path;
   }
 
-  // package public only for @AutoValue
-  @AutoValue
-  abstract static class ModuleRequest {
-    abstract String specifier();
-
-    abstract String varName();
+  private record ModuleRequest(String specifier, String varName) {
+    ModuleRequest {
+      requireNonNull(specifier, "specifier");
+      requireNonNull(varName, "varName");
+    }
 
     private static ModuleRequest create(String specifier, String varName) {
-      return new AutoValue_Es6RewriteModulesToCommonJsModules_ModuleRequest(specifier, varName);
+      return new ModuleRequest(specifier, varName);
     }
   }
 
@@ -129,8 +122,8 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
    * Rewrites a single ES6 module into a CommonJS like module designed to be loaded in the
    * compiler's module runtime.
    */
-  private class Rewriter extends AbstractPostOrderCallback {
-    private Node requireInsertSpot;
+  private static class Rewriter extends AbstractPostOrderCallback {
+    private @Nullable Node requireInsertSpot;
     private final Node script;
     private final Map<String, LocalQName> exportedNameToLocalQName;
     private final Set<Node> imports;
@@ -145,27 +138,18 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       // TreeMap because ES6 orders the export key using natural ordering.
       exportedNameToLocalQName = new TreeMap<>();
       importRequests = new LinkedHashSet<>();
-      imports = new HashSet<>();
+      imports = new LinkedHashSet<>();
       modulePath = compiler.getInput(script.getInputId()).getPath();
     }
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
-        case IMPORT:
-          visitImport(t.getInput().getPath(), n);
-          break;
-        case EXPORT:
-          visitExport(t, n, parent);
-          break;
-        case SCRIPT:
-          visitScript(t, n);
-          break;
-        case NAME:
-          maybeRenameImportedValue(t, n);
-          break;
-        default:
-          break;
+        case IMPORT -> visitImport(t.getInput().getPath(), n);
+        case EXPORT -> visitExport(t, n, parent);
+        case SCRIPT -> visitScript(t, n);
+        case NAME -> maybeRenameImportedValue(t, n);
+        default -> {}
       }
     }
 
@@ -173,21 +157,25 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
      * Given an import node gets the name of the var to use for the imported module.
      *
      * <p>Example: {@code import {v} from './foo.js'; use(v);} Can become:
+     *
      * <pre>
      *   const module$foo = require('./foo.js');
      *   use(module$foo.v);
      * </pre>
+     *
      * This method would return "module$foo".
      *
      * <p>Note that if there is a star import the name will be preserved.
      *
      * <p>Example:
+     *
      * <pre>
      *   import defaultValue, * as foo from './foo.js';
      *   use(defaultValue, foo.bar);
      * </pre>
      *
      * Can become:
+     *
      * <pre>
      *   const foo = require('./foo.js'); use(foo.defaultValue, foo.bar);
      * </pre>
@@ -242,8 +230,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
      * @return qualified name to use to reference an imported value if the given node is an imported
      *     name or null if the value is not imported or if it is in the import statement itself
      */
-    @Nullable
-    private String maybeGetNameOfImportedValue(Scope s, Node nameNode) {
+    private @Nullable String maybeGetNameOfImportedValue(Scope s, Node nameNode) {
       checkState(nameNode.isName());
       Var var = s.getVar(nameNode.getString());
 
@@ -310,17 +297,21 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
           importDecl.detach();
         }
 
-        Set<String> importedNames = new HashSet<>();
+        Set<String> importedNames = new LinkedHashSet<>();
 
         for (ModuleRequest request : importRequests) {
           String varName = request.varName();
           if (importedNames.add(varName)) {
             Node requireCall = IR.call(IR.name(REQUIRE), IR.string(request.specifier()));
             requireCall.putBooleanProp(Node.FREE_CALL, true);
-            Node var = IR.var(IR.name(varName), requireCall);
-            var.useSourceInfoIfMissingFromForTree(script);
-            script.addChildAfter(var, requireInsertSpot);
-            requireInsertSpot = var;
+            Node decl = IR.var(IR.name(varName), requireCall);
+            decl.srcrefTreeIfMissing(script);
+            if (requireInsertSpot == null) {
+              script.addChildToFront(decl);
+            } else {
+              decl.insertAfter(requireInsertSpot);
+            }
+            requireInsertSpot = decl;
           }
         }
       }
@@ -331,7 +322,15 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       Node block = IR.block();
       block.addChildrenToFront(script.removeChildren());
 
-      block.addChildToFront(IR.exprResult(IR.string(pragma)));
+      // TODO(b/282006497): Maybe mark this function for strict mode?
+      // NOTE: One might be tempted to add `'use strict';` here, but that causes problems.
+      // Optimizations and transpilations are not written to look for this statement,
+      // and are likely to either remove it or move other statements ahead of it,
+      // making it ineffective.
+      // The "right" way to mark the method for strict mode would be to apply the
+      // USE_STRICT node property to its body, but at the moment that will have no
+      // effect because 1) the code printer ignores it and 2) TypedAst doesn't
+      // serialize it.
 
       Node moduleFunction =
           IR.function(
@@ -348,7 +347,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       Node exprResult =
           IR.exprResult(
               IR.call(
-                  IR.getprop(IR.name("$jscomp"), IR.string("registerAndLoadModule")),
+                  IR.getprop(IR.name("$jscomp"), "registerAndLoadModule"),
                   moduleFunction,
                   // Resolving this path enables removing module roots from this path.
                   IR.string(
@@ -356,7 +355,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
                           compiler.getModuleLoader().resolve(t.getInput().getName()).toString())),
                   shallowDeps));
 
-      script.addChildToBack(exprResult.useSourceInfoIfMissingFromForTree(script));
+      script.addChildToBack(exprResult.srcrefTreeIfMissing(script));
 
       compiler.reportChangeToChangeScope(script);
       compiler.reportChangeToChangeScope(moduleFunction);
@@ -378,7 +377,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
                         NodeUtil.newQName(compiler, "Object.defineProperties"),
                         IR.name(EXPORTS),
                         definePropertiesLit))
-                .useSourceInfoIfMissingFromForTree(script));
+                .srcrefTreeIfMissing(script));
       }
     }
 
@@ -387,7 +386,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       Node exportedValue = NodeUtil.newQName(compiler, localQName.qName);
       Node getterFunction =
           IR.function(IR.name(""), IR.paramList(), IR.block(IR.returnNode(exportedValue)));
-      getterFunction.useSourceInfoFromForTree(localQName.nodeForSourceInfo);
+      getterFunction.srcrefTree(localQName.nodeForSourceInfo);
 
       Node objLit =
           IR.objectlit(
@@ -397,11 +396,11 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       compiler.reportChangeToChangeScope(getterFunction);
     }
 
-    private void visitImport(ModuleLoader.ModulePath path, Node importDecl) {
+    private void visitImport(ModulePath path, Node importDecl) {
       if (importDecl.getLastChild().getString().contains("://")) {
         compiler.report(
             JSError.make(
-                importDecl, Es6ToEs3Util.CANNOT_CONVERT, "Module requests with protocols."));
+                importDecl, TranspilationUtil.CANNOT_CONVERT, "Module requests with protocols."));
       }
 
       // Normalize the import path according to the module resolution scheme so that bundles are
@@ -414,7 +413,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       imports.add(importDecl);
     }
 
-    private void visitExportDefault(NodeTraversal t, Node export, Node parent) {
+    private void visitExportDefault(NodeTraversal t, Node export) {
       Node child = export.getFirstChild();
       String name = null;
 
@@ -424,13 +423,13 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
 
       if (name != null) {
         Node decl = child.detach();
-        parent.replaceChild(export, decl);
+        export.replaceWith(decl);
       } else {
         name = JSCOMP_DEFAULT_EXPORT;
         // Default exports are constant in more ways than one. Not only can they not be
         // overwritten but they also act like a const for temporal dead-zone purposes.
         Node var = IR.constNode(IR.name(name), export.removeFirstChild());
-        parent.replaceChild(export, var.useSourceInfoIfMissingFromForTree(export));
+        export.replaceWith(var.srcrefTreeIfMissing(export));
         NodeUtil.addFeatureToScript(t.getCurrentScript(), Feature.CONST_DECLARATIONS, compiler);
       }
 
@@ -442,25 +441,29 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
       //   export {x, y as z} from 'moduleIdentifier';
       Node moduleIdentifier = export.getLastChild();
       Node importNode = IR.importNode(IR.empty(), IR.empty(), moduleIdentifier.cloneNode());
-      importNode.useSourceInfoFrom(export);
-      parent.addChildBefore(importNode, export);
+      importNode.srcref(export);
+      importNode.insertBefore(export);
       visit(t, importNode, parent);
 
       String moduleName = getVarNameOfImport(moduleIdentifier.getString());
 
-      for (Node exportSpec : export.getFirstChild().children()) {
+      for (Node exportSpec = export.getFirstFirstChild();
+          exportSpec != null;
+          exportSpec = exportSpec.getNext()) {
         exportedNameToLocalQName.put(
             exportSpec.getLastChild().getString(),
             new LocalQName(moduleName + "." + exportSpec.getFirstChild().getString(), exportSpec));
       }
 
-      parent.removeChild(export);
+      export.detach();
       t.reportCodeChange();
     }
 
-    private void visitExportSpecs(NodeTraversal t, Node export, Node parent) {
+    private void visitExportSpecs(NodeTraversal t, Node export) {
       //     export {Foo};
-      for (Node exportSpec : export.getFirstChild().children()) {
+      for (Node exportSpec = export.getFirstFirstChild();
+          exportSpec != null;
+          exportSpec = exportSpec.getNext()) {
         String localName = exportSpec.getFirstChild().getString();
         Var var = t.getScope().getVar(localName);
         if (var != null && NodeUtil.isImportedName(var.getNameNode())) {
@@ -470,23 +473,23 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
         exportedNameToLocalQName.put(
             exportSpec.getLastChild().getString(), new LocalQName(localName, exportSpec));
       }
-      parent.removeChild(export);
+      export.detach();
       t.reportCodeChange();
     }
 
     private void visitExportNameDeclaration(Node declaration) {
       //    export var Foo;
       //    export let {a, b:[c,d]} = {};
-      List<Node> lhsNodes = NodeUtil.findLhsNodesInNode(declaration);
-
-      for (Node lhs : lhsNodes) {
-        checkState(lhs.isName());
-        String name = lhs.getString();
-        exportedNameToLocalQName.put(name, new LocalQName(name, lhs));
-      }
+      NodeUtil.visitLhsNodesInNode(declaration, this::addExportedName);
     }
 
-    private void visitExportDeclaration(NodeTraversal t, Node export, Node parent) {
+    private void addExportedName(Node lhs) {
+      checkState(lhs.isName());
+      String name = lhs.getString();
+      exportedNameToLocalQName.put(name, new LocalQName(name, lhs));
+    }
+
+    private void visitExportDeclaration(NodeTraversal t, Node export) {
       //    export var Foo;
       //    export function Foo() {}
       // etc.
@@ -500,7 +503,7 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
         exportedNameToLocalQName.put(name, new LocalQName(name, export));
       }
 
-      parent.replaceChild(export, declaration.detach());
+      export.replaceWith(declaration.detach());
       t.reportCodeChange();
     }
 
@@ -510,33 +513,31 @@ public class Es6RewriteModulesToCommonJsModules implements CompilerPass {
 
       // Make an "import 'spec'" from this export node and then visit it to rewrite to a require().
       Node importNode = IR.importNode(IR.empty(), IR.empty(), moduleIdentifier.cloneNode());
-      importNode.useSourceInfoFrom(export);
-      parent.addChildBefore(importNode, export);
+      importNode.srcref(export);
+      importNode.insertBefore(export);
       visit(t, importNode, parent);
 
       String moduleName = getVarNameOfImport(moduleIdentifier.getString());
       export.replaceWith(
           IR.exprResult(
-                  IR.call(
-                      IR.getprop(IR.name("$$module"), IR.string("exportAllFrom")),
-                      IR.name(moduleName)))
-              .useSourceInfoFromForTree(export));
+                  IR.call(IR.getprop(IR.name("$$module"), "exportAllFrom"), IR.name(moduleName)))
+              .srcrefTree(export));
 
       t.reportCodeChange();
     }
 
     private void visitExport(NodeTraversal t, Node export, Node parent) {
       if (export.getBooleanProp(Node.EXPORT_DEFAULT)) {
-        visitExportDefault(t, export, parent);
+        visitExportDefault(t, export);
       } else if (export.getBooleanProp(Node.EXPORT_ALL_FROM)) {
         visitExportStar(t, export, parent);
       } else if (export.hasTwoChildren()) {
         visitExportFrom(t, export, parent);
       } else {
-        if (export.getFirstChild().getToken() == Token.EXPORT_SPECS) {
-          visitExportSpecs(t, export, parent);
+        if (export.getFirstChild().isExportSpecs()) {
+          visitExportSpecs(t, export);
         } else {
-          visitExportDeclaration(t, export, parent);
+          visitExportDeclaration(t, export);
         }
       }
     }

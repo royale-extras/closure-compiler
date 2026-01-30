@@ -35,23 +35,18 @@ import com.google.javascript.jscomp.parsing.parser.util.SourcePosition;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.ResourceBundle;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** parser runner */
 public final class ParserRunner {
 
-  private static final String CONFIG_RESOURCE =
-      "com.google.javascript.jscomp.parsing.ParserConfig";
-
-  private static Set<String> annotationNames = null;
-
-  private static Set<String> suppressionNames = null;
-  private static Set<String> reservedVars = null;
-  private static Set<String> closurePrimitiveNames = null;
+  private static @Nullable ImmutableSet<String> annotationNames = null;
+  private static @Nullable ImmutableSet<String> suppressionNames = null;
+  private static @Nullable ImmutableSet<String> reservedVars = null;
+  private static @Nullable ImmutableSet<String> closurePrimitiveNames = null;
 
   // Should never need to instantiate class of static methods.
   private ParserRunner() {}
@@ -80,7 +75,7 @@ public final class ParserRunner {
     if (extraAnnotationNames == null) {
       effectiveAnnotationNames = annotationNames;
     } else {
-      effectiveAnnotationNames = new HashSet<>(annotationNames);
+      effectiveAnnotationNames = new LinkedHashSet<>(annotationNames);
       effectiveAnnotationNames.addAll(extraAnnotationNames);
     }
     return Config.builder()
@@ -95,12 +90,12 @@ public final class ParserRunner {
         .build();
   }
 
-  public static Set<String> getReservedVars() {
+  public static ImmutableSet<String> getReservedVars() {
     initResourceConfig();
     return reservedVars;
   }
 
-  public static Set<String> getSuppressionNames() {
+  public static ImmutableSet<String> getSuppressionNames() {
     initResourceConfig();
     return suppressionNames;
   }
@@ -110,11 +105,10 @@ public final class ParserRunner {
       return;
     }
 
-    ResourceBundle config = ResourceBundle.getBundle(CONFIG_RESOURCE);
-    annotationNames = extractList(config.getString("jsdoc.annotations"));
-    suppressionNames = extractList(config.getString("jsdoc.suppressions"));
-    closurePrimitiveNames = extractList(config.getString("jsdoc.primitives"));
-    reservedVars = extractList(config.getString("compiler.reserved.vars"));
+    annotationNames = extractList(ParserConfiguration.getString("jsdoc.annotations"));
+    suppressionNames = extractList(ParserConfiguration.getString("jsdoc.suppressions"));
+    closurePrimitiveNames = extractList(ParserConfiguration.getString("jsdoc.primitives"));
+    reservedVars = extractList(ParserConfiguration.getString("compiler.reserved.vars"));
   }
 
   private static ImmutableSet<String> extractList(String configProp) {
@@ -131,7 +125,7 @@ public final class ParserRunner {
     String sourceName = sourceFile.getName();
     try {
       SourceFile file = new SourceFile(sourceName, sourceString);
-      boolean keepGoing = config.runMode() == Config.RunMode.KEEP_GOING;
+      boolean keepGoing = config.runMode() == RunMode.KEEP_GOING;
       Es6ErrorReporter es6ErrorReporter = new Es6ErrorReporter(errorReporter, keepGoing);
       com.google.javascript.jscomp.parsing.parser.Parser.Config es6config = newParserConfig(config);
       Parser p = new Parser(es6config, es6ErrorReporter, file);
@@ -140,8 +134,7 @@ public final class ParserRunner {
       List<Comment> comments = ImmutableList.of();
       FeatureSet features = p.getFeatures();
       if (tree != null && (!es6ErrorReporter.hadError() || keepGoing)) {
-        IRFactory factory =
-            IRFactory.transformTree(tree, sourceFile, sourceString, config, errorReporter);
+        IRFactory factory = IRFactory.transformTree(tree, sourceFile, config, errorReporter, file);
         root = factory.getResultNode();
         features = features.union(factory.getFeatures());
         root.putProp(Node.FEATURE_SET, features);
@@ -160,34 +153,22 @@ public final class ParserRunner {
       Config config) {
     LanguageMode languageMode = config.languageMode();
     boolean isStrictMode = config.strictMode().isStrict();
-    Mode parserConfigLanguageMode = null;
-    switch (languageMode) {
-      case TYPESCRIPT:
-        parserConfigLanguageMode = Mode.TYPESCRIPT;
-        break;
-
-      case ECMASCRIPT3:
-        parserConfigLanguageMode = Mode.ES3;
-        break;
-
-      case ECMASCRIPT5:
-        parserConfigLanguageMode = Mode.ES5;
-        break;
-
-      case ECMASCRIPT6:
-      case ECMASCRIPT7:
-        parserConfigLanguageMode = Mode.ES6_OR_ES7;
-        break;
-      case ECMASCRIPT8:
-      case ECMASCRIPT_2018:
-      case ECMASCRIPT_2019:
-      case ECMASCRIPT_2020:
-      case ES_NEXT:
-      case ES_NEXT_IN:
-      case UNSUPPORTED:
-        parserConfigLanguageMode = Mode.ES8_OR_GREATER;
-        break;
-    }
+    Mode parserConfigLanguageMode =
+        switch (languageMode) {
+          case ECMASCRIPT3 -> Mode.ES3;
+          case ECMASCRIPT5 -> Mode.ES5;
+          case ECMASCRIPT_2015, ECMASCRIPT_2016 -> Mode.ES6_OR_ES7;
+          case ECMASCRIPT_2017,
+              ECMASCRIPT_2018,
+              ECMASCRIPT_2019,
+              ECMASCRIPT_2020,
+              ECMASCRIPT_2021,
+              ECMASCRIPT_2022,
+              ES_NEXT,
+              UNSTABLE,
+              UNSUPPORTED ->
+              Mode.ES8_OR_GREATER;
+        };
     return new com.google.javascript.jscomp.parsing.parser.Parser.Config(
         checkNotNull(parserConfigLanguageMode), isStrictMode);
   }
@@ -198,9 +179,7 @@ public final class ParserRunner {
     private boolean errorSeen = false;
     private final boolean reportAllErrors;
 
-    Es6ErrorReporter(
-        ErrorReporter reporter,
-        boolean reportAllErrors) {
+    Es6ErrorReporter(ErrorReporter reporter, boolean reportAllErrors) {
       this.reporter = reporter;
       this.reportAllErrors = reportAllErrors;
     }
@@ -211,28 +190,22 @@ public final class ParserRunner {
       // sometimes it is useful to keep going.
       if (reportAllErrors || !errorSeen) {
         errorSeen = true;
-        this.reporter.error(
-            message, location.source.name,
-            location.line + 1, location.column);
+        this.reporter.error(message, location.source.name, location.line + 1, location.column);
       }
     }
 
     @Override
     protected void reportWarning(SourcePosition location, String message) {
-      this.reporter.warning(
-          message, location.source.name,
-          location.line + 1, location.column);
+      this.reporter.warning(message, location.source.name, location.line + 1, location.column);
     }
   }
 
-  /**
-   * Holds results of parsing.
-   */
+  /** Holds results of parsing. */
   public static class ParseResult {
     public final Node ast;
     public final List<Comment> comments;
     public final FeatureSet features;
-    @Nullable public final String sourceMapURL;
+    public final @Nullable String sourceMapURL;
 
     public ParseResult(Node ast, List<Comment> comments, FeatureSet features, String sourceMapURL) {
       this.ast = ast;

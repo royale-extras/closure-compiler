@@ -22,10 +22,12 @@ import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.javascript.jscomp.AbstractCompiler.LifeCycleStage;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.jscomp.DataFlowAnalysis.FlowState;
+import com.google.javascript.jscomp.DataFlowAnalysis.LinearFlowState;
+import com.google.javascript.jscomp.NodeUtil.AllVarsDeclaredInFunction;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import org.jspecify.annotations.Nullable;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -33,13 +35,11 @@ import org.junit.runners.JUnit4;
 /**
  * Tests for {@link LiveVariablesAnalysis}. Test cases are snippets of a function and assertions are
  * made at the instruction labeled with {@code X}.
- *
- * @author simranarora@google.com (Simran Arora)
  */
 @RunWith(JUnit4.class)
 public final class LiveVariablesAnalysisTest {
 
-  private LiveVariablesAnalysis liveness = null;
+  private @Nullable LiveVariablesAnalysis liveness = null;
 
   @Test
   public void testStraightLine() {
@@ -109,13 +109,72 @@ public final class LiveVariablesAnalysisTest {
     assertLiveBeforeX("var a,b;X:if(b??a) {}", "a");
     assertLiveBeforeX("var a,b;X:if(b??b(a)) {}", "a");
 
-    // The kill can be "conditional" due to short circuit.
+    // Unconditionally killed on lhs of ??
     assertNotLiveAfterX("var a,b;X:a();if((a=b)??b){}a()", "a");
     assertNotLiveAfterX("var a,b;X:a();while((a=b)??b){}a()", "a");
-    assertLiveBeforeX("var a,b;a();X:if(b??(a=b)){}a()", "a"); // Assumed live.
-    assertLiveBeforeX("var a,b;a();X:if(a??(a=b)){}a()", "a");
-    assertLiveBeforeX("var a,b;a();X:while(b??(a=b)){}a()", "a");
-    assertLiveBeforeX("var a,b;a();X:while(a??(a=b)){}a()", "a");
+
+    // The kill can be "conditional" due to short circuit.
+    assertLiveBeforeX("var a,b; X:if(b??(a=b)){}a()", "a"); // Assumed live.
+    assertLiveBeforeX("var a,b; X:if(a??(a=b)){}a()", "a");
+    assertLiveBeforeX("var a,b; X:while(b??(a=b)){}a()", "a");
+    assertLiveBeforeX("var a,b; X:while(a??(a=b)){}a()", "a");
+  }
+
+  @Test
+  public void logicalAssignment() {
+    // This pattern is normalized away
+    assertLiveBeforeX("var a,b;X:a??=b", "a");
+    assertLiveBeforeX("var a,b;X:a??=b", "b");
+  }
+
+  @Test
+  public void optChainGetProp() {
+    // Reading the var on lhs of opt chain makes the variable live.
+    assertNotLiveBeforeX("var a,b; X:if(b) {}", "a");
+    assertLiveBeforeX("var a,b; X:if(a?.b) {}", "a");
+
+    // Reading a prop with the same name as var does not make the var live
+    assertNotLiveBeforeX("var a,b;X:if(b?.a) {}", "a");
+
+    // unconditional kill on lhs of ?.
+    assertNotLiveAfterX("var a,b;X:a();if((a=c)?.b){} a()", "a");
+    assertNotLiveAfterX("var a,b;X:a();while((a=b)?.b){} a()", "a");
+  }
+
+  @Test
+  public void optChainCall() {
+    // conditionally accessing var keeps it live
+    assertLiveBeforeX("var a,b; X:if(b?.(a)){}", "a");
+
+    // unconditionally overwriting a var kills it
+    assertNotLiveAfterX("var a,b; X:a(); if((a=b)?.b()){} a()", "a");
+
+    // conditionally overwriting var does not kill it
+    assertLiveBeforeX("var a,b; X:if(b?.(a=c)){} a();", "a");
+
+    // conditional overwrite on rhs of ?. does not kill the var
+    assertLiveBeforeX("var a,b; X:if(b?.(a=b)){}a()", "a"); // Assumed live.
+    assertLiveBeforeX("var a,b; X:if(a?.(a=b)){}a()", "a");
+    assertLiveBeforeX("var a,b; X:while(b?.(a=b)){}a()", "a");
+    assertLiveBeforeX("var a,b; X:while(a?.(a=b)){}a()", "a");
+  }
+
+  @Test
+  public void optChainGetElem() {
+    // conditionally accessing var keeps it live
+    assertLiveBeforeX("var a,b; X:if(b?.[a]) {}", "a");
+
+    // unconditionally overwriting a var kills it
+    assertNotLiveAfterX("var a,b; X:a(); if((a=b)?.[b]){} a()", "a");
+
+    // conditionally overwriting var does not kill it
+    assertLiveBeforeX("var a,b; X:if(b?.[a=c]) {} a();", "a");
+
+    // conditional overwrite on rhs of ?. does not kill the var
+    assertLiveBeforeX("var a,b; X:if(b?.[a=b]){}a()", "a"); // Assumed live.
+    assertLiveBeforeX("var a,b; X:if(a?.[a=b]){}a()", "a");
+    assertLiveBeforeX("var a,b; X:while(b?.[a=b]){}a()", "a");
+    assertLiveBeforeX("var a,b; X:while(a?.[a=b]){}a()", "a");
   }
 
   @Test
@@ -218,16 +277,17 @@ public final class LiveVariablesAnalysisTest {
 
   @Test
   public void testForAwaitOfLoopsVar() {
-    assertLiveBeforeX("var a; for await (a of [1, 2, 3]) {X:{}}", "a");
-    assertLiveAfterX("for await (var a of [1, 2, 3]) {X:{}}", "a");
-    assertLiveBeforeX("var a,b; for await (var y of a = [0, 1, 2]) { X:a[y] }", "a");
+    assertLiveBeforeX("var a; for await (a of [1, 2, 3]) {X:{}}", "a", true);
+    assertLiveAfterX("for await (var a of [1, 2, 3]) {X:{}}", "a", true);
+    assertLiveBeforeX("var a,b; for await (var y of a = [0, 1, 2]) { X:a[y] }", "a", true);
   }
 
   @Test
   public void testForAwaitOfLoopsDestructuring() {
-    assertLiveBeforeX("var key, value; X:for await ([key, value] of arr) {value;} value;", "value");
-    assertLiveBeforeX("let x = 3; X:for await (var [y = x] of arr) { y; }", "x");
-    assertLiveBeforeX("for await (let [key, value] of arr) { X: key; value; }", "key");
+    assertLiveBeforeX(
+        "var key, value; X:for await ([key, value] of arr) {value;} value;", "value", true);
+    assertLiveBeforeX("let x = 3; X:for await (var [y = x] of arr) { y; }", "x", true);
+    assertLiveBeforeX("for await (let [key, value] of arr) { X: key; value; }", "key", true);
   }
 
   @Test
@@ -301,11 +361,11 @@ public final class LiveVariablesAnalysisTest {
   @Test
   public void testArgumentsArray_doesNotEscape_destructuredParams() {
     // These cases also cover a crash related to assuming all RESTs have a NAME child.
-    assertNotEscaped("function f([a]) { arguments; }", "a");
-    assertNotEscaped("function f([a] = []) { arguments; }", "a");
-    assertNotEscaped("function f(...[a]) { arguments; }", "a");
-    assertNotEscaped("function f({a}) { arguments; }", "a");
-    assertNotEscaped("function f({a} = {}) { arguments; }", "a");
+    assertNotEscaped("function f([a]) { arguments; }", "a", Wrapper.NONE);
+    assertNotEscaped("function f([a] = []) { arguments; }", "a", Wrapper.NONE);
+    assertNotEscaped("function f(...[a]) { arguments; }", "a", Wrapper.NONE);
+    assertNotEscaped("function f({a}) { arguments; }", "a", Wrapper.NONE);
+    assertNotEscaped("function f({a} = {}) { arguments; }", "a", Wrapper.NONE);
   }
 
   @Test
@@ -314,7 +374,12 @@ public final class LiveVariablesAnalysisTest {
     assertLiveAfterX("var a; try {a()} catch(e) {X:a=1} finally {a}", "a");
     // Because the outer catch doesn't catch any exceptions at all, the read of
     // "a" within the catch block should not make "a" live.
-    assertNotLiveAfterX("var a = 1; try {" + "try {a()} catch(e) {X:1} } catch(E) {a}", "a");
+    assertNotLiveAfterX(
+        """
+        var a = 1; try {
+        try {a()} catch(e) {X:1} } catch(E) {a}
+        """,
+        "a");
     assertLiveAfterX("var a; while(1) { try {X:a=1;break} finally {a}}", "a");
   }
 
@@ -359,6 +424,19 @@ public final class LiveVariablesAnalysisTest {
 
     // Escaped by exporting.
     assertEscaped("var _x", "_x");
+  }
+
+  @Test
+  public void testEscapedInClassStaticBlock() {
+    assertEscaped("var a; class C{ static{a()}}", "a");
+    assertEscaped("var a; class C{static{ param1() } }", "param1");
+  }
+
+  @Test
+  public void testNotEscapedInClassStaticBlock() {
+    assertNotEscaped("var a; class C{static{}} a()", "a");
+    assertNotEscaped("let a; class C{static{let a;a()}}a()", "a");
+    assertNotEscaped("var a; class C{static{var c; c()}}", "c");
   }
 
   // ES6 does not require separate handling for catch because the catch block is already recognized
@@ -463,9 +541,9 @@ public final class LiveVariablesAnalysisTest {
   }
 
   private void assertLiveBeforeX(String src, String var, boolean async) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, async);
-    assertWithMessage(src + " should contain a label 'X:'").that(state).isNotNull();
-    assertWithMessage("Variable " + var + " should be live before X")
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, async);
+    assertWithMessage("%s should contain a label 'X:'", src).that(state).isNotNull();
+    assertWithMessage("Variable %s should be live before X", var)
         .that(state.getIn().isLive(liveness.getVarIndex(var)))
         .isTrue();
   }
@@ -475,63 +553,68 @@ public final class LiveVariablesAnalysisTest {
   }
 
   private void assertLiveAfterX(String src, String var, boolean async) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, async);
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, async);
     assertWithMessage("Label X should be in the input program.").that(state).isNotNull();
-    assertWithMessage("Variable " + var + " should be live after X")
+    assertWithMessage("Variable %s should be live after X", var)
         .that(state.getOut().isLive(liveness.getVarIndex(var)))
         .isTrue();
   }
 
   private void assertNotLiveAfterX(String src, String var) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, false);
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, false);
     assertWithMessage("Label X should be in the input program.").that(state).isNotNull();
-    assertWithMessage("Variable " + var + " should not be live after X")
+    assertWithMessage("Variable %s should not be live after X", var)
         .that(state.getOut().isLive(liveness.getVarIndex(var)))
         .isFalse();
   }
 
   private void assertNotLiveBeforeX(String src, String var) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, false);
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(src, false);
     assertWithMessage("Label X should be in the input program.").that(state).isNotNull();
-    assertWithMessage("Variable " + var + " should not be live before X")
+    assertWithMessage("Variable %s should not be live before X", var)
         .that(state.getIn().isLive(liveness.getVarIndex(var)))
         .isFalse();
   }
 
   private void assertLiveAfterDecl(String src, String var) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
         getFlowStateAtDeclaration(src, var);
-    assertWithMessage("Variable " + var + " should be declared").that(state).isNotNull();
-    assertWithMessage("Variable" + var + " should be live after its declaration")
+    assertWithMessage("Variable %s should be declared", var).that(state).isNotNull();
+    assertWithMessage("Variable%s should be live after its declaration", var)
         .that(state.getOut().isLive(liveness.getVarIndex(var)))
         .isTrue();
   }
 
   private void assertNotLiveAfterDecl(String src, String var) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
         getFlowStateAtDeclaration(src, var);
-    assertWithMessage("Variable " + var + " should be declared").that(state).isNotNull();
-    assertWithMessage("Variable " + var + " should not be live after its declaration")
+    assertWithMessage("Variable %s should be declared", var).that(state).isNotNull();
+    assertWithMessage("Variable %s should not be live after its declaration", var)
         .that(state.getOut().isLive(liveness.getVarIndex(var)))
         .isFalse();
   }
 
   private void assertNotLiveBeforeDecl(String src, String var) {
-    FlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
+    LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
         getFlowStateAtDeclaration(src, var);
-    assertWithMessage("Variable " + var + " should be declared").that(state).isNotNull();
-    assertWithMessage("Variable " + var + " should not be live before its declaration")
+    assertWithMessage("Variable %s should be declared", var).that(state).isNotNull();
+    assertWithMessage("Variable %s should not be live before its declaration", var)
         .that(state.getIn().isLive(liveness.getVarIndex(var)))
         .isFalse();
   }
 
-  private FlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtX(
+  private LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtX(
       String src, boolean async) {
-    liveness = computeLiveness(src, async);
+    if (async) {
+      liveness = computeLiveness(src, Wrapper.ASYNC_FUNCTION);
+    } else {
+      liveness = computeLiveness(src, Wrapper.FUNCTION);
+    }
+
     return getFlowStateAtX(liveness.getCfg().getEntry().getValue(), liveness.getCfg());
   }
 
-  private FlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtX(
+  private LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtX(
       Node node, ControlFlowGraph<Node> cfg) {
     if (node.isLabel()) {
       if (node.getFirstChild().getString().equals("X")) {
@@ -539,7 +622,7 @@ public final class LiveVariablesAnalysisTest {
       }
     }
     for (Node c = node.getFirstChild(); c != null; c = c.getNext()) {
-      FlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(c, cfg);
+      LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state = getFlowStateAtX(c, cfg);
       if (state != null) {
         return state;
       }
@@ -547,9 +630,9 @@ public final class LiveVariablesAnalysisTest {
     return null;
   }
 
-  private FlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtDeclaration(
+  private LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtDeclaration(
       String src, String name) {
-    liveness = computeLiveness(src, false);
+    liveness = computeLiveness(src);
     return getFlowStateAtDeclaration(
         liveness.getCfg().getEntry().getValue(), liveness.getCfg(), name);
   }
@@ -558,7 +641,7 @@ public final class LiveVariablesAnalysisTest {
    * Use this for lexical declarations which can't be labelled; e.g. `LABEL: let x = 0;` is invalid
    * syntax.
    */
-  private FlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtDeclaration(
+  private LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> getFlowStateAtDeclaration(
       Node node, ControlFlowGraph<Node> cfg, String name) {
     if (NodeUtil.isNameDeclaration(node)) {
       if (node.getFirstChild().getString().equals(name)) {
@@ -566,7 +649,7 @@ public final class LiveVariablesAnalysisTest {
       }
     }
     for (Node c = node.getFirstChild(); c != null; c = c.getNext()) {
-      FlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
+      LinearFlowState<LiveVariablesAnalysis.LiveVariableLattice> state =
           getFlowStateAtDeclaration(c, cfg, name);
       if (state != null) {
         return state;
@@ -576,32 +659,49 @@ public final class LiveVariablesAnalysisTest {
   }
 
   private static void assertEscaped(String src, String name) {
-    for (Var var : computeLiveness(src, false).getEscapedLocals()) {
+    for (Var var : computeLiveness(src).getEscapedLocals()) {
       if (var.getName().equals(name)) {
         return;
       }
     }
-    assertWithMessage("Variable " + name + " should be in the escaped local list.").fail();
+    assertWithMessage("Variable %s should be in the escaped local list.", name).fail();
   }
 
   private static void assertNotEscaped(String src, String name) {
-    for (Var var : computeLiveness(src, false).getEscapedLocals()) {
+    assertNotEscaped(src, name, Wrapper.FUNCTION);
+  }
+
+  /**
+   * @param wrapper The kind of wrapper function the {@code src} will be placed in.
+   */
+  private static void assertNotEscaped(String src, String name, Wrapper wrapper) {
+    for (Var var : computeLiveness(src, wrapper).getEscapedLocals()) {
       assertThat(var.getName()).isNotEqualTo(name);
     }
   }
 
-  private static LiveVariablesAnalysis computeLiveness(String src, boolean async) {
+  /** Wraps {@code src} in a function and computes a LiveVariablesAnalysis. */
+  private static LiveVariablesAnalysis computeLiveness(String src) {
+    return computeLiveness(src, Wrapper.FUNCTION);
+  }
+
+  /** Optionally wraps the {@code src} in a function and computes a LiveVariablesAnalysis. */
+  private static LiveVariablesAnalysis computeLiveness(String src, Wrapper wrapper) {
     // Set up compiler
     Compiler compiler = new Compiler();
     CompilerOptions options = new CompilerOptions();
-    options.setLanguage(LanguageMode.ECMASCRIPT_NEXT_IN);
+    options.setLanguage(LanguageMode.UNSUPPORTED);
     options.setCodingConvention(new GoogleCodingConvention());
     compiler.initOptions(options);
     compiler.setLifeCycleStage(LifeCycleStage.NORMALIZED);
 
     // Set up test case
-    src =
-        (async ? "async " : "") + "function _FUNCTION(param1, param2 = 1, ...param3){" + src + "}";
+    switch (wrapper) {
+      case FUNCTION -> src = "function _FUNCTION(param1, param2 = 1, ...param3){" + src + "}";
+      case ASYNC_FUNCTION ->
+          src = "async function _FUNCTION(param1, param2 = 1, ...param3){" + src + "}";
+      default -> {}
+    }
     Node n = compiler.parseTestCode(src).removeFirstChild();
     checkState(n.isFunction(), n);
     Node script = new Node(Token.SCRIPT, n);
@@ -614,15 +714,31 @@ public final class LiveVariablesAnalysisTest {
     Scope childScope = scopeCreator.createScope(NodeUtil.getFunctionBody(n), scope);
 
     // Control flow graph
-    ControlFlowAnalysis cfa = new ControlFlowAnalysis(compiler, false, true);
-    cfa.process(null, n);
-    ControlFlowGraph<Node> cfg = cfa.getCfg();
+    ControlFlowGraph<Node> cfg =
+        ControlFlowAnalysis.builder()
+            .setCompiler(compiler)
+            .setCfgRoot(n)
+            .setIncludeEdgeAnnotations(true)
+            .computeCfg();
+
+    // All variables declared in function
+    AllVarsDeclaredInFunction allVarsDeclaredInFunction =
+        NodeUtil.getAllVarsDeclaredInFunction(compiler, scopeCreator, scope);
 
     // Compute liveness of variables
     LiveVariablesAnalysis analysis =
         new LiveVariablesAnalysis(
-            cfg, scope, childScope, compiler, new SyntacticScopeCreator(compiler));
+            cfg, scope, childScope, compiler, scopeCreator, allVarsDeclaredInFunction);
     analysis.analyze();
     return analysis;
+  }
+
+  /** The kinds of functions that source code can be wrapped in for testing. */
+  private enum Wrapper {
+    NONE,
+    /** e.g. <code>function f(){ ... }</code> */
+    FUNCTION,
+    /** e.g. <code>async function f(){ ... }</code> */
+    ASYNC_FUNCTION
   }
 }

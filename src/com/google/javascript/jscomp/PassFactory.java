@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.auto.value.AutoValue;
 import com.google.errorprone.annotations.ForOverride;
-import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import java.util.function.Function;
 
 /**
@@ -35,31 +34,32 @@ public abstract class PassFactory {
   /** The name of the pass as it will appear in logs. */
   public abstract String getName();
 
+  public abstract Function<CompilerOptions, Boolean> getCondition();
+
+  record PreconditionResult(boolean success, String message) {
+    static final PreconditionResult SUCCESS = new PreconditionResult(true, null);
+  }
+
+  /**
+   * Runs before this pass runs to validate preconditions. Throws an exception if any are violated
+   * (unlike {@link #getCondition()}.)
+   */
+  abstract Function<CompilerOptions, PreconditionResult> getPreconditionCheck();
+
   /** Whether this factory must or must not appear in a {@link PhaseOptimizer} loop. */
   public abstract boolean isRunInFixedPointLoop();
 
   /**
-   * The set of features that this pass understands.
-   *
-   * <p>Passes that can handle any code (no-op passes, extremely simple passes that are unlikely to
-   * be broken by new features, etc.) should return {@link FeatureSet#latest()}.
-   */
-  public abstract FeatureSet getFeatureSet();
-
-  /**
    * A simple factory function for creating actual pass instances.
    *
-   * <p>Users should call {@link #create()} rather than use this object directly.
+   * <p>Users should call {@link #create(AbstractCompiler)} rather than use this object directly.
    */
   abstract Function<AbstractCompiler, ? extends CompilerPass> getInternalFactory();
-
-  /** Whether or not his factory produces {@link HotSwapCompilerPass}es. */
-  abstract boolean isHotSwapable();
 
   public abstract Builder toBuilder();
 
   PassFactory() {
-    // Sublasses in this package only.
+    // Subclasses in this package only.
   }
 
   /** A builder for a {@link PassFactory}. */
@@ -69,69 +69,46 @@ public abstract class PassFactory {
 
     public abstract Builder setRunInFixedPointLoop(boolean b);
 
-    /**
-     * Set the features that are allowed to be in the AST when this pass runs.
-     *
-     * <p>In general client code should call either {@link #setFeatureSetForChecks()} or {@link
-     * #setFeatureSetForOptimizations()} instead. This method exists only to support those methods
-     * and special cases such as transpilation passes and tests.
-     */
-    public abstract Builder setFeatureSet(FeatureSet x);
+    public abstract Builder setCondition(Function<CompilerOptions, Boolean> cond);
+
+    public abstract Builder setPreconditionCheck(
+        Function<CompilerOptions, PreconditionResult> assertion);
 
     public abstract Builder setInternalFactory(
         Function<AbstractCompiler, ? extends CompilerPass> x);
 
-    abstract Builder setHotSwapable(boolean x);
-
     @ForOverride
     abstract PassFactory autoBuild();
 
-    /** Record that the pass will support all of the features required for checks passes. */
-    public final Builder setFeatureSetForChecks() {
-      // ES_NEXT_IN is the set of features the compiler supports in input code.
-      return this.setFeatureSet(FeatureSet.ES_NEXT_IN);
-    }
-
-    /** Record that the pass will support all of the features required for optimization passes. */
-    public final Builder setFeatureSetForOptimizations() {
-      // ES_NEXT is the set of features the compiler supports in output code.
-      return this.setFeatureSet(FeatureSet.ES_NEXT);
-    }
-
     public final PassFactory build() {
       PassFactory result = autoBuild();
-
-      // Every pass must have a nonempty name.
       checkState(!result.getName().isEmpty());
-      if (result.isHotSwapable()) {
-        // HotSwap passes are for transpilation, not optimization, so running them in a loop
-        // makes no sense.
-        checkState(!result.isRunInFixedPointLoop());
-      }
-
       return result;
     }
   }
 
   public static Builder builder() {
-    return new AutoValue_PassFactory.Builder().setRunInFixedPointLoop(false).setHotSwapable(false);
+    return new AutoValue_PassFactory.Builder()
+        .setRunInFixedPointLoop(false)
+        .setCondition((o) -> true)
+        .setPreconditionCheck((o) -> PreconditionResult.SUCCESS);
   }
 
-  public static Builder builderForHotSwap() {
-    return new AutoValue_PassFactory.Builder().setRunInFixedPointLoop(false).setHotSwapable(true);
+  void validatePreconditions(CompilerOptions options) {
+    PreconditionResult canRun = getPreconditionCheck().apply(options);
+    if (!canRun.success) {
+      throw new IllegalArgumentException(
+          String.format("Precondition for pass %s failed: %s", this.getName(), canRun.message()));
+    }
   }
 
   /** Create a no-op pass that can only run once. Used to break up loops. */
   public static PassFactory createEmptyPass(String name) {
-    return builder()
-        .setName(name)
-        .setFeatureSet(FeatureSet.all())
-        .setInternalFactory((c) -> (CompilerPass) (externs, root) -> {})
-        .build();
+    return builder().setName(name).setInternalFactory((c) -> (externs, root) -> {}).build();
   }
 
   /** Creates a new compiler pass to be run. */
-  final CompilerPass create(AbstractCompiler compiler) {
+  public final CompilerPass create(AbstractCompiler compiler) {
     return getInternalFactory().apply(compiler);
   }
 }

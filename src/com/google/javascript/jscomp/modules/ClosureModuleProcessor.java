@@ -27,17 +27,17 @@ import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPreOrderCallback;
+import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.jscomp.deps.ModuleLoader.ModulePath;
 import com.google.javascript.jscomp.modules.ClosureRequireProcessor.Require;
 import com.google.javascript.jscomp.modules.ModuleMapCreator.ModuleProcessor;
 import com.google.javascript.jscomp.modules.ModuleMetadataMap.ModuleMetadata;
 import com.google.javascript.rhino.Node;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Processor for goog.module
@@ -53,11 +53,11 @@ final class ClosureModuleProcessor implements ModuleProcessor {
 
     private final ModuleMetadata metadata;
     private final String srcFileName;
-    @Nullable private final ModulePath path;
+    private final @Nullable ModulePath path;
     private final ImmutableMap<String, Binding> namespace;
     private final ImmutableMap<String, Require> requiresByLocalName;
     private final AbstractCompiler compiler;
-    private Module resolved = null;
+    private @Nullable Module resolved = null;
 
     UnresolvedGoogModule(
         ModuleMetadata metadata,
@@ -74,9 +74,8 @@ final class ClosureModuleProcessor implements ModuleProcessor {
       this.compiler = compiler;
     }
 
-    @Nullable
     @Override
-    public ResolveExportResult resolveExport(
+    public @Nullable ResolveExportResult resolveExport(
         ModuleRequestResolver moduleRequestResolver, String exportName) {
       if (namespace.containsKey(exportName)) {
         return ResolveExportResult.of(namespace.get(exportName));
@@ -84,9 +83,8 @@ final class ClosureModuleProcessor implements ModuleProcessor {
       return ResolveExportResult.NOT_FOUND;
     }
 
-    @Nullable
     @Override
-    public ResolveExportResult resolveExport(
+    public @Nullable ResolveExportResult resolveExport(
         ModuleRequestResolver moduleRequestResolver,
         @Nullable String moduleSpecifier,
         String exportName,
@@ -111,7 +109,6 @@ final class ClosureModuleProcessor implements ModuleProcessor {
                 .boundNames(ImmutableMap.copyOf(boundNames))
                 .localNameToLocalExport(ImmutableMap.of())
                 .closureNamespace(Iterables.getOnlyElement(metadata.googNamespaces()))
-                .unresolvedModule(this)
                 .build();
       }
       return resolved;
@@ -119,7 +116,7 @@ final class ClosureModuleProcessor implements ModuleProcessor {
 
     /** A map from import bound name to binding. */
     Map<String, Binding> getAllResolvedImports(ModuleRequestResolver moduleRequestResolver) {
-      Map<String, Binding> imports = new HashMap<>();
+      Map<String, Binding> imports = new LinkedHashMap<>();
 
       for (String name : requiresByLocalName.keySet()) {
         ResolveExportResult b = resolveImport(moduleRequestResolver, name);
@@ -154,8 +151,8 @@ final class ClosureModuleProcessor implements ModuleProcessor {
                 moduleRequestResolver,
                 importRecord.moduleRequest(),
                 importRecord.importName(),
-                new HashSet<>(),
-                new HashSet<>());
+                new LinkedHashSet<>(),
+                new LinkedHashSet<>());
         if (!result.found() && !result.hadError()) {
           reportInvalidDestructuringRequire(requested, importRecord);
           return ResolveExportResult.ERROR;
@@ -192,9 +189,9 @@ final class ClosureModuleProcessor implements ModuleProcessor {
     private void reportInvalidDestructuringRequire(
         UnresolvedModule requested, Import importRecord) {
       String additionalInfo = "";
-      if (requested instanceof UnresolvedGoogModule) {
+      if (requested instanceof UnresolvedGoogModule unresolvedGoogModule) {
         // Detect some edge cases and given more helpful error messages.
-        Map<String, Binding> exports = ((UnresolvedGoogModule) requested).namespace;
+        ImmutableMap<String, Binding> exports = unresolvedGoogModule.namespace;
         if (exports.containsKey(Export.NAMESPACE)) {
           // Can't use destructuring imports on a goog.module with a default export like
           //   exports = class {
@@ -255,7 +252,7 @@ final class ClosureModuleProcessor implements ModuleProcessor {
       return false;
     }
     // Look for `importName` in the exported object literal.
-    for (Node key : exportedValue.children()) {
+    for (Node key = exportedValue.getFirstChild(); key != null; key = key.getNext()) {
       if (key.isStringKey() && key.getString().equals(importName)) {
         return true;
       }
@@ -290,15 +287,19 @@ final class ClosureModuleProcessor implements ModuleProcessor {
   /** Traverses a subtree rooted at a module, gathering all exports and requires */
   private static class ModuleProcessingCallback extends AbstractPreOrderCallback {
     private final ModuleMetadata metadata;
+
     /** The Closure namespace 'a.b.c' from the `goog.module('a.b.c');` statement */
     private final String closureNamespace;
+
     // Note: the following two maps are mutable because in some cases, we need to check if a key has
     // already been added before trying to add a second.
 
     /** All named exports and explicit assignments of the `exports` object */
     private final Map<String, Binding> namespace;
+
     /** All required/forwardDeclared local names */
     private final Map<String, Require> requiresByLocalName;
+
     /** Whether we've come across an "exports = ..." assignment */
     private boolean seenExportsAssignment;
 
@@ -313,17 +314,19 @@ final class ClosureModuleProcessor implements ModuleProcessor {
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
-        case MODULE_BODY:
-        case SCRIPT:
-        case CALL: // Traverse into goog.loadModule calls.
-        case BLOCK:
+        case MODULE_BODY,
+            SCRIPT,
+            CALL, // Traverse into goog.loadModule calls.
+            BLOCK -> {
           return true;
-        case FUNCTION:
+        }
+        case FUNCTION -> {
           // Only traverse into functions that are the argument of a goog.loadModule call, which is
           // the module root. Avoid traversing function declarations like:
           //     goog.module('a.b'); function (exports) { exports.x = 0; }
           return parent.isCall() && parent == metadata.rootNode();
-        case EXPR_RESULT:
+        }
+        case EXPR_RESULT -> {
           Node expr = n.getFirstChild();
           if (expr.isAssign()) {
             maybeInitializeExports(expr);
@@ -331,14 +334,15 @@ final class ClosureModuleProcessor implements ModuleProcessor {
             maybeInitializeExportsStub(expr);
           }
           return false;
-        case CONST:
-        case VAR:
-        case LET:
+        }
+        case CONST, VAR, LET -> {
           // Note that `let` is valid only for `goog.forwardDeclare`.
           maybeInitializeRequire(n);
           return false;
-        default:
+        }
+        default -> {
           return false;
+        }
       }
     }
 
@@ -350,16 +354,16 @@ final class ClosureModuleProcessor implements ModuleProcessor {
         // This may be a 'named exports' or may be a default export.
         // It is a 'named export' if and only if it is assigned an object literal w/ string keys,
         // whose values are all names.
-        if (isNamedExportsLiteral(rhs)) {
+        if (NodeUtil.isNamedExportsLiteral(rhs)) {
           initializeNamedExportsLiteral(rhs);
         } else {
           seenExportsAssignment = true;
+          markExportsAssignmentInNamespace(lhs);
         }
-        markExportsAssignmentInNamespace(lhs);
       } else if (lhs.isGetProp()
           && lhs.getFirstChild().isName()
           && lhs.getFirstChild().getString().equals("exports")) {
-        String exportedId = lhs.getSecondChild().getString();
+        String exportedId = lhs.getString();
         addPropertyExport(exportedId, lhs);
       }
     }
@@ -368,9 +372,7 @@ final class ClosureModuleProcessor implements ModuleProcessor {
     private void maybeInitializeExportsStub(Node qname) {
       Node owner = qname.getFirstChild();
       if (owner.isName() && owner.getString().equals("exports")) {
-        Node prop = qname.getSecondChild();
-        String exportedId = prop.getString();
-        addPropertyExport(exportedId, qname);
+        addPropertyExport(qname.getString(), qname);
       }
     }
 
@@ -395,7 +397,7 @@ final class ClosureModuleProcessor implements ModuleProcessor {
     }
 
     private void initializeNamedExportsLiteral(Node objectLit) {
-      for (Node key : objectLit.children()) {
+      for (Node key = objectLit.getFirstChild(); key != null; key = key.getNext()) {
         addPropertyExport(key.getString(), key);
       }
     }
@@ -429,29 +431,5 @@ final class ClosureModuleProcessor implements ModuleProcessor {
         requiresByLocalName.putIfAbsent(require.localName(), require);
       }
     }
-  }
-
-  /**
-   * Whether this is an assignment to 'exports' that creates named exports.
-   *
-   * <ul>
-   *   <li>exports = {a, b}; // named exports
-   *   <li>exports = 0; // namespace export
-   *   <li>exports = {a: 0, b}; // namespace export
-   * </ul>
-   */
-  private static boolean isNamedExportsLiteral(Node objLit) {
-    if (!objLit.isObjectLit() || !objLit.hasChildren()) {
-      return false;
-    }
-    for (Node key : objLit.children()) {
-      if (!key.isStringKey() || key.isQuotedString()) {
-        return false;
-      }
-      if (!key.getFirstChild().isName()) {
-        return false;
-      }
-    }
-    return true;
   }
 }
